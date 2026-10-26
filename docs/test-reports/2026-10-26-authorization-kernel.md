@@ -57,11 +57,16 @@ mvn -B verify '-DargLine=-javaagent:<用户目录>\.m2\repository\org\mockito\mo
 ## 演示与架构
 
 - 版本化演示脚本：`deploy/demo/authorization-demo.py`，显式 --demo，仅默认演示租户，通过正式 API 创建客户、A/B/C 项目/站点/资产/设备、物模型和 rbac-demo 账号；已存在记录、密码和授权不覆盖。
-- 实测演示数据初始化、幂等性与 VM 页面结果在发布后补充，尚未仅凭脚本存在声称已验收。
+- VM 已在 enforce 模式实际执行初始化与 `--verify` 两次，A/B/C 设备 Key 两次完全一致；现有账号与授权未被重置。模拟器重建后，三台演示设备均在线，最后上报距查询时约 5.5～5.7 秒。演示账号 `rbac-demo`：A 可写、B 只读、C 不可见，访问用户管理403。演示密码仅设置在 VM 运行环境与交付消息中，仓库不包含凭据。
+- 通过页面检查「系统管理 → 用户 → rbac-demo → 资源权限」，可见 A 项目管理员、B 只读成员两条绑定；「设备接入 → 设备 → 权限演示设备 A → 最新值」显示 Ua/Ia/temp 和「刚刚」上报。账号视角的 A/B/C HTTP 判据由正式 API 执行，未通过更改管理员浏览器会话来代替权限检查。
 - 已同步 README、CLAUDE.md §1.2/§4、spec/plan、roadmap、授权说明、部署和接入文档；新增支持亮暗主题的 `docs/images/authorization-flow.svg` 并检查结构、文字基线、间距与箭头端点。
 - 检查 architecture.svg、module-dependencies.svg、organization-model.svg：进程拓扑、Maven 模块依赖与组织关系均未改变，保留图源，用新增授权图表达变化；reliable-uplink.svg 的协议和业务回执未变。
 - 用户要求的「新功能配套演示与测试报告」已持久写入全局 `%USERPROFILE%/.codex/AGENTS.md` 和项目 CLAUDE.md。
 
 ## VM 发布
 
-待发布：先备份 PostgreSQL，shadow 观察兼容账号，再切 enforce；演示脚本需实际执行两次验证幂等，页面确认 A 可写/B 只读/C 不可见。VM 既有采集故障及恢复与本功能测试分开记录于 `2026-10-26-telemetry-freshness.md`，不通过静态造数掩盖实时链路问题。
+发布版本 `a8bc225`（功能分支 `codex/v0.3b-authorization`，已推送）。发布前在 VM 做 PostgreSQL 自定义格式备份，并在容器内用 `pg_restore --list` 验证可枚举目录。服务先以 shadow 启动：Flyway 从 V7 升到 V8 成功、健康探针 UP、原管理员可查询实时设备，旧账号 `authz_managed` 均为 false。随后切 enforce 并重建 server；健康探针 UP，演示账号按上文通过。
+
+新 release 构建 server/web、两台 transport 与 simulator。两台 transport 使用新的共同 clientId，停止临时恢复 transport 后，新主正常接管同一新会话；旧会话及其积压未删除。服务器当前配置 enforce、EMQX 热配置 `force_shutdown.max_heap_size=256MB`。新配置文件也设置 256 MB，以便之后重建 Broker 保持同值。固定缺测演示设备与实时演示设备的差别及未恢复的旧会话积压另见 `2026-10-26-telemetry-freshness.md`。
+
+访问：`http://<演示 VM>:8090`；用户名 `rbac-demo`，密码由交付消息提供；菜单「设备接入 → 设备」可见 A/B，「系统管理 → 用户」不可访问。A/B/C 的完整验收数据由 `deploy/demo/authorization-demo.py --demo --verify` 复现；运行需要显式提供演示环境管理员密码与演示账号密码。生产环境不运行该脚本。

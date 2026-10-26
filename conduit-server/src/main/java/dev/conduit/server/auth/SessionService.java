@@ -18,6 +18,8 @@ import java.time.Duration;
  */
 @Component
 public class SessionService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.authorization.AuthorizationService authorization;
 
     /** refresh 令牌的 Cookie 名称（HttpOnly、SameSite=Strict、只发往 /api/v1/auth）。 */
     public static final String REFRESH_COOKIE = "conduit_refresh";
@@ -94,9 +96,17 @@ public class SessionService {
         Tenant tenant = principal.tenantId() == null ? null : tenants.selectById(principal.tenantId());
         boolean mustChange = !principal.impersonating() && user != null
                 && Boolean.TRUE.equals(user.getMustChangePassword());
+        java.util.Set<String> permissions=null, tenantPermissions=null;
+        boolean enforced=authorization!=null && authorization.enforcing() && principal.tenantId()!=null;
+        if(enforced) {
+            var scope=dev.conduit.server.tenant.TenantContext.callAs(principal.tenantId(),()->authorization.resolve(principal));
+            permissions=scope.grants().stream().flatMap(g->g.permissions().stream()).filter(p->scope.writable() || p.endsWith(".read")).collect(java.util.stream.Collectors.toSet());
+            tenantPermissions=scope.grants().stream().filter(g->g.scope().equals("TENANT"))
+                    .flatMap(g->g.permissions().stream()).filter(p->scope.writable() || p.endsWith(".read")).collect(java.util.stream.Collectors.toSet());
+        }
         return new UserView(principal.username(), user == null ? null : user.getDisplayName(), principal.role(),
                 tenant == null ? null : tenant.getCode(), tenant == null ? null : tenant.getName(), mustChange,
-                principal.impersonating() ? principal.username() : null);
+                principal.impersonating() ? principal.username() : null,permissions,tenantPermissions,enforced);
     }
 
     /** refresh Cookie：HttpOnly、SameSite=Strict、仅发往 /api/v1/auth；Secure 由配置决定（生产应开启）。 */

@@ -101,6 +101,8 @@ services:
       EMQX_DURABLE_SESSIONS__ENABLE: "true"
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       EMQX_NODE__NAME: emqx@127.0.0.1
+      # 持久会话积压恢复可超过默认 32MB；仍保留单连接内存保护。
+      EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}
     volumes:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读

@@ -1,7 +1,7 @@
 /** permissions 单元测试：各身份的权限（平台管理员、代入、租户管理员、只读用户、未登录）与角色、状态、名称的显示 */
 import { describe, expect, it } from 'vitest'
 import type { UserView } from '@/api/types'
-import { displayNameOf, permissionsOf, roleLabel, statusLabel } from './permissions'
+import { displayNameOf, permissionsOf, hasPermission, roleLabel, statusLabel } from './permissions'
 
 function user(patch: Partial<UserView>): UserView {
   return {
@@ -17,6 +17,13 @@ function user(patch: Partial<UserView>): UserView {
 }
 
 describe('permissionsOf', () => {
+  it('uses scoped permissions instead of the legacy JWT role in enforce mode', () => {
+    const scoped=user({ role: 'TENANT_VIEWER', authorizationEnforced: true, permissions: ['device.read', 'device.manage'], tenantPermissions: [] })
+    expect(permissionsOf(scoped)).toMatchObject({canWrite: true, canManageUsers: false})
+    expect(hasPermission(scoped, 'device.manage')).toBe(true)
+    expect(hasPermission(scoped, 'product.manage', true)).toBe(false)
+    expect(permissionsOf(user({authorizationEnforced: true, permissions: [], tenantPermissions: []}))).toMatchObject({canWrite: false, canManageUsers: false})
+  })
   it('gives the platform admin only the platform', () => {
     expect(permissionsOf(user({ role: 'PLATFORM_ADMIN', tenantCode: null, tenantName: null }))).toEqual({
       isPlatformAdmin: true,

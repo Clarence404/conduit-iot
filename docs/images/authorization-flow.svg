@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 516" role="img" aria-labelledby="title desc">
+  <title id="title">租户内项目与站点授权链路</title>
+  <desc id="desc">用户请求经身份与租户边界、权限码和数据库新鲜授权校验，MyBatis-Plus 将租户和项目或站点范围写入 SQL。查到设备后才能访问 Redis 与 InfluxDB。后台设备上报不使用用户作用域。</desc>
+  <style>
+    :root { --fg:#1a1a2e; --muted:#6b7280; --bg:#f8f9fc; --card:#ffffff; --border:#e2e8f0; --p:#6366f1; --b:#0284c7; --g:#059669; --y:#d97706; --r:#dc2626; }
+    :root[data-theme="dark"] { --fg:#e5e7eb; --muted:#9ca3af; --bg:#1a1a2e; --card:#252540; --border:#3a3a5c; --p:#818cf8; --b:#38bdf8; --g:#34d399; --y:#fbbf24; --r:#f87171; }
+    @media (prefers-color-scheme: dark) { :root { --fg:#e5e7eb; --muted:#9ca3af; --bg:#1a1a2e; --card:#252540; --border:#3a3a5c; --p:#818cf8; --b:#38bdf8; --g:#34d399; --y:#fbbf24; --r:#f87171; } }
+    text { font-family:system-ui,"Microsoft YaHei",sans-serif; fill:var(--fg); text-anchor:middle; font-size:14px; }
+    .card { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
+    .name { font-weight:700; } .sub { fill:var(--muted); font-size:12px; }
+    .arrow { stroke:var(--b); stroke-width:2; fill:none; marker-end:url(#arrow); }
+  </style>
+  <defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 7 3.5 0 7Z" fill="var(--b)"/></marker></defs>
+  <rect width="920" height="516" fill="var(--bg)"/>
+  <text x="460" y="24" class="name">B2 · 项目 / 站点授权（enforce 模式）</text>
+  <rect x="40" y="44" width="840" height="64" rx="10" class="card"/>
+  <text x="460" y="69" class="name">身份与租户边界</text>
+  <text x="460" y="92" class="sub">验证 JWT · 平台接口保持平台权限 · TenantContext 绑定可信 tenantId</text>
+  <line x1="460" y1="112" x2="460" y2="134" class="arrow"/>
+  <rect x="40" y="140" width="840" height="64" rx="10" class="card"/>
+  <text x="460" y="165" class="name">PermissionGateFilter → AuthorizationService</text>
+  <text x="460" y="188" class="sub">每请求读 PostgreSQL 中的用户、租户、角色绑定 · 多范围取并集 · 未登记入口拒绝</text>
+  <line x1="460" y1="208" x2="460" y2="230" class="arrow"/>
+  <rect x="40" y="236" width="840" height="64" rx="10" class="card"/>
+  <text x="460" y="261" class="name">MyBatis-Plus：租户条件 → 数据范围条件 → 分页</text>
+  <text x="460" y="284" class="sub">列表 / 总数 / 详情 / 更新使用相同范围 · 无权资源 404 · 先校验设备归属</text>
+  <path d="M460 304 V316 H170 V326" class="arrow"/>
+  <line x1="460" y1="304" x2="460" y2="326" class="arrow"/>
+  <path d="M460 304 V316 H750 V326" class="arrow"/>
+  <rect x="40" y="332" width="260" height="72" rx="10" class="card"/>
+  <text x="170" y="359" class="name">PostgreSQL</text>
+  <text x="170" y="386" class="sub">组织 / 设备 / 角色与范围绑定</text>
+  <rect x="330" y="332" width="260" height="72" rx="10" class="card"/>
+  <text x="460" y="359" class="name">Redis</text>
+  <text x="460" y="386" class="sub">已授权设备的最新值 / 在线状态</text>
+  <rect x="620" y="332" width="260" height="72" rx="10" class="card"/>
+  <text x="750" y="359" class="name">InfluxDB</text>
+  <text x="750" y="386" class="sub">设备已授权 + tenant_id 查询条件</text>
+  <rect x="40" y="436" width="840" height="64" rx="10" class="card"/>
+  <text x="460" y="461" class="name">发布与后台边界</text>
+  <text x="460" y="484" class="sub">shadow 观察旧授权 → enforce 执行新授权；read-only 保留范围并拒绝写入；设备上报仍使用可信设备租户身份</text>
+</svg>

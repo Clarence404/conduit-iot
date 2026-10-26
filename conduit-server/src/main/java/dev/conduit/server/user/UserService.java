@@ -43,6 +43,8 @@ public class UserService {
     private final TenantMapper tenants;
     private final PasswordEncoder encoder;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.authorization.AuthorizationService authorization;
 
     public UserService(AppUserMapper users, TenantMapper tenants, PasswordEncoder encoder, Clock clock) {
         this.users = users;
@@ -117,6 +119,7 @@ public class UserService {
         String role = requireTenantRole(request.role());
         String displayName = DisplayNamePolicy.normalize(request.displayName());
         boolean roleChanged = !role.equals(target.getRole());
+        if(authorization!=null && authorization.enforcing()) authorization.guardUserChange(username,roleChanged,actor);
         if (roleChanged) {
             if (isSelf(actor, target)) {
                 throw ApiException.conflict("不能修改自己的角色");
@@ -144,6 +147,7 @@ public class UserService {
     public UserItem setStatus(AuthPrincipal actor, String username, String status) {
         long tenantId = lockTenant();
         AppUser target = require(tenantId, username);
+        if(authorization!=null && authorization.enforcing()) authorization.guardUserChange(username,AppUser.DISABLED.equals(status),actor);
         if (AppUser.DISABLED.equals(status) && AppUser.ACTIVE.equals(target.getStatus())) {
             if (isSelf(actor, target)) {
                 throw ApiException.conflict("不能禁用自己");
@@ -170,6 +174,7 @@ public class UserService {
     public void resetPassword(AuthPrincipal actor, String username, PasswordRequest request) {
         long tenantId = TenantContext.require();
         AppUser target = require(tenantId, username);
+        if(authorization!=null && authorization.enforcing()) authorization.guardUserChange(username,false,actor);
         PasswordPolicy.requireValid(request.password());
         int updated = users.update(null, new LambdaUpdateWrapper<AppUser>()
                 .eq(AppUser::getId, target.getId())
@@ -191,6 +196,7 @@ public class UserService {
     public void delete(AuthPrincipal actor, String username) {
         long tenantId = lockTenant();
         AppUser target = require(tenantId, username);
+        if(authorization!=null && authorization.enforcing()) authorization.guardUserChange(username,true,actor);
         if (isSelf(actor, target)) {
             throw ApiException.conflict("不能删除自己");
         }

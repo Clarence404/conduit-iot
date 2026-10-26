@@ -14,8 +14,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { deviceApi } from '@/api/devices'
 import { productApi } from '@/api/products'
+import { siteApi } from '@/api/organization'
+import { useAuthStore } from '@/stores/auth'
 import { problemMessage } from '@/api/errors'
-import type { DeviceStatus, DeviceView, ProductView } from '@/api/types'
+import type { DeviceStatus, DeviceView, ProductView, SiteView } from '@/api/types'
 import { PAGE_SIZES } from '@/utils/pagination'
 import {
   dayRangeToMillis,
@@ -39,7 +41,11 @@ import SecretDialog from '@/components/SecretDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
-const { canWrite } = usePermission()
+const { can } = usePermission()
+const auth = useAuthStore()
+const canWrite = computed(() => can('device.manage'))
+function rowCan(row: DeviceView, permission: string) { return row.permissions ? row.permissions.includes(permission) : can(permission) }
+const sites = ref<SiteView[]>([])
 
 const products = ref<ProductView[]>([])
 const productNames = computed(() => new Map(products.value.map((p) => [p.productKey, p.name])))
@@ -88,7 +94,7 @@ const { items, total, page, size, loading, loaded, failed, load, search: searchP
 
 const createVisible = ref(false)
 const creating = ref(false)
-const createForm = reactive({ productKey: '', name: '' })
+const createForm = reactive({ productKey: '', name: '', siteCode: '' })
 
 const secretVisible = ref(false)
 const secret = reactive({ deviceKey: '', value: '' })
@@ -126,6 +132,10 @@ function reset() {
 function openCreate() {
   createForm.productKey = applied.productKey || products.value[0]?.productKey || ''
   createForm.name = ''
+  createForm.siteCode = ''
+  if (auth.user?.authorizationEnforced) {
+    void siteApi.list().then((v) => { sites.value = v }).catch((e) => ElMessage.error(problemMessage(e)))
+  }
   createVisible.value = true
 }
 
@@ -140,7 +150,10 @@ async function create() {
   }
   creating.value = true
   try {
-    const res = await deviceApi.create(createForm.productKey, createForm.name.trim())
+    if (auth.user?.authorizationEnforced && !createForm.siteCode) { ElMessage.warning('请选择已授权站点'); return }
+    const res = createForm.siteCode
+      ? await deviceApi.create(createForm.productKey, createForm.name.trim(), createForm.siteCode)
+      : await deviceApi.create(createForm.productKey, createForm.name.trim())
     createVisible.value = false
     showSecret(res.device.deviceKey, res.deviceSecret)
     await load()
@@ -358,12 +371,12 @@ onMounted(() => {
               <el-button link type="primary" @click="router.push({ name: 'device-detail', params: { deviceKey: row.deviceKey } })">
                 详情
               </el-button>
-              <template v-if="canWrite">
-                <el-button link :type="row.status === 'ENABLED' ? 'warning' : 'success'" :loading="busy.has(row.deviceKey)" @click="toggleStatus(row)">
+              <template v-if="canWrite || rowCan(row, 'device.secret.rotate')">
+                <el-button v-if="rowCan(row, 'device.manage')" link :type="row.status === 'ENABLED' ? 'warning' : 'success'" :loading="busy.has(row.deviceKey)" @click="toggleStatus(row)">
                   {{ row.status === 'ENABLED' ? '禁用' : '启用' }}
                 </el-button>
-                <el-button link type="warning" @click="resetSecret(row)">重置密钥</el-button>
-                <el-button link type="danger" @click="remove(row)">删除</el-button>
+                <el-button v-if="rowCan(row, 'device.secret.rotate')" link type="warning" @click="resetSecret(row)">重置密钥</el-button>
+                <el-button v-if="rowCan(row, 'device.manage')" link type="danger" @click="remove(row)">删除</el-button>
               </template>
             </template>
           </el-table-column>
@@ -405,6 +418,11 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="名称" required>
           <el-input v-model="createForm.name" maxlength="128" />
+        </el-form-item>
+        <el-form-item v-if="auth.user?.authorizationEnforced" label="站点" required>
+          <el-select v-model="createForm.siteCode" placeholder="请选择可管理的站点">
+            <el-option v-for="s in sites.filter((s) => s.permissions?.includes('device.manage'))" :key="s.code" :value="s.code" :label="s.name" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

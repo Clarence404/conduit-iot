@@ -30,7 +30,10 @@ public final class DeviceDtos {
      * @param lastReportAt 最近一次上报时间（毫秒），从未上报为 null
      */
     public record DeviceView(String deviceKey, String name, String productKey, String status,
-                             boolean online, Long lastReportAt, OffsetDateTime createdAt) {
+                             boolean online, Long lastReportAt, OffsetDateTime createdAt, java.util.Set<String> permissions) {
+        public DeviceView(String deviceKey,String name,String productKey,String status,boolean online,Long lastReportAt,OffsetDateTime createdAt) {
+            this(deviceKey,name,productKey,status,online,lastReportAt,createdAt,null);
+        }
     }
 
     /**

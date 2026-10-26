@@ -29,6 +29,9 @@ export interface UserView {
   tenantName: string | null
   mustChangePassword: boolean
   impersonatedBy: string | null
+  permissions?: string[] | null
+  tenantPermissions?: string[] | null
+  authorizationEnforced?: boolean
 }
 
 export interface TokenResponse {
@@ -94,6 +97,7 @@ export type ImportMode = 'merge' | 'replace'
 export type DeviceStatus = 'ENABLED' | 'DISABLED'
 
 export interface DeviceView {
+  permissions?: string[] | null
   deviceKey: string
   name: string
   productKey: string
@@ -327,8 +331,8 @@ export interface ReplayRequest {
 }
 
 export type OrganizationStatus = 'ACTIVE' | 'DISABLED'
-export interface CustomerView { code: string; name: string; status: OrganizationStatus; createdAt: string }
-export interface ProjectView { code: string; name: string; customerCode: string | null; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
-export interface SiteView { code: string; name: string; projectCode: string; timezone: string; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
-export interface AssetView { code: string; name: string; siteCode: string; parentCode: string | null; type: string | null; status: OrganizationStatus; createdAt: string }
+export interface CustomerView { permissions?: string[] | null; code: string; name: string; status: OrganizationStatus; createdAt: string }
+export interface ProjectView { permissions?: string[] | null; code: string; name: string; customerCode: string | null; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
+export interface SiteView { permissions?: string[] | null; code: string; name: string; projectCode: string; timezone: string; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
+export interface AssetView { permissions?: string[] | null; code: string; name: string; siteCode: string; parentCode: string | null; type: string | null; status: OrganizationStatus; createdAt: string }
 export interface DeviceAssignmentView { deviceKey: string; siteCode: string; assetCode: string | null }

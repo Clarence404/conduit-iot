@@ -92,15 +92,15 @@ describe('UsersView', () => {
   it('hides disable and delete on the own row', async () => {
     const { wrapper } = await mountView()
 
-    expect(rowButtons(wrapper, 0)).toEqual(['编辑', '重置密码'])
-    expect(rowButtons(wrapper, 1)).toEqual(['编辑', '重置密码', '启用', '删除'])
+    expect(rowButtons(wrapper, 0)).toEqual(['资源权限', '编辑', '重置密码'])
+    expect(rowButtons(wrapper, 1)).toEqual(['资源权限', '编辑', '重置密码', '启用', '删除'])
     wrapper.unmount()
   })
 
   it('has no own row while impersonating', async () => {
     const { wrapper } = await mountView({ username: 'sysadmin', impersonatedBy: 'sysadmin' })
 
-    expect(rowButtons(wrapper, 0)).toEqual(['编辑', '重置密码', '禁用', '删除'])
+    expect(rowButtons(wrapper, 0)).toEqual(['资源权限', '编辑', '重置密码', '禁用', '删除'])
     wrapper.unmount()
   })
 

@@ -73,7 +73,9 @@ public class OverviewService {
                 .collect(Collectors.toMap(Product::getId, Function.identity()));
         int deviceCount = snapshot.deviceCount();
         int enabledCount = snapshot.enabledCount();
-        DeadSummary dead = deadLastHour(productList);
+        var authorization = dev.conduit.server.authorization.AuthorizationContext.current();
+        DeadSummary dead = authorization != null && !authorization.scope().tenantPermission("device.read")
+                ? null : deadLastHour(productList);
         List<RecentDevice> recent = recentDevices(snapshot.devices(), productsById);
         OverviewView view = new OverviewView(productList.size(), propertyCount, deviceCount, enabledCount,
                 deviceCount - enabledCount, snapshot.onlineCount(), dead, recent,

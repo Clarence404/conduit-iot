@@ -23,7 +23,8 @@ public final class AuthDtos {
      * @param impersonatedBy     代入的平台管理员用户名；未代入为 null
      */
     public record UserView(String username, String displayName, String role, String tenantCode, String tenantName,
-                           boolean mustChangePassword, String impersonatedBy) {
+                           boolean mustChangePassword, String impersonatedBy, java.util.Set<String> permissions,
+                           java.util.Set<String> tenantPermissions, boolean authorizationEnforced) {
     }
 
     /**

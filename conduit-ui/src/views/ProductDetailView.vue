@@ -38,7 +38,8 @@ const props = defineProps<{ productKey: string }>()
 const route = useRoute()
 const router = useRouter()
 const { setName } = useBreadcrumb()
-const { canWrite } = usePermission()
+const { can } = usePermission()
+const canWrite = computed(() => can('product.manage', true))
 
 // 当前标签与 ?tab= 同步；用 replace 切换，不产生历史记录
 const activeTab = computed<ProductTab>({

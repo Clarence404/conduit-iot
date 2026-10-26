@@ -34,6 +34,8 @@ public class OrganizationService {
     private final AssetMapper assets;
     private final DeviceMapper devices;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.authorization.AuthorizationMapper authorizations;
 
     public OrganizationService(CustomerMapper customers, ProjectMapper projects, SiteMapper sites,
                                AssetMapper assets, DeviceMapper devices, Clock clock) {
@@ -84,7 +86,7 @@ public class OrganizationService {
         Map<Long, String> customerCodes = customerIds.isEmpty()
                 ? new HashMap<>() : codes(customers.selectBatchIds(customerIds));
         return rows.stream().map(p -> new ProjectView(p.getCode(), p.getName(), customerCodes.get(p.getCustomerId()),
-                p.getStatus(), Boolean.TRUE.equals(p.getIsDefault()), p.getCreatedAt())).toList();
+                p.getStatus(), Boolean.TRUE.equals(p.getIsDefault()), p.getCreatedAt(), permissions(p.getId(),null))).toList();
     }
 
     public ProjectView createProject(SaveProjectRequest request) {
@@ -114,6 +116,7 @@ public class OrganizationService {
 
     public void deleteProject(String code) {
         Project value = requireProject(code);
+        if(authorizations.projectBindings(value.getId())>0) throw ApiException.conflict("项目仍有成员授权，不能删除");
         if (Boolean.TRUE.equals(value.getIsDefault())) {
             throw ApiException.conflict("默认项目不能删除");
         }
@@ -148,6 +151,8 @@ public class OrganizationService {
         requireSameCode(code, request.code());
         Site value = requireSite(code);
         Project project = requireProject(request.projectCode());
+        if(!project.getId().equals(value.getProjectId()) && authorizations.siteBindings(value.getId())>0)
+            throw ApiException.conflict("站点仍有成员授权，不能移动");
         if (!project.getId().equals(value.getProjectId())
                 && (assets.exists(new LambdaQueryWrapper<Asset>().eq(Asset::getSiteId, value.getId()))
                 || devices.exists(new LambdaQueryWrapper<Device>().eq(Device::getSiteId, value.getId())))) {
@@ -165,6 +170,7 @@ public class OrganizationService {
 
     public void deleteSite(String code) {
         Site value = requireSite(code);
+        if(authorizations.siteBindings(value.getId())>0) throw ApiException.conflict("站点仍有成员授权，不能删除");
         if (Boolean.TRUE.equals(value.getIsDefault())) {
             throw ApiException.conflict("默认站点不能删除");
         }
@@ -346,16 +352,21 @@ public class OrganizationService {
 
     private ProjectView projectView(Project p, Customer c) {
         return new ProjectView(p.getCode(), p.getName(), c == null ? null : c.getCode(), p.getStatus(),
-                Boolean.TRUE.equals(p.getIsDefault()), p.getCreatedAt());
+                Boolean.TRUE.equals(p.getIsDefault()), p.getCreatedAt(), permissions(p.getId(),null));
     }
 
     private SiteView siteView(Site s, String projectCode) {
         return new SiteView(s.getCode(), s.getName(), projectCode, s.getTimezone(), s.getStatus(),
-                Boolean.TRUE.equals(s.getIsDefault()), s.getCreatedAt());
+                Boolean.TRUE.equals(s.getIsDefault()), s.getCreatedAt(), permissions(s.getProjectId(),s.getId()));
     }
 
     private AssetView assetView(Asset a, String siteCode, String parentCode) {
-        return new AssetView(a.getCode(), a.getName(), siteCode, parentCode, a.getType(), a.getStatus(), a.getCreatedAt());
+        Site site=dev.conduit.server.authorization.AuthorizationContext.current()==null ? null : sites.selectById(a.getSiteId());
+        return new AssetView(a.getCode(), a.getName(), siteCode, parentCode, a.getType(), a.getStatus(), a.getCreatedAt(), permissions(site==null ? null : site.getProjectId(),a.getSiteId()));
+    }
+
+    private static java.util.Set<String> permissions(Long project,Long site) {
+        return dev.conduit.server.authorization.AuthorizationContext.permissions(project,site);
     }
 
     private Map<Long, String> projectCodes(List<Long> ids) {

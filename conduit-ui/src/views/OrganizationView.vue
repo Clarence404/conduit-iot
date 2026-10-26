@@ -10,7 +10,10 @@ import PageHeader from '@/components/PageHeader.vue'
 
 type Kind = 'customer' | 'project' | 'site' | 'asset'
 type Row = CustomerView | ProjectView | SiteView | AssetView
-const { canWrite } = usePermission()
+const { can } = usePermission()
+const canWrite = computed(() => can(`${active.value}.manage`, active.value === 'customer'))
+const canCreate = computed(() => can(`${active.value}.manage`, active.value === 'customer' || active.value === 'project'))
+function rowCan(row: Row) { return row.permissions ? row.permissions.includes(`${active.value}.manage`) : canWrite.value }
 const active = ref<Kind>('project')
 const loading = ref(false)
 const customers = ref<CustomerView[]>([])
@@ -84,7 +87,7 @@ onMounted(load)
 <template>
   <div>
     <PageHeader title="组织" subtitle="管理租户内的客户、项目、站点和资产；设备在详情页分配到站点或资产。">
-      <template #actions><el-button :icon="Refresh" @click="load">刷新</el-button><el-button v-if="canWrite" type="primary" :icon="Plus" @click="openCreate">新建{{ titles[active] }}</el-button></template>
+      <template #actions><el-button :icon="Refresh" @click="load">刷新</el-button><el-button v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新建{{ titles[active] }}</el-button></template>
     </PageHeader>
     <div class="cd-panel">
       <el-tabs v-model="active">
@@ -96,8 +99,8 @@ onMounted(load)
         <el-table-column v-if="active === 'site'" prop="timezone" label="时区" width="150"/>
         <el-table-column v-if="active === 'asset'" prop="type" label="类型" width="140"><template #default="{ row }">{{ row.type || '—' }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '禁用' }}</el-tag><el-tag v-if="isDefault(row)" class="default-tag" type="warning">默认</el-tag></template></el-table-column>
-        <el-table-column v-if="canWrite" label="操作" width="150"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">编辑</el-button><el-button v-if="!isDefault(row)" link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
-        <template #empty><el-empty :description="`暂无${titles[active]}`"><el-button v-if="canWrite" type="primary" @click="openCreate">新建{{ titles[active] }}</el-button></el-empty></template>
+        <el-table-column v-if="canWrite" label="操作" width="150"><template #default="{ row }"><el-button v-if="rowCan(row)" link type="primary" @click="openEdit(row)">编辑</el-button><el-button v-if="rowCan(row) && !isDefault(row)" link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
+        <template #empty><el-empty :description="`暂无${titles[active]}`"><el-button v-if="canCreate" type="primary" @click="openCreate">新建{{ titles[active] }}</el-button></el-empty></template>
       </el-table>
     </div>
     <el-dialog v-model="dialog" :title="`${editing ? '编辑' : '新建'}${titles[active]}`" width="520px">

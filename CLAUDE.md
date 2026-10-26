@@ -12,6 +12,8 @@
 
 ## 1. 整体设计
 
+**新功能演示约定（必须）**：每次新增功能同步准备可直接查看和操作的演示数据、入口与预期现象，不交付空页面。关系数据写入版本化 Flyway 迁移或明确的 demo 初始化脚本，动态数据由模拟器/可重复脚本生成，保证其他电脑初始化与 VM 升级可复现；初始化幂等且不覆盖人工数据、密码和密钥，限制在演示环境/演示租户。覆盖主要场景与权限、状态、缺测等关键边界，自测后写入 `docs/test-reports/`；无法生成的部分必须报告原因。此要求同时记录于全局 `%USERPROFILE%/.codex/AGENTS.md`。
+
 ### 1.1 组件与数据流
 
 ![Conduit 当前系统架构：设备接入、同步鉴权、异步处理与存储](docs/images/architecture.svg)
@@ -26,17 +28,21 @@
 | `conduit-transport` | 协议接入层（对应 ThingsBoard 的 transport）：单活多备（Redis 选主，只有主实例连接 EMQX），以固定 clientId 的磁盘持久会话普通订阅设备主题，把设备报文原样组装成 `RawMessage` 发布到总线；不做业务解析 |
 | `conduit-server` | 业务核心：EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 写时序库/最新值）、REST API、多租户与用户，以及租户内客户/项目/站点/资产和设备归属 |
 | `conduit-simulator` | 演示用设备模拟器与可靠上报参考实现：自动创建演示产品/设备、导入演示物模型、按间隔上报；收到平台业务回执才从内存待确认队列删除，超时原样重发、队列满后背压；配置平台管理员密码后模拟各租户的物模型产品 |
-| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架（分组可折叠侧栏、面包屑顶栏、PageHeader）、首页总览、暗色模式、按角色的菜单与写操作、平台首页、租户/用户管理、组织管理与设备组织归属 |
+| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架（分组可折叠侧栏、面包屑顶栏、PageHeader）、首页总览、暗色模式、按角色的菜单与写操作、平台首页、租户/用户管理、组织管理、设备组织归属与资源权限绑定 |
 | `conduit-e2e` | 端到端测试（`-Pe2e`）：Testcontainers 临时环境 + 本地 jar 进程，杀 server / 主 transport / 全部 transport、重启 EMQX 及可靠设备上报途中强杀 EMQX 五个场景不丢数据 |
 | `deploy/` | 开发环境包 `dev/`（开发用）、独立部署包 `standalone/`（extends 基础服务 + 应用，预编译产物或源码构建）、`package.sh`（打独立部署包）；项目名均为 `conduit` |
 
 ### 1.2 关键设计决定
 
+- **项目/站点授权（V0.3-B2 前半段）**：五个预置角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护，禁止故障时恢复旧管理员全权。用户页「资源权限」配置，产品保持租户级共享。自定义角色、项目成员委派、邀请、会话注册/吊销与持久化审计仍待后续阶段。详见 `docs/authorization.md`。
+
+![项目与站点授权链路](docs/images/authorization-flow.svg)
+
 - **遥测缺测与零值（全局强制）**：遥测值 null/测点缺省表示该时刻没有上报数据；0 表示实际有效上报的零值，false/枚举0同样是有效值。禁止缺测补零；无有效样本的聚合桶为缺测，曲线已知缺口须断线，不能前值填充或插值。查询失败另报错误，不能返回全零或假装无数据。最新值须保留最后有效样本的时间戳。适用完整规则与当前缺口见 `docs/telemetry-value-semantics.md`；元数据 null 按各字段契约解释。
 
 - **组织演示种子（Flyway V7）**：只为 V4 的四个演示租户创建固定 `demo-*` 编码的 8 客户、8 业务项目、16 业务站点、48 资产（设备区及主/备用设备组）；已有同编码组织不覆盖。仅将 V4 命名的演示设备从默认站点且无资产的状态分配至主设备组，保留人工归属、密钥与设备状态；普通新租户不灌演示业务数据。历史 V4/V6 迁移不修改，跨电脑复现由 V7 保证；运行数据继续由模拟器生成。
 
-- **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。租户侧栏「组织」页面以客户/项目/站点/资产四个标签维护层级，只读用户仅查看；设备详情显示并可调整站点/资产。Redis 键和 InfluxDB 标签暂不增加组织维度；未来 B2 的项目/站点权限先在 PostgreSQL 验证设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
+- **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。租户侧栏「组织」页面以客户/项目/站点/资产四个标签维护层级，只读用户仅查看；设备详情显示并可调整站点/资产。Redis 键和 InfluxDB 标签暂不增加组织维度；B2 前半段已以 SQL 范围验证项目/站点与设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
 
 - **消息总线**：经 `MessageBus` 接口，当前实现为 Redis Streams（消费组、`XPENDING` 认领、死信流 `conduit:stream:dead`）。将来评估 RabbitMQ（下行）、Kafka（大规模）时只换实现。
 - **投递语义**：至少一次。下游写入成功后才 ack；可恢复错误（时序库不可用、数据库连接失败等，判断时沿异常 cause 链查找）原地退避重试 1s→30s，不消耗投递次数；意外错误只把该条消息进死信 `PROCESSING_ERROR`；超过 5 次投递进死信 `MAX_DELIVERY_EXCEEDED`。接入侧：EMQX 开启磁盘持久会话，transport 写入总线成功后才回 PUBACK，transport 离线期间的消息存 EMQX 磁盘（保留 1 天），重连后补发。
@@ -54,7 +60,7 @@
   - 发现：`SIM_PLATFORM_PASSWORD` 非空时，用平台管理员（`SIM_PLATFORM_USERNAME`）发现 `SIM_TENANTS` 中启用租户的物模型产品与启用设备（每产品最多 `SIM_MAX_DEVICES_PER_PRODUCT` 台），并重置其密钥；任一租户失败只记 WARN。退出租户失败时用平台管理员重新登录，再失败则发现停止并保留已发现的部分；单台设备重置密钥失败只跳过该设备。
   - 生成：按解码器选上报格式，按物模型规则生成数据（spec 5.2），取值满足上下限与小数位；日曲线按系统时区（Docker 中 `TZ=Asia/Shanghai`）。产品含 eday/etotal/发电/光伏/pv/solar 测点或辐照度测点即为光伏模型，其 kW/W 功率测点（如交流功率）按日照曲线（夜间为 0）并累加成日发电量，用电类模型的功率按用电曲线；有多个功率测点时取最大的一个，不求和。
 - **多租户与用户**（V0.2-C，2026-10-22 加固）：`product`、`device`、`product_property` 带 `tenant_id`，MyBatis-Plus 租户拦截器按令牌中的租户自动过滤；`tenant`、`app_user` 不过滤，按租户查用户必须显式带 `tenant_id`。`device`、`product_property` 通过 `(tenant_id, product_id)` 组合外键引用 `product(tenant_id, id)`，数据库拒绝跨租户关联。真正的跨租户 Mapper 只能位于 `dev.conduit.server.tenant.system` 包并标注 `@InterceptorIgnore`，调用方还必须经 `TenantContext.callAsSystem(purpose, ...)` 进入系统模式；每次进入记 INFO 日志，系统模式内误用普通 Mapper 会因无租户上下文失败。一个数据库事务只服务一个租户：已有租户绑定的事务不得切换租户或进入系统模式；平台事务从未绑定状态进入一种模式仍允许。角色 `PLATFORM_ADMIN`（不属于任何租户，`tenant_id` 为空，数据库约束保证）/ `TENANT_ADMIN` / `TENANT_VIEWER`；用户名 3～32 位字母开头（字母、数字、`_-.`）全平台唯一，密码 8～64 位含字母和数字（BCrypt），租户编码 `^[a-z][a-z0-9-]{1,31}$` 不可改；用户与租户状态 `ACTIVE`/`DISABLED`。启动时没有平台管理员则按 `CONDUIT_PLATFORM_ADMIN_USERNAME`（默认 `sysadmin`）/ `CONDUIT_PLATFORM_ADMIN_PASSWORD` 创建，密码为空只 WARN。默认租户 `default` 不能停用或删除；删除租户需无产品与设备，用户随之删除。租户用户保护：不能删除、禁用自己或改自己的角色，本租户最后一个启用的 `TENANT_ADMIN` 不能被降级、禁用或删除（租户行锁内检查）。停用租户时清除该租户设备的身份缓存 `conduit:auth:*`；设备身份带租户状态，MQTT 鉴权拒绝停用租户的设备，已连接设备的上报进死信 `TENANT_DISABLED`。访问 Redis 最新值/在线状态与 InfluxDB 前，必须先经受租户过滤的 PostgreSQL 查询取得设备，再使用查出的 `deviceKey`，禁止用请求参数中的 `deviceKey` 直接读写；`conduit:auth:{deviceKey}` 是有意的平台级例外，缓存身份必须携带可信 `tenantId`，后续处理只采用该值。
-- **权限与会话**（V0.2-C）：JWT（access 15 分钟、refresh 7 天 HttpOnly Cookie）声明 `sub` 用户 id、`tid`（平台管理员没有）、`role`（有效角色）、`typ`，代入时加 `imp`（平台管理员 id），需改密码时加 `mcp`。登录拒绝禁用用户与停用租户；续期重读数据库（禁用、停用、角色变化最长 15 分钟生效），代入令牌续期时目标租户停用或删除则退回平台管理员自己的令牌。`SecurityConfig` 按路径与方法统一判断：`/platform/**` 仅平台管理员（代入令牌的有效角色是 `TENANT_ADMIN`，被拒），`/users/**` 租户管理员，其余 `/api/v1/**` GET 为租户管理员与只读用户、写为租户管理员，`/auth/**`、`/me/**` 所有登录用户，`/actuator/**` 除 health 外仅平台管理员；前端只隐藏入口。需改密码时（新用户、首个管理员、被重置密码）除 `GET /auth/me`、`PUT /me/password`、登录/刷新/登出外一律 403 `code=PASSWORD_CHANGE_REQUIRED`，`PUT /me/password` 返回新令牌。进入租户 `POST /platform/tenants/{code}/enter`（停用租户 409）与退出 `POST /auth/exit-tenant` 各记 INFO，代入期间每个写请求由 `ImpersonationLogFilter` 记一行 INFO（不记请求体），代入期间不能改密码。
+- **权限与会话**（V0.2-C）：JWT（access 15 分钟、refresh 7 天 HttpOnly Cookie）声明 `sub` 用户 id、`tid`（平台管理员没有）、`role`（有效角色）、`typ`，代入时加 `imp`（平台管理员 id），需改密码时加 `mcp`。登录拒绝禁用用户与停用租户；续期重读数据库（shadow 下禁用、停用、角色变化最长 15 分钟生效；enforce/read-only 下业务请求每次检查数据库当前状态与授权），代入令牌续期时目标租户停用或删除则退回平台管理员自己的令牌。旧兼容 `shadow` 模式下，`SecurityConfig` 按路径与方法统一判断：`/platform/**` 仅平台管理员（代入令牌的有效角色是 `TENANT_ADMIN`，被拒），`/users/**` 租户管理员，其余 `/api/v1/**` GET 为租户管理员与只读用户、写为租户管理员，`/auth/**`、`/me/**` 所有登录用户，`/actuator/**` 除 health 外仅平台管理员；前端只隐藏入口。需改密码时（新用户、首个管理员、被重置密码）除 `GET /auth/me`、`PUT /me/password`、登录/刷新/登出外一律 403 `code=PASSWORD_CHANGE_REQUIRED`，`PUT /me/password` 返回新令牌。进入租户 `POST /platform/tenants/{code}/enter`（停用租户 409）与退出 `POST /auth/exit-tenant` 各记 INFO，代入期间每个写请求由 `ImpersonationLogFilter` 记一行 INFO（不记请求体），代入期间不能改密码。
 - **物模型**（V0.2-A）：产品定义属性（DOUBLE/INT/BOOL/TEXT/ENUM），上报按属性逐测点校验；不合格测点被剔除并记录 `FIELD_REJECTED`；没有物模型的产品按 V0.1 规则（数值一律浮点）。物模型缓存 60 秒，编辑后提交事务再失效。
 - **解码器**：`PayloadDecoder` SPI，按产品选择（`standard-json`、`flat-json`），名称重复启动即失败。
 - **时序库**：InfluxDB 3 Core 3.12.0，自写 HTTP 客户端（`/api/v3/write_lp`、`/api/v3/query_sql`），所有产品共用表 `property`，tag 为 `tenant_id`/`product_key`/`device_key`，每个测点一列，保留 30 天。列类型全表共享：同名测点在所有产品中必须是同一类型（例如模拟器只给物模型含枚举 st 的演示产品发送 st，e2e 等无物模型产品不发）。
@@ -98,7 +104,7 @@
 - Java 21、Spring Boot 3.5、MyBatis-Plus、Flyway；包名 `dev.conduit.<模块>`；按业务分包（`device`、`product`、`thingmodel`、`telemetry`、`pipeline` …）。
 - 测试：先写失败测试（TDD）；集成测试用 Testcontainers；前端用 Vitest + `@vue/test-utils`。
 - 测试报告：每次实际执行测试后，必须在 `docs/test-reports/` 新建或更新 `YYYY-MM-DD-<主题>.md`。报告至少记录被测范围与代码状态、环境、实际命令、用例数/结果/耗时、跳过或阻塞项、非阻塞警告及日志位置；失败和无效尝试也要如实记录。没有执行的测试不得写成“通过”。最终交付时必须给出本次报告链接。
-- 界面：中文文案；所有分页表格默认每页 10 条（可选 10/20/50/100），分页、请求序号与越界页码修正统一用 `useTable`；功能入口要显眼（列表有「操作」列按钮、全局面包屑、产品与设备互相可跳转）；详情页的标签页与路由 query `tab` 同步（`router.replace`）。页面顶部用 `PageHeader`，列表筛选用 `FilterBar`，在线状态用 `OnlineDot`，启用/禁用用 `el-tag`，时间用 `RelativeTime`；空状态为 `el-empty` + 引导按钮，首次加载显示骨架屏。样式只用 CSS 变量（`--el-*` 或 `src/styles/tokens.css` 的 `--cd-*`），不写死颜色，深色主题下必须可读。新增页面在 `router/meta.ts` 的 `ROUTE_META` 中登记页面名称、面包屑与菜单归属。写操作按钮（新建、编辑、删除、导入、启用/禁用、重置密钥/密码）按 `usePermission().canWrite` 显示，只读身份隐藏而非禁用；新页面在 `ROUTE_META` 标注 `scope` 与 `requires`。
+- 界面：中文文案；所有分页表格默认每页 10 条（可选 10/20/50/100），分页、请求序号与越界页码修正统一用 `useTable`；功能入口要显眼（列表有「操作」列按钮、全局面包屑、产品与设备互相可跳转）；详情页的标签页与路由 query `tab` 同步（`router.replace`）。页面顶部用 `PageHeader`，列表筛选用 `FilterBar`，在线状态用 `OnlineDot`，启用/禁用用 `el-tag`，时间用 `RelativeTime`；空状态为 `el-empty` + 引导按钮，首次加载显示骨架屏。样式只用 CSS 变量（`--el-*` 或 `src/styles/tokens.css` 的 `--cd-*`），不写死颜色，深色主题下必须可读。新增页面在 `router/meta.ts` 的 `ROUTE_META` 中登记页面名称、面包屑与菜单归属。写操作按钮（新建、编辑、删除、导入、启用/禁用、重置密钥/密码）按 `usePermission().can(permission, tenant)` 与响应行级 permissions 显示；shadow 兼容旧 canWrite，只读身份隐藏而非禁用；新页面在 `ROUTE_META` 标注 `scope` 与 `requires`。
 - 演示与测试数据：用有意义的中文名称（如「三相电表（演示）」「1号楼配电室 电表01」），测试结束清理自己创建的数据。
 - 日志：SLF4J 参数化；消息链路上 DEBUG 每条消息/每批一行（transport 收发、流水线解码/校验/写库/ACK、鉴权放行、在线状态、历史与总览、REST 访问行），逐字段细节放 TRACE；构造字符串或集合的日志用 `isDebugEnabled()`/`isTraceEnabled()` 保护；绝不记录设备密钥、口令、JWT、内部 token、Authorization；payload 值只在 TRACE 且截断 256 字符。；管理操作（租户与用户的增删改、重置密码、进入/退出租户、代入期间的写请求）各记一行 INFO，不记请求体与口令。
 - 提交：Conventional Commits；只署名不带邮箱；不加任何 AI 署名行。
@@ -164,8 +170,10 @@
 - 2026-10-20：链路精简评估完成，结论暂不精简——关闭 EMQX 磁盘持久会话的前提是所有设备走可靠模式，而契约允许设备不带 `id`；删除 transport 选主的前提是共享订阅，受 EMQX 版本阻塞（5.10.5 不支持，6.3.0 可用但许可与吞吐未澄清）。Redis 总线因承担消费组、认领与死信而维持现状。重新评估的触发条件见 `2026-10-20-conduit-reliable-uplink-design.md` 第 10 节。
 - 2026-10-20 V0.2-R3：遥测重放——`/api/v1/platform/telemetry/replay` 三个接口，范围左闭右开、跨度上限 6 小时、每批 500、同时只允许一个任务且状态只在内存；重放不更新在线状态、不写死信；窗口按 Redis 时钟匹配故运维两端各多留约 1 分钟；`PipelineProcessor` 抽出 `TelemetryIngestor`（`IngestSource` + 指标 `source` 标签）与 `Backoff` 供正常消费与重放共用，`MessageBus` 增加 `range` 按条目 id 区间只读（`2026-10-20-conduit-telemetry-replay-design.md`）。
 - 2026-10-21：V0.2-R3 遥测重放验收通过（幂等、不写死信、不改在线状态、取消与权限矩阵均在本地整套服务上验证）。验收期间发现 EMQX 持久会话不可恢复会使接入彻底停住（已知故障模式首次实际发生），人工以 `cleanStart=true` 丢弃损坏会话恢复；自动兜底列入 backlog「V0.2-R3 遗留」。
-- 2026-10-21：EMQX 持久会话损坏的专项实验结论——同 clientId 主备切换（活体、连续、旧主已死、正常断开共 18 轮）均正常恢复，「互踢防双主」的设计无风险；仅服务端 `clients kick` 必然损坏会话（9/9），且与在途消息、`$SYS` 订阅无关。据此决定**暂不实现自动兜底**，按低频边界场景处理，人工以 `cleanStart=true` 丢弃损坏会话恢复，详见 backlog「V0.2-R3 遗留」。
+- 2026-10-21：EMQX 持久会话专项实验中，同 clientId 主备切换（18 轮）正常，服务端 `clients kick` 在 9/9 轮损坏会话；当时据此暂缓自动兜底。2026-10-26 演示 VM 又出现 32 MB 堆限制触发进程关闭后，旧会话确认序号异常并使实时采集停滞，说明不能再把风险限定为人为 kick。已备份旧会话、切新 clientId 恢复实时采集；旧积压未声称恢复。后续需单独设计会话异常检测、无损取证与可验证的恢复路径，详见 `docs/test-reports/2026-10-26-telemetry-freshness.md`。
 - 2026-10-21：V0.3 拆为六个子项目 A 租户隔离硬化 → B 组织模型与 RBAC → C 租户生命周期控制面 → D 计量与配额 → E 资源治理，F 工程与运维基线可并行（见 `docs/roadmap-saas.md` V0.3 一节）；CI 暂不建设，理由与重启条件一并记录在该节。
 
 - 2026-10-22 V0.3 前置租户隔离加固：决定暂不实施 PostgreSQL RLS，以 MyBatis-Plus 租户拦截器为主体，补充租户组合外键、唯一的 `tenant.system` + `TenantContext.callAsSystem` 跨租户通道、一事务一租户断言与越权测试。Redis/InfluxDB 延续共享存储逻辑隔离，访问必须使用经 PostgreSQL 租户查询确认的设备身份。出现真实跨租户泄露、引入不经 MyBatis 的数据访问路径，或多人协作/业务表超过 10 张时重新评估 RLS（`2026-10-22-conduit-tenant-isolation-design.md`）。
 - 2026-10-26 V0.3-B1 组织骨架：新增租户内 `customer → project → site → asset` 业务层级；项目与站点作为后续授权范围，客户不是子租户；产品仍在租户内共享，设备必须归属一个站点并可选关联同站点资产。V6 为存量和新建租户提供受保护的默认项目/站点，组合外键强制租户与站点一致；本阶段只交付数据模型和后端接口，细粒度授权、自定义角色、邀请、会话吊销、审计与界面按 B2～B4 实施（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
+- 2026-10-26 V0.3-B2 前半段：新增预置角色与租户/项目/站点绑定、每请求新鲜授权和 SQL 范围过滤；兼容账号以 authz_managed 标记显式接管，撤权不能恢复旧角色。提供 shadow/enforce/read-only 开关、OWNER 保护与用户页资源权限配置；暂不交付自定义角色、项目成员委派和 B3/B4。业务表超过 10 张后复核 RLS，继续以可迁移的 MyBatis-Plus + 组合外键和受控系统 Mapper 为应用边界，见 docs/authorization.md。
+- 2026-10-26 全局演示约定：新增功能必须配套可复现的演示数据、可操作入口、查看步骤和测试报告；不得只在当前 VM 手工造数或交付空页面；初始化不能覆盖人工配置与凭据。

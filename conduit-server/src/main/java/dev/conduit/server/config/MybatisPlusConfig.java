@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.DataPermissionInterceptor;
+import dev.conduit.server.authorization.ScopeDataPermissionHandler;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import dev.conduit.server.tenant.TenantContext;
 import net.sf.jsqlparser.expression.Expression;
@@ -41,6 +43,7 @@ public class MybatisPlusConfig {
                 return TENANT_FREE_TABLES.contains(tableName);
             }
         }));
+        interceptor.addInnerInterceptor(new DataPermissionInterceptor(new ScopeDataPermissionHandler()));
         interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.POSTGRE_SQL));
         return interceptor;
     }

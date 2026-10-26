@@ -2,6 +2,10 @@
 
 基础服务（PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX，定义在 `../dev/docker-compose.yml`，以 `extends` 引用）+ conduit-server、两个 transport（一主一备）、conduit-web 与演示模拟器。需要 Docker 与 Docker Compose v2。
 
+项目/站点授权采用扩展迁移与分阶段开关：`CONDUIT_AUTHORIZATION_MODE=shadow`（默认观察）、`enforce`（正式执行）、`read-only`（保留范围的只读保护）。启用前备份 PostgreSQL；已依赖范围授权后不能回退旧应用恢复全租户权限。配置和演示初始化见 [授权说明](../../docs/authorization.md)。新功能演示关系数据通过版本化 `deploy/demo/authorization-demo.py` 复现，动态遥测仍由模拟器生成。
+
+EMQX 单连接进程堆上限由 `EMQX_CONNECTION_MAX_HEAP_SIZE` 配置，默认 `256MB`，用于持久会话恢复；仍保留内存保护，不等于每连接预留256MB。已存在 Dashboard/CLI 运行时覆盖配置时，应以 `emqx ctl conf show force_shutdown` 检查实际生效值。调高不会自动修复既有会话的确认序号异常，运维处理须独立验证，不能通过静默清空持久会话掩盖积压丢失。
+
 ## 方式一：预编译产物（宿主机无外网）
 
 在开发机上（需 git、JDK 21 上的 Maven、Node.js 22）：

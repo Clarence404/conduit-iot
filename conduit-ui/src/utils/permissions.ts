@@ -23,9 +23,15 @@ export function permissionsOf(user: UserView | null): Permissions {
   return {
     isPlatformAdmin: role === 'PLATFORM_ADMIN',
     isImpersonating: Boolean(user?.impersonatedBy),
-    canWrite: role === 'TENANT_ADMIN',
-    canManageUsers: role === 'TENANT_ADMIN',
+    canWrite: user?.authorizationEnforced ? Boolean(user.permissions?.some((p) => p.endsWith('.manage'))) : role === 'TENANT_ADMIN',
+    canManageUsers: user?.authorizationEnforced ? Boolean(user.tenantPermissions?.includes('member.manage')) : role === 'TENANT_ADMIN',
   }
+}
+
+/** 服务端启用细粒度授权时按权限码判断；兼容窗口仍用旧角色。 */
+export function hasPermission(user: UserView | null, permission: string, tenant = false): boolean {
+  if (!user?.authorizationEnforced) return user?.role === 'TENANT_ADMIN'
+  return Boolean((tenant ? user.tenantPermissions : user.permissions)?.includes(permission))
 }
 
 const ROLE_LABELS: Record<Role, string> = {

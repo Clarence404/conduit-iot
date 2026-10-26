@@ -82,6 +82,15 @@ describe('DevicesView', () => {
     expect(deviceApi.list).toHaveBeenCalledWith({ productKey: undefined, keyword: undefined, page: 1, size: 10 })
     wrapper.unmount()
   })
+  it('shows write buttons only for the device with a writable grant', async () => {
+    vi.mocked(deviceApi.list).mockResolvedValue({items: [device({ permissions: ['device.manage', 'device.secret.rotate'] }), device({ deviceKey: 'dk2', permissions: ['device.read'] })], total: 2, page: 1, size: 10})
+    const { wrapper } = await mountView()
+    const rows=wrapper.findAll('.el-table__body tbody tr')
+    expect(rows[0]!.text()).toContain('重置密钥')
+    expect(rows[1]!.text()).not.toContain('重置密钥')
+    expect(rows[1]!.text()).not.toContain('删除')
+    wrapper.unmount()
+  })
 
   it('searches with the keyword and resets the filters', async () => {
     const { wrapper } = await mountView()

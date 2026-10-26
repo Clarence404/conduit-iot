@@ -1,6 +1,8 @@
 package dev.conduit.server.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.conduit.server.authorization.AuthorizationService;
+import dev.conduit.server.authorization.PermissionGateFilter;
 import dev.conduit.server.tenant.TenantMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
@@ -32,23 +34,29 @@ public class SecurityConfig {
     /** 构建过滤链（规则见类注释）。 */
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwt, ObjectMapper objectMapper,
-                                            TenantMapper tenants) throws Exception {
+                                            TenantMapper tenants, AuthorizationService authorization) throws Exception {
         http
                 // 无会话 + refresh Cookie 为 SameSite=Strict 且只发往 /api/v1/auth，关闭 CSRF
                 .csrf(c -> c.disable())
                 .httpBasic(b -> b.disable())
                 .formLogin(f -> f.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(a -> a
+                .authorizeHttpRequests(rules -> rules
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
                         .requestMatchers("/internal/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
                         .requestMatchers("/actuator/**").hasRole(Roles.PLATFORM_ADMIN)
                         .requestMatchers("/api/v1/auth/**", "/api/v1/me", "/api/v1/me/**").authenticated()
                         .requestMatchers("/api/v1/platform/**").hasRole(Roles.PLATFORM_ADMIN)
-                        .requestMatchers("/api/v1/users", "/api/v1/users/**").hasRole(Roles.TENANT_ADMIN)
+                        .requestMatchers("/api/v1/users", "/api/v1/users/**").access((authentication, context) ->
+                                new org.springframework.security.authorization.AuthorizationDecision(authorization.enforcing()
+                                        ? authentication.get().getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_"+Roles.TENANT_ADMIN) || a.getAuthority().equals("ROLE_"+Roles.TENANT_VIEWER)) : authentication.get().getAuthorities().stream()
+                                        .anyMatch(a -> a.getAuthority().equals("ROLE_"+Roles.TENANT_ADMIN))))
                         .requestMatchers(HttpMethod.GET, "/api/v1/**").hasAnyRole(Roles.TENANT_ADMIN, Roles.TENANT_VIEWER)
-                        .requestMatchers("/api/v1/**").hasRole(Roles.TENANT_ADMIN)
+                        .requestMatchers("/api/v1/**").access((authentication, context) ->
+                                new org.springframework.security.authorization.AuthorizationDecision(authorization.enforcing()
+                                        ? authentication.get().getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_"+Roles.TENANT_ADMIN) || a.getAuthority().equals("ROLE_"+Roles.TENANT_VIEWER))
+                                        : authentication.get().getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_"+Roles.TENANT_ADMIN))))
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint((req, res, ex) ->
@@ -57,7 +65,8 @@ public class SecurityConfig {
                                 writeProblem(res, objectMapper, HttpStatus.FORBIDDEN, "无权限", null)))
                 .addFilterBefore(new JwtAuthFilter(jwt), UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new PasswordChangeGateFilter(objectMapper), JwtAuthFilter.class)
-                .addFilterAfter(new ImpersonationLogFilter(tenants), PasswordChangeGateFilter.class);
+                .addFilterAfter(new ImpersonationLogFilter(tenants), PasswordChangeGateFilter.class)
+                .addFilterAfter(new PermissionGateFilter(authorization,objectMapper), ImpersonationLogFilter.class);
         return http.build();
     }
 

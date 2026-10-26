@@ -317,17 +317,25 @@ public class DeviceService {
         }
         Map<Long, String> productKeys = products.selectBatchIds(list.stream().map(Device::getProductId).distinct().toList())
                 .stream().collect(Collectors.toMap(Product::getId, Product::getProductKey));
+        var authorization=dev.conduit.server.authorization.AuthorizationContext.current();
+        Map<Long,Site> siteById=authorization==null ? Map.of() : sites.selectBatchIds(list.stream().map(Device::getSiteId).distinct().toList())
+                .stream().collect(Collectors.toMap(Site::getId,s->s));
         return list.stream().map(d -> {
             Presence p = presenceByDevice.get(d.getDeviceKey());
+            java.util.Set<String> permissions=null;
+            if(authorization!=null) {
+                Site site=siteById.get(d.getSiteId());
+                permissions=dev.conduit.server.authorization.AuthorizationContext.permissions(site==null ? null : site.getProjectId(),d.getSiteId());
+            }
             return new DeviceView(d.getDeviceKey(), d.getName(), productKeys.get(d.getProductId()), d.getStatus(),
-                    p != null && p.online(), lastReports.get(d.getDeviceKey()), d.getCreatedAt());
+                    p != null && p.online(), lastReports.get(d.getDeviceKey()), d.getCreatedAt(),permissions);
         }).toList();
     }
 
     private Site defaultSite() {
         Site site = sites.selectOne(new LambdaQueryWrapper<Site>().eq(Site::getIsDefault, true));
         if (site == null) {
-            throw new IllegalStateException("当前租户缺少默认站点");
+            throw ApiException.notFound("默认站点不存在或无权限，请指定已授权站点");
         }
         return site;
     }

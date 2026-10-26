@@ -41,7 +41,14 @@ const menuGroups = computed(() => menuGroupsFor(permissionsOf(auth.user)))
 /** 用户菜单与头像显示的名称：显示名称，未设置时用用户名 */
 const userName = computed(() => displayNameOf(auth.user))
 /** 当前角色的中文名称 */
-const roleText = computed(() => (auth.user ? roleLabel(auth.user.role) : ''))
+const roleText = computed(() => {
+  const user = auth.user
+  if (!user) return ''
+  if (!user.authorizationEnforced) return roleLabel(user.role)
+  if (user.tenantPermissions?.includes('tenant.manage')) return '租户所有者'
+  if (user.tenantPermissions?.includes('role.manage')) return '租户管理员'
+  return user.permissions?.some((p) => p.endsWith('.manage')) ? '范围授权成员' : '只读成员'
+})
 /** 头像文字：名称首字（大写） */
 const avatarText = computed(() => (userName.value || '?').slice(0, 1).toUpperCase())
 

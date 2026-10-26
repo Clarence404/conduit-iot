@@ -21,9 +21,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import UserFormDialog from '@/components/UserFormDialog.vue'
 import ResetPasswordDialog from '@/components/ResetPasswordDialog.vue'
+import AuthorizationDialog from '@/components/AuthorizationDialog.vue'
 
 const auth = useAuthStore()
-const { isImpersonating } = usePermission()
+const { isImpersonating, can } = usePermission()
+const authorizationVisible = ref(false)
+const authorizing = ref('')
 
 const filters = reactive({ keyword: '', role: '' as '' | TenantRole, status: '' as '' | AccountStatus })
 /** 已应用的筛选（点查询/回车时才从输入框复制），翻页与刷新都以它为准 */
@@ -145,7 +148,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <PageHeader title="用户" subtitle="本租户的账号：租户管理员可读写并管理用户，只读用户只能查看。">
+    <PageHeader title="用户" subtitle="维护租户账号与资源授权；项目和站点权限在「资源权限」中分配。">
       <template #actions>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
       </template>
@@ -179,7 +182,7 @@ onMounted(() => {
               <div v-if="row.displayName" class="cd-muted">{{ row.displayName }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="角色" width="120">
+          <el-table-column label="兼容角色" width="120">
             <template #default="{ row }">
               <el-tag :type="row.role === 'TENANT_ADMIN' ? 'primary' : 'info'" size="small">{{ roleLabel(row.role) }}</el-tag>
             </template>
@@ -193,8 +196,9 @@ onMounted(() => {
           <el-table-column label="创建时间" width="180">
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="260">
+          <el-table-column label="操作" width="350">
             <template #default="{ row }">
+              <el-button v-if="can('role.manage', true)" link type="primary" @click="authorizing = row.username; authorizationVisible = true">资源权限</el-button>
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
               <template v-if="!isSelf(row)">
@@ -243,6 +247,7 @@ onMounted(() => {
       @saved="onSaved"
     />
     <ResetPasswordDialog v-model="resetVisible" :username="resetting?.username ?? ''" :save="savePassword" />
+    <AuthorizationDialog v-model="authorizationVisible" :username="authorizing" />
   </div>
 </template>
 

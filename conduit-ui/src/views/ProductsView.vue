@@ -4,7 +4,7 @@
  * 「设备（在线/总数）」点击进入产品详情的设备标签。首次加载显示骨架屏；没有产品时引导新建，加载失败时改为「加载失败，点击重试」。新建时可选解码器，编辑时不能改。只读身份（usePermission().canWrite 为 false）看不到新建、编辑、删除。
  */
 
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
@@ -21,7 +21,8 @@ import { usePermission } from '@/composables/usePermission'
 import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
-const { canWrite } = usePermission()
+const { can } = usePermission()
+const canWrite = computed(() => can('product.manage', true))
 
 const codecs = ref<CodecView[]>([])
 const { items, total, page, size, loading, loaded, failed, load, onSizeChange, onPageChange } = useTable<ProductView>(

@@ -33,7 +33,8 @@ const props = defineProps<{ deviceKey: string }>()
 const route = useRoute()
 const router = useRouter()
 const { setName } = useBreadcrumb()
-const { canWrite } = usePermission()
+const { canWrite: legacyCanWrite } = usePermission()
+const canWrite = computed(() => device.value?.permissions ? device.value.permissions.includes('device.manage') : legacyCanWrite.value)
 
 // 当前标签与 ?tab= 同步；用 replace 切换，不产生历史记录
 const activeTab = computed<DeviceTab>({

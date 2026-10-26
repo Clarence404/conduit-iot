@@ -143,6 +143,7 @@ final class E2eEnvironment implements AutoCloseable {
         serverEnv.put("INFLUX_URL", influxUrl());
         serverEnv.put("INFLUX_TOKEN", influxToken);
         serverEnv.put("CONDUIT_ADMIN_USERNAME", ADMIN_USERNAME);
+        serverEnv.put("CONDUIT_AUTHORIZATION_MODE", "enforce");
         serverEnv.put("CONDUIT_ADMIN_PASSWORD", adminPassword);
         serverEnv.put("CONDUIT_PLATFORM_ADMIN_PASSWORD", "");
         serverEnv.put("CONDUIT_JWT_SECRET", jwtSecret);
@@ -189,6 +190,7 @@ final class E2eEnvironment implements AutoCloseable {
                             "/opt/emqx/etc/base.hocon")
                     .withCopyToContainer(Transferable.of(acl), "/opt/emqx/etc/conduit-acl.conf")
                     .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "true")
+                    .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")
                     .withEnv("EMQX_DASHBOARD__DEFAULT_PASSWORD", hex(16))

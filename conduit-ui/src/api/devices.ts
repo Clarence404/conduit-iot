@@ -23,8 +23,8 @@ export const deviceApi = {
   list: (query: DeviceQuery) =>
     http.get<PageView<DeviceView>>('/api/v1/devices', { params: query }).then((r) => r.data),
   get: (deviceKey: string) => http.get<DeviceView>(path(deviceKey)).then((r) => r.data),
-  create: (productKey: string, name: string) =>
-    http.post<DeviceCreated>('/api/v1/devices', { productKey, name }).then((r) => r.data),
+  create: (productKey: string, name: string, siteCode?: string) =>
+    http.post<DeviceCreated>('/api/v1/devices', { productKey, name, ...(siteCode ? { siteCode } : {}) }).then((r) => r.data),
   update: (deviceKey: string, name: string, status: DeviceStatus) =>
     http.put<DeviceView>(path(deviceKey), { name, status }).then((r) => r.data),
   resetSecret: (deviceKey: string) =>

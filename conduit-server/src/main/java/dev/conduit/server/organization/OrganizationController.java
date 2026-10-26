@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** 客户、项目、站点和资产 REST API；B2 会在服务层增加作用域权限。 */
+/** 客户、项目、站点和资产 REST API；B2 的作用域权限由统一过滤器及服务层共同校验。 */
 @RestController
 @RequestMapping("/api/v1")
 public class OrganizationController {

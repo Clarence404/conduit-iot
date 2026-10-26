@@ -19,9 +19,9 @@ public final class OrganizationDtos {
                                       @NotBlank @Pattern(regexp = STATUS) String status) {
     }
 
-    public record CustomerView(String code, String name, String status, OffsetDateTime createdAt) {
+    public record CustomerView(String code, String name, String status, OffsetDateTime createdAt, java.util.Set<String> permissions) {
         static CustomerView of(Customer value) {
-            return new CustomerView(value.getCode(), value.getName(), value.getStatus(), value.getCreatedAt());
+            return new CustomerView(value.getCode(), value.getName(), value.getStatus(), value.getCreatedAt(), dev.conduit.server.authorization.AuthorizationContext.permissions(null,null));
         }
     }
 
@@ -32,7 +32,7 @@ public final class OrganizationDtos {
     }
 
     public record ProjectView(String code, String name, String customerCode, String status, boolean systemDefault,
-                              OffsetDateTime createdAt) {
+                              OffsetDateTime createdAt, java.util.Set<String> permissions) {
     }
 
     public record SaveSiteRequest(@NotBlank @Pattern(regexp = CODE) String code,
@@ -43,7 +43,7 @@ public final class OrganizationDtos {
     }
 
     public record SiteView(String code, String name, String projectCode, String timezone, String status,
-                           boolean systemDefault, OffsetDateTime createdAt) {
+                           boolean systemDefault, OffsetDateTime createdAt, java.util.Set<String> permissions) {
     }
 
     public record SaveAssetRequest(@NotBlank @Pattern(regexp = CODE) String code,
@@ -55,6 +55,6 @@ public final class OrganizationDtos {
     }
 
     public record AssetView(String code, String name, String siteCode, String parentCode, String type, String status,
-                            OffsetDateTime createdAt) {
+                            OffsetDateTime createdAt, java.util.Set<String> permissions) {
     }
 }

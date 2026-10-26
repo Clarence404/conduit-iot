@@ -32,6 +32,8 @@
 
 ### 1.2 关键设计决定
 
+- **组织演示种子（Flyway V7）**：只为 V4 的四个演示租户创建固定 `demo-*` 编码的 8 客户、8 业务项目、16 业务站点、48 资产（设备区及主/备用设备组）；已有同编码组织不覆盖。仅将 V4 命名的演示设备从默认站点且无资产的状态分配至主设备组，保留人工归属、密钥与设备状态；普通新租户不灌演示业务数据。历史 V4/V6 迁移不修改，跨电脑复现由 V7 保证；运行数据继续由模拟器生成。
+
 - **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。租户侧栏「组织」页面以客户/项目/站点/资产四个标签维护层级，只读用户仅查看；设备详情显示并可调整站点/资产。Redis 键和 InfluxDB 标签暂不增加组织维度；未来 B2 的项目/站点权限先在 PostgreSQL 验证设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
 
 - **消息总线**：经 `MessageBus` 接口，当前实现为 Redis Streams（消费组、`XPENDING` 认领、死信流 `conduit:stream:dead`）。将来评估 RabbitMQ（下行）、Kafka（大规模）时只换实现。
@@ -105,6 +107,8 @@
 见 README「开发」：开发模式是 Docker 宿主机只跑开发环境包（宿主机上 `deploy/dev` 目录中 `docker compose up -d`），server、transport、simulator、UI 在 IDEA 中运行（运行配置 `Conduit (local all)`），`deploy/dev/.env` 的 `CONDUIT_AUTH_URL` 指向开发机。本地 transport 直接成为主实例，不要在 `application-local.yml` 中覆盖 `client-id` 或 `session-expiry-seconds`；本地模拟器默认使用「三相电表（演示）」，配置 `SIM_PLATFORM_PASSWORD` 后同时模拟各演示租户的产品。本地 server 需在 `application-local.yml` 配 `conduit.bootstrap.platform-admin-password`（或环境变量 `CONDUIT_PLATFORM_ADMIN_PASSWORD`）才会创建平台管理员 `sysadmin`。实施计划不再包含部署步骤，本地日志在仓库根目录 `logs/`（`CONDUIT_LOG_DIR`），排查问题先看这里。验收用测试和对本地运行的整套服务做 API 检查；只有所有者要求时才部署独立部署包（`deploy/package.sh` 打包后在宿主机启动）。
 
 ## 4. 决定记录
+
+- 2026-10-26：Flyway V7 固化四个演示租户的客户、项目、站点、资产与演示设备归属；保持 V4/V6 不变，新增编码冲突时保留已有组织，已有人工设备归属不覆盖。初始化数量及新库/旧库验收见 `docs/test-reports/2026-10-26-organization-demo-seed.md`。
 
 按时间追加，每条一行：日期、版本、决定、对应 spec / 提交。
 

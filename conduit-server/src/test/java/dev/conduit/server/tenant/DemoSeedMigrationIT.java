@@ -26,6 +26,14 @@ class DemoSeedMigrationIT extends IntegrationTestBase {
             assertThat(count(schema, "product")).isEqualTo(8);
             assertThat(count(schema, "device")).isEqualTo(174);
             assertThat(count(schema, "product_property")).isEqualTo(36);
+            assertThat(count(schema, "customer")).isEqualTo(8);
+            assertThat(count(schema, "project")).isEqualTo(12);
+            assertThat(count(schema, "site")).isEqualTo(20);
+            assertThat(count(schema, "asset")).isEqualTo(48);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema
+                    + ".device where asset_id is not null", Integer.class)).isEqualTo(174);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema
+                    + ".asset where parent_id is not null", Integer.class)).isEqualTo(32);
             assertThat(deviceCounts(schema)).containsExactlyInAnyOrderEntriesOf(Map.of(
                     "default", 110,
                     "huadong-power", 26,
@@ -62,6 +70,31 @@ class DemoSeedMigrationIT extends IntegrationTestBase {
                     .isEqualTo(100);
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".device "
                     + "where name='1号楼配电室 电表01'", Integer.class)).isOne();
+        } finally {
+            jdbc.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
+    @Test
+    void organizationSeedPreservesManualAssignmentsAndOrdinaryTenants() {
+        String schema = "org_upgrade_" + unique("s");
+        try {
+            Flyway.configure().dataSource(dataSource).schemas(schema).target("6").load().migrate();
+            jdbc.update("insert into " + schema + ".tenant(code,name) values ('ordinary','普通租户')");
+            jdbc.update("insert into " + schema + ".site(tenant_id,project_id,code,name) "
+                    + "select tenant_id,id,'manual-site','人工站点' from " + schema
+                    + ".project where tenant_id=(select id from " + schema + ".tenant where code='default') and is_default");
+            jdbc.update("update " + schema + ".device set site_id=(select id from " + schema
+                    + ".site where code='manual-site') where device_key='demo-meter-001'");
+            Flyway.configure().dataSource(dataSource).schemas(schema).load().migrate();
+            Flyway.configure().dataSource(dataSource).schemas(schema).load().migrate();
+            assertThat(count(schema, "customer")).isEqualTo(8);
+            assertThat(count(schema, "asset")).isEqualTo(48);
+            assertThat(jdbc.queryForObject("select s.code from " + schema + ".device d join " + schema
+                    + ".site s on s.id=d.site_id where d.device_key='demo-meter-001'", String.class))
+                    .isEqualTo("manual-site");
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".customer c join " + schema
+                    + ".tenant t on t.id=c.tenant_id where t.code='ordinary'", Integer.class)).isZero();
         } finally {
             jdbc.execute("drop schema if exists " + schema + " cascade");
         }

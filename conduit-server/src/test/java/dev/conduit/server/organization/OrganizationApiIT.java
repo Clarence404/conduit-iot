@@ -95,6 +95,12 @@ class OrganizationApiIT extends IntegrationTestBase {
 
     @Test
     void defaultProjectAndSiteCannotBeDeleted() throws Exception {
+        mvc.perform(get("/api/v1/projects").header(HttpHeaders.AUTHORIZATION, auth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.code == 'default')]").isNotEmpty());
+        mvc.perform(get("/api/v1/assets").header(HttpHeaders.AUTHORIZATION, auth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
         mvc.perform(delete("/api/v1/projects/default").header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isConflict());
         mvc.perform(delete("/api/v1/sites/default").header(HttpHeaders.AUTHORIZATION, auth))

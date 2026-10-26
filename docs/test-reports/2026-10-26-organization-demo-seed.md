@@ -3,7 +3,7 @@
 - 日期：2026-10-26
 - 分支：`codex/v0.3b-rbac-design`
 - 范围：Flyway V7 组织演示数据与存量设备分配。
-- 结果：新库与升级专项通过；VM 验收记录见后续补充。
+- 结果：新库与升级专项通过，发布包 `1ccfe9f` 已部署 VM 并通过页面验收。
 
 ## 数据基线
 
@@ -44,3 +44,13 @@ mvn -B -pl conduit-server -am verify `
 ## 文档和架构
 
 已同步 README、CLAUDE.md §1.2 与第 4 节。检查 architecture.svg、module-dependencies.svg 和 organization-model.svg：领域关系、组件和协议未变化，本次只填充演示记录，无需修改图源。路线图未修改。
+
+## VM 发布验收
+
+- 发布目录：`/opt/conduit-releases/1ccfe9f/deploy/standalone`；使用 `deploy/package.sh` 从已提交版本构建，后端打包、前端 TypeScript 检查及 Vite 构建通过。Vite 保留已有的大 chunk 提示，无构建错误。
+- 沿用运行配置和数据卷，Flyway 自动迁移至 V7；数据库实测 4 租户、12 项目、20 站点、48 资产，设备无站点记录为 0，缺默认组织租户为 0。
+- 默认租户登录和四类组织 API 均通过，返回 2 客户、3 项目、5 站点、12 资产；设备归属接口返回 `demo-site-4`。
+- server readiness 为 UP、Web HTTP 200；PostgreSQL、Redis、InfluxDB、EMQX、server 健康，Transport 与模拟器运行。
+- 发布后日志检查无 ERROR。
+- 浏览器实际刷新组织页，看到「智创园区综合能源」「滨江楼宇环境监测」及 12 条资产，主设备组/设备区启用、备用设备组禁用，父子归属正确显示。
+- 页面证据：`target/organization-demo-v7.png`；访问 `http://192.168.126.128:8090/organization`。

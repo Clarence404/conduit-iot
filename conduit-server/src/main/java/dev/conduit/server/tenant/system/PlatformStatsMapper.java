@@ -1,4 +1,4 @@
-package dev.conduit.server.platform;
+package dev.conduit.server.tenant.system;
 
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
@@ -7,10 +7,7 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-/**
- * 平台级跨租户统计查询。每个方法都显式绕过租户行过滤（@InterceptorIgnore），只供平台管理员接口
- * （平台概况、租户列表、停用时清缓存）在内部使用，禁止用于租户内接口。
- */
+/** 系统模式下执行平台级跨租户统计与缓存清理查询。 */
 @Mapper
 public interface PlatformStatsMapper {
 
@@ -27,12 +24,12 @@ public interface PlatformStatsMapper {
     @Select("select tenant_id, count(*) as n from product group by tenant_id")
     List<TenantCount> productCounts();
 
-    /** 全平台设备的租户与 deviceKey。 */
+    /** 全平台设备及其租户。 */
     @InterceptorIgnore(tenantLine = "true")
     @Select("select tenant_id, device_key from device")
     List<TenantDevice> devices();
 
-    /** 指定租户全部设备的 deviceKey（停用/启用租户时清除身份缓存用）。 */
+    /** 指定租户全部设备的 deviceKey。 */
     @InterceptorIgnore(tenantLine = "true")
     @Select("select device_key from device where tenant_id = #{tenantId}")
     List<String> deviceKeysOf(@Param("tenantId") long tenantId);

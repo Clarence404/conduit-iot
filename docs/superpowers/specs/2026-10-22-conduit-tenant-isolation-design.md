@@ -1,7 +1,7 @@
 # Conduit 租户隔离加固设计
 
 - 日期：2026-10-22
-- 状态：待实施
+- 状态：已实施（2026-10-22，验收记录见 `docs/test-reports/2026-10-22-tenant-isolation.md`）
 - 范围：在现有「`tenant_id` 列 + MyBatis-Plus 租户拦截器」之上补三件事——数据库级的跨租户关联约束、唯一受控的跨租户通道、以及越权测试套件。
 - 定位：V0.3 的前置一次性加固，不占子项目编号。后续 V0.3-B（组织模型与 RBAC）等子项目在这套规矩上继续建设。
 
@@ -172,7 +172,7 @@ public static void runAsSystem(String purpose, Runnable action)
 | `system/ProductLookupMapper` | `ProductMapper.findByKeyAnyTenant` | `findByKeyAnyTenant(String productKey)` |
 | `system/PlatformStatsMapper` | `platform/PlatformStatsMapper` 整体移动 | `productCounts()`、`devices()`、`deviceKeysOf(long)` |
 
-SQL 与返回类型保持不变，只改所在类与包；记录类型（`DeviceIdentity`、`TenantCount`、`TenantDevice`）留在原包，由系统 Mapper 引用。
+SQL 与返回类型保持不变，只改所在类与包。记录类型按「是否只服务于该 Mapper」区分：`TenantCount`、`TenantDevice` 只有平台统计查询用到，随 `PlatformStatsMapper` 一起迁入 `tenant.system` 并作为其嵌套记录（原 `platform` 包中的同名类随之删除，避免出现两个 `PlatformStatsMapper`）；`DeviceIdentity` 还被缓存、鉴权与流水线共用，留在 `device` 包，由系统 Mapper 引用。
 
 调用方改为在系统模式中调用，例如：
 

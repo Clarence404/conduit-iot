@@ -66,7 +66,7 @@ public class MqttAuthService {
         if (!clientId.equals(username)) {
             return deny("clientId does not match username", clientId);
         }
-        Optional<DeviceIdentity> identity = lookup.find(username);
+        Optional<DeviceIdentity> identity = lookup.findForMqtt(username);
         if (identity.isEmpty()) {
             return deny("unknown device", clientId);
         }

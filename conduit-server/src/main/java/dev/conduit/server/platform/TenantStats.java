@@ -4,10 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import dev.conduit.server.auth.AppUser;
 import dev.conduit.server.auth.AppUserMapper;
 import dev.conduit.server.auth.Roles;
-import dev.conduit.server.platform.PlatformStatsMapper.TenantCount;
-import dev.conduit.server.platform.PlatformStatsMapper.TenantDevice;
+import dev.conduit.server.tenant.system.PlatformStatsMapper.TenantCount;
+import dev.conduit.server.tenant.system.PlatformStatsMapper.TenantDevice;
 import dev.conduit.server.presence.Presence;
 import dev.conduit.server.presence.PresenceStore;
+import dev.conduit.server.tenant.TenantContext;
+import dev.conduit.server.tenant.system.PlatformStatsMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -91,10 +93,12 @@ public class TenantStats {
                 a[1]++;
             }
         }
-        for (TenantCount c : statsMapper.productCounts()) {
+        SystemStats systemStats = TenantContext.callAsSystem("platform-stats",
+                () -> new SystemStats(statsMapper.productCounts(), statsMapper.devices()));
+        for (TenantCount c : systemStats.productCounts()) {
             slot(acc, c.tenantId())[2] += (int) c.n();
         }
-        List<TenantDevice> devices = statsMapper.devices();
+        List<TenantDevice> devices = systemStats.devices();
         for (TenantDevice d : devices) {
             slot(acc, d.tenantId())[3]++;
         }
@@ -110,6 +114,10 @@ public class TenantStats {
         acc.forEach((tenantId, a) -> byTenant.put(tenantId,
                 new TenantCounts(a[0], a[1], a[2], a[3], online == null ? null : a[4])));
         return new Snapshot(Map.copyOf(byTenant), online == null ? null : online.size());
+    }
+
+    /** 一次系统模式查询取得的平台产品、设备统计原始数据。 */
+    private record SystemStats(List<TenantCount> productCounts, List<TenantDevice> devices) {
     }
 
     /** 取某租户的累加槽位：[用户, 管理员, 产品, 设备, 在线]。 */

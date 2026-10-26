@@ -5,8 +5,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Ticker;
 import dev.conduit.server.product.Product;
-import dev.conduit.server.product.ProductMapper;
 import dev.conduit.server.tenant.TenantContext;
+import dev.conduit.server.tenant.system.ProductLookupMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -28,16 +28,16 @@ public class ThingModelCache {
     static final Duration TTL = Duration.ofSeconds(60);
     static final long MAX_SIZE = 10_000;
 
-    private final ProductMapper products;
+    private final ProductLookupMapper products;
     private final ProductPropertyMapper properties;
     private final Cache<String, ProductProfile> cache;
 
     @Autowired
-    public ThingModelCache(ProductMapper products, ProductPropertyMapper properties) {
+    public ThingModelCache(ProductLookupMapper products, ProductPropertyMapper properties) {
         this(products, properties, Ticker.systemTicker());
     }
 
-    ThingModelCache(ProductMapper products, ProductPropertyMapper properties, Ticker ticker) {
+    ThingModelCache(ProductLookupMapper products, ProductPropertyMapper properties, Ticker ticker) {
         this.products = products;
         this.properties = properties;
         this.cache = Caffeine.newBuilder().expireAfterWrite(TTL).maximumSize(MAX_SIZE).ticker(ticker).build();
@@ -61,7 +61,8 @@ public class ThingModelCache {
      * 从库加载：先跨租户找到产品，再以产品所属租户的身份读取其属性（按 id 升序）。产品不存在返回 null。
      */
     private ProductProfile load(String productKey) {
-        Product product = products.findByKeyAnyTenant(productKey);
+        Product product = TenantContext.callAsSystem("pipeline-product",
+                () -> products.findByKeyAnyTenant(productKey));
         if (product == null) {
             return null;
         }

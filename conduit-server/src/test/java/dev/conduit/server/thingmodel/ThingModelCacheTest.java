@@ -2,7 +2,7 @@ package dev.conduit.server.thingmodel;
 
 import com.github.benmanes.caffeine.cache.Ticker;
 import dev.conduit.server.product.Product;
-import dev.conduit.server.product.ProductMapper;
+import dev.conduit.server.tenant.system.ProductLookupMapper;
 import dev.conduit.server.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
 
 class ThingModelCacheTest {
 
-    ProductMapper products = mock(ProductMapper.class);
+    ProductLookupMapper products = mock(ProductLookupMapper.class);
     ProductPropertyMapper properties = mock(ProductPropertyMapper.class);
     AtomicLong nanos = new AtomicLong();
     Ticker ticker = nanos::get;

@@ -1,10 +1,10 @@
 package dev.conduit.server.tenant;
 
 import dev.conduit.server.device.DeviceIdentity;
-import dev.conduit.server.device.DeviceMapper;
 import dev.conduit.server.product.Product;
 import dev.conduit.server.product.ProductMapper;
 import dev.conduit.server.support.IntegrationTestBase;
+import dev.conduit.server.tenant.system.DeviceIdentityMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -17,7 +17,7 @@ class TenantIsolationIT extends IntegrationTestBase {
     ProductMapper products;
 
     @Autowired
-    DeviceMapper devices;
+    DeviceIdentityMapper identities;
 
     @Test
     void insertFillsTenantIdAndQueriesAreScopedToCurrentTenant() {
@@ -46,6 +46,12 @@ class TenantIsolationIT extends IntegrationTestBase {
     }
 
     @Test
+    void ordinaryMapperStillFailsInsideSystemMode() {
+        assertThatThrownBy(() -> TenantContext.callAsSystem("platform-stats", () -> products.selectList(null)))
+                .hasRootCauseInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void identityLookupWorksAcrossTenantsWithoutContext() {
         long tenant = createTenant("t3-");
         String pk = unique("pk");
@@ -56,10 +62,12 @@ class TenantIsolationIT extends IntegrationTestBase {
         jdbc.update("insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt) "
                 + "values (?, ?, ?, 'd', 'h', 's')", tenant, productId, dk);
 
-        DeviceIdentity identity = devices.findIdentity(dk);
+        DeviceIdentity identity = TenantContext.callAsSystem("pipeline-identity",
+                () -> identities.findIdentity(dk));
 
         assertThat(identity).isEqualTo(new DeviceIdentity(dk, tenant, "ENABLED", "h", "s", pk, "ACTIVE"));
         assertThat(identity.enabled()).isTrue();
-        assertThat(devices.findIdentity("missing")).isNull();
+        assertThat(TenantContext.callAsSystem("pipeline-identity",
+                () -> identities.findIdentity("missing"))).isNull();
     }
 }

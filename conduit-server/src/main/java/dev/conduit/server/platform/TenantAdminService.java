@@ -22,6 +22,7 @@ import dev.conduit.server.tenant.Tenant;
 import dev.conduit.server.tenant.TenantCodePolicy;
 import dev.conduit.server.tenant.TenantContext;
 import dev.conduit.server.tenant.TenantMapper;
+import dev.conduit.server.tenant.system.PlatformStatsMapper;
 import dev.conduit.server.user.UserDtos.PasswordRequest;
 import dev.conduit.server.user.UserDtos.UserItem;
 import dev.conduit.server.web.ApiException;
@@ -260,7 +261,8 @@ public class TenantAdminService {
 
     /** 清除租户全部设备的身份缓存；Redis 不可用时只记 WARN（缓存 5 分钟后自然过期）。 */
     private void evictIdentities(Tenant tenant) {
-        List<String> deviceKeys = statsMapper.deviceKeysOf(tenant.getId());
+        List<String> deviceKeys = TenantContext.callAsSystem("tenant-device-keys",
+                () -> statsMapper.deviceKeysOf(tenant.getId()));
         try {
             identityCache.evictAll(deviceKeys);
         } catch (DataAccessException e) {

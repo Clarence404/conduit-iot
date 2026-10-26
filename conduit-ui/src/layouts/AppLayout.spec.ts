@@ -48,7 +48,7 @@ describe('AppLayout', () => {
 
     expect(wrapper.text()).toContain('设备接入')
     expect(wrapper.text()).toContain('系统管理')
-    expect(menuLabels(wrapper)).toEqual(['首页', '产品', '设备', '用户'])
+    expect(menuLabels(wrapper)).toEqual(['首页', '组织', '产品', '设备', '用户'])
     expect(wrapper.find('.el-menu-item.is-active').text()).toBe('设备')
     wrapper.unmount()
   })
@@ -63,7 +63,7 @@ describe('AppLayout', () => {
   it('gives a viewer only the overview and devices', async () => {
     const { wrapper } = await mountAt('/devices', { role: 'TENANT_VIEWER' })
 
-    expect(menuLabels(wrapper)).toEqual(['首页', '产品', '设备'])
+    expect(menuLabels(wrapper)).toEqual(['首页', '组织', '产品', '设备'])
     expect(wrapper.text()).not.toContain('系统管理')
     wrapper.unmount()
   })

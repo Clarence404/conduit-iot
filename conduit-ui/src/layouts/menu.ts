@@ -3,7 +3,7 @@
  * 平台管理员：概览、系统管理（租户、数据重放）；租户管理员（含代入的平台管理员）：概览、设备接入、系统管理（用户）；只读用户：概览、设备接入。
  */
 import type { Component } from 'vue'
-import { Box, Cpu, House, OfficeBuilding, RefreshRight, User } from '@element-plus/icons-vue'
+import { Box, Cpu, House, OfficeBuilding, RefreshRight, Share, User } from '@element-plus/icons-vue'
 import type { Permissions } from '@/utils/permissions'
 
 /** 菜单项；path 同时是 el-menu 的 index 与跳转地址 */
@@ -45,7 +45,7 @@ export function menuGroupsFor(p: Permissions): MenuGroup[] {
       },
     ]
   }
-  const groups = [OVERVIEW, DEVICE_ACCESS]
+  const groups = [OVERVIEW, { title: '组织管理', items: [{ path: '/organization', label: '组织', icon: Share }] }, DEVICE_ACCESS]
   if (p.canManageUsers) {
     groups.push({ title: '系统管理', items: [{ path: '/users', label: '用户', icon: User }] })
   }

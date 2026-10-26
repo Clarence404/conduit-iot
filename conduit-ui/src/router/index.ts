@@ -42,6 +42,12 @@ export const routes: RouteRecordRaw[] = [
         meta: ROUTE_META['product-detail'],
       },
       {
+        path: 'organization',
+        name: 'organization',
+        component: () => import('@/views/OrganizationView.vue'),
+        meta: ROUTE_META.organization,
+      },
+      {
         path: 'devices',
         name: 'devices',
         component: () => import('@/views/DevicesView.vue'),

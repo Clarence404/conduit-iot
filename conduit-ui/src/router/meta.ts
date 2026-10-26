@@ -52,6 +52,12 @@ export const ROUTE_META = {
     scope: 'tenant',
     breadcrumb: [{ label: '设备接入' }, { label: '设备' }],
   },
+  organization: {
+    title: '组织',
+    menu: '/organization',
+    scope: 'tenant',
+    breadcrumb: [{ label: '组织管理' }, { label: '组织' }],
+  },
   'device-detail': {
     title: '设备详情',
     menu: '/devices',

@@ -18,6 +18,7 @@ describe('menuGroupsFor', () => {
   it('gives tenant admins devices and users', () => {
     expect(layout({ isPlatformAdmin: false, isImpersonating: true, canWrite: true, canManageUsers: true })).toEqual([
       '概览:/home',
+      '组织管理:/organization',
       '设备接入:/products,/devices',
       '系统管理:/users',
     ])
@@ -26,6 +27,7 @@ describe('menuGroupsFor', () => {
   it('gives viewers only the overview and devices', () => {
     expect(layout({ isPlatformAdmin: false, isImpersonating: false, canWrite: false, canManageUsers: false })).toEqual([
       '概览:/home',
+      '组织管理:/organization',
       '设备接入:/products,/devices',
     ])
   })

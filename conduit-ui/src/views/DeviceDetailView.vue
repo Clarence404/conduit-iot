@@ -12,10 +12,11 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { deviceApi } from '@/api/devices'
+import { assetApi, siteApi } from '@/api/organization'
 import { productApi } from '@/api/products'
 import { thingModelApi } from '@/api/thingModel'
 import { problemMessage } from '@/api/errors'
-import type { DeviceView, PointView, PropertyView } from '@/api/types'
+import type { AssetView, DeviceAssignmentView, DeviceView, PointView, PropertyView, SiteView } from '@/api/types'
 import { deviceTabFromQuery, deviceTabQuery, historyQuery, propsFromQuery, type DeviceTab } from '@/utils/deviceTabs'
 import { createRequestSeq } from '@/utils/requestSeq'
 import { usePolling } from '@/composables/usePolling'
@@ -55,6 +56,12 @@ const lastRefreshed = ref<number | null>(null)
 const connectionVisible = ref(false)
 const editVisible = ref(false)
 const saving = ref(false)
+const assignment = ref<DeviceAssignmentView | null>(null)
+const assignmentVisible = ref(false)
+const assignmentSaving = ref(false)
+const sites = ref<SiteView[]>([])
+const assets = ref<AssetView[]>([])
+const assignmentForm = reactive({ siteCode: '', assetCode: '' })
 const editForm = reactive({ name: '', enabled: true })
 // 加载设备的请求序号：切换设备后，上一台设备的迟到响应不得写入页面
 const loadSeq = createRequestSeq()
@@ -92,6 +99,31 @@ async function loadDevice() {
     model.value = properties.value
   }
   modelReady.value = true
+  void loadAssignment()
+}
+
+async function loadAssignment() {
+  try {
+    const [current, siteRows, assetRows] = await Promise.all([
+      deviceApi.assignment(props.deviceKey), siteApi.list(), assetApi.list(),
+    ])
+    assignment.value = current; sites.value = siteRows; assets.value = assetRows
+  } catch (e) { ElMessage.error(problemMessage(e)) }
+}
+
+function openAssignment() {
+  assignmentForm.siteCode = assignment.value?.siteCode ?? sites.value[0]?.code ?? ''
+  assignmentForm.assetCode = assignment.value?.assetCode ?? ''
+  assignmentVisible.value = true
+}
+
+async function saveAssignment() {
+  if (!assignmentForm.siteCode) return ElMessage.warning('请选择站点')
+  assignmentSaving.value = true
+  try {
+    assignment.value = await deviceApi.assign(props.deviceKey, assignmentForm.siteCode, assignmentForm.assetCode || null)
+    assignmentVisible.value = false; ElMessage.success('组织归属已更新')
+  } catch (e) { ElMessage.error(problemMessage(e)) } finally { assignmentSaving.value = false }
 }
 
 /**
@@ -177,6 +209,8 @@ function resetForDevice() {
   connectionVisible.value = false
   editVisible.value = false
   saving.value = false
+  assignment.value = null
+  assignmentVisible.value = false
   void loadDevice()
   // 不等下一轮 5 秒轮询，立即取新设备的最新值（失败由下一轮轮询重试）
   void loadLatest().catch(() => {})
@@ -196,6 +230,11 @@ usePolling(loadLatest, 5000)
       @connection="connectionVisible = true"
       @edit="openEdit"
     />
+
+    <div class="cd-panel assignment-panel">
+      <div><strong>组织归属</strong><div class="cd-muted">站点：{{ assignment?.siteCode ?? '加载中' }} · 资产：{{ assignment?.assetCode ?? '未分配' }}</div></div>
+      <el-button v-if="canWrite" @click="openAssignment">调整归属</el-button>
+    </div>
 
     <div class="cd-panel">
       <el-tabs v-model="activeTab">
@@ -237,6 +276,13 @@ usePolling(loadLatest, 5000)
         <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
+    <el-dialog v-model="assignmentVisible" title="调整组织归属" width="min(440px, 92vw)">
+      <el-form label-width="70px">
+        <el-form-item label="站点" required><el-select v-model="assignmentForm.siteCode" @change="assignmentForm.assetCode = ''"><el-option v-for="x in sites" :key="x.code" :label="x.name" :value="x.code"/></el-select></el-form-item>
+        <el-form-item label="资产"><el-select v-model="assignmentForm.assetCode" clearable placeholder="不分配资产"><el-option v-for="x in assets.filter(a => a.siteCode === assignmentForm.siteCode)" :key="x.code" :label="x.name" :value="x.code"/></el-select></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="assignmentVisible = false">取消</el-button><el-button type="primary" :loading="assignmentSaving" @click="saveAssignment">保存</el-button></template>
+    </el-dialog>
   </div>
   <el-result v-else-if="failed" icon="warning" title="无法加载设备" sub-title="设备可能已被删除，或不属于当前租户。">
     <template #extra>
@@ -252,4 +298,7 @@ usePolling(loadLatest, 5000)
   flex-direction: column;
   gap: var(--cd-space-4);
 }
+.assignment-panel { display:flex; align-items:center; justify-content:space-between; gap:var(--cd-space-3) }
+.assignment-panel .cd-muted { margin-top:var(--cd-space-1) }
+.el-select { width:100% }
 </style>

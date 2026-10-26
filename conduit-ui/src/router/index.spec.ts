@@ -14,7 +14,7 @@ vi.mock('@/api/auth', () => ({ authApi: { login: vi.fn(), refresh: vi.fn(), logo
 vi.mock('@/api/me', () => ({ meApi: { update: vi.fn(), changePassword: vi.fn() } }))
 vi.mock('@/api/platform', () => ({ platformApi: { enter: vi.fn() } }))
 vi.mock('@/layouts/AppLayout.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
-for (const view of ['LoginView', 'HomeEntry', 'ProductsView', 'TenantsView', 'UsersView', 'NotFoundView']) {
+for (const view of ['LoginView', 'HomeEntry', 'ProductsView', 'OrganizationView', 'TenantsView', 'UsersView', 'NotFoundView']) {
   vi.doMock(`@/views/${view}.vue`, () => ({ default: { template: '<div />' } }))
 }
 

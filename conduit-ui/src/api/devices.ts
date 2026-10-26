@@ -6,7 +6,7 @@
 
 import { http } from './client'
 import type { DeviceFilterParams } from '@/utils/deviceFilters'
-import type { DeviceCreated, DeviceStatus, DeviceView, LatestView, PageView, SecretView } from './types'
+import type { DeviceAssignmentView, DeviceCreated, DeviceStatus, DeviceView, LatestView, PageView, SecretView } from './types'
 
 /**
  * 设备列表查询参数：分页 + 筛选（productKey、keyword、online、status、reported、createdFrom 含、createdTo 不含，均为可选）。
@@ -31,4 +31,8 @@ export const deviceApi = {
     http.post<SecretView>(`${path(deviceKey)}/reset-secret`).then((r) => r.data),
   remove: (deviceKey: string) => http.delete(path(deviceKey)).then(() => undefined),
   latest: (deviceKey: string) => http.get<LatestView>(`${path(deviceKey)}/latest`).then((r) => r.data),
+  assignment: (deviceKey: string) =>
+    http.get<DeviceAssignmentView>(`${path(deviceKey)}/assignment`).then((r) => r.data),
+  assign: (deviceKey: string, siteCode: string, assetCode: string | null) =>
+    http.put<DeviceAssignmentView>(`${path(deviceKey)}/assignment`, { siteCode, assetCode }).then((r) => r.data),
 }

@@ -2,7 +2,7 @@
 
 Conduit IoT 以建设面向工业、能源、园区与设备运营场景的生产级多租户 IoT SaaS 平台为目标。当前版本已跑通「设备 MQTT 直连 → 接入 → 总线 → 处理 → 时序存储 → Web 展示」主链路，正在按 SaaS Roadmap 补齐安全隔离、设备控制、规则引擎、资产与仪表盘、开放生态、云原生和商业化能力；生产就绪状态以阶段验收与测试报告为准。
 
-功能：产品与设备管理、租户内客户/项目/站点/资产组织模型与设备归属（V0.3-B1）、MQTT 接入与鉴权、物模型逐测点校验与可插拔解码（V0.2-A）、设备历史曲线（V0.2-B：设备详情「历史」标签页，按时间范围自动聚合，多测点联动缩放）、前端体验优化（首页总览、分组侧栏与面包屑、设备指标卡片与迷你趋势线、暗色模式与侧栏风格切换）、多租户与用户管理（V0.2-C：平台管理员管理租户并可进入租户代为操作，租户管理员管理本租户的产品、设备与用户，只读用户只能查看）、可靠性加固（V0.2-R/R2：transport 单活多备；设备收到平台持久接收回执前保留并重发本地副本；模拟器按物模型模拟各演示租户的设备）。
+功能：产品与设备管理、租户内客户/项目/站点/资产组织模型与管理界面、设备组织归属（V0.3-B1）、MQTT 接入与鉴权、物模型逐测点校验与可插拔解码（V0.2-A）、设备历史曲线（V0.2-B：设备详情「历史」标签页，按时间范围自动聚合，多测点联动缩放）、前端体验优化（首页总览、分组侧栏与面包屑、设备指标卡片与迷你趋势线、暗色模式与侧栏风格切换）、多租户与用户管理（V0.2-C：平台管理员管理租户并可进入租户代为操作，租户管理员管理本租户的产品、设备与用户，只读用户只能查看）、可靠性加固（V0.2-R/R2：transport 单活多备；设备收到平台持久接收回执前保留并重发本地副本；模拟器按物模型模拟各演示租户的设备）。
 
 当前产品路线：[`docs/roadmap-saas.md`](docs/roadmap-saas.md)。历史与专项设计文档：`docs/superpowers/specs/2026-10-14-conduit-v0.1-design.md`（V0.1）、`docs/superpowers/specs/2026-10-15-conduit-v0.2a-thing-model-design.md`（V0.2-A 物模型与编解码）、`docs/superpowers/specs/2026-10-15-conduit-v0.2b-history-design.md`（V0.2-B 历史查询与曲线）、`docs/superpowers/specs/2026-10-15-conduit-ui-refresh-design.md`（前端体验优化）、`docs/superpowers/specs/2026-10-16-conduit-v0.2c-tenants-users-design.md`（V0.2-C 多租户与用户管理）、`docs/superpowers/specs/2026-10-16-conduit-v0.2r-reliability-design.md`（V0.2-R 可靠性加固）、`docs/superpowers/specs/2026-10-20-conduit-reliable-uplink-design.md`（V0.2-R2 端到端可靠上报）。
 
@@ -14,7 +14,7 @@ Conduit IoT 以建设面向工业、能源、园区与设备运营场景的生�
 
 图中展示当前已实现架构；后续 SaaS 能力见 [Roadmap](docs/roadmap-saas.md)。存储连线表示 server 进程的数据访问，具体入口职责见下文。
 
-租户内组织层级与设备归属如下；当前已实现 B1 数据模型和后端接口，项目/站点级授权将在 B2 接入。
+租户内组织层级与设备归属如下；当前已实现 B1 数据模型、后端接口和组织管理界面，项目/站点级授权将在 B2 接入。
 
 ![Conduit 租户内组织模型与设备归属](docs/images/organization-model.svg)
 

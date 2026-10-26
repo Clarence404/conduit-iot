@@ -26,13 +26,13 @@
 | `conduit-transport` | 协议接入层（对应 ThingsBoard 的 transport）：单活多备（Redis 选主，只有主实例连接 EMQX），以固定 clientId 的磁盘持久会话普通订阅设备主题，把设备报文原样组装成 `RawMessage` 发布到总线；不做业务解析 |
 | `conduit-server` | 业务核心：EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 写时序库/最新值）、REST API、多租户与用户，以及租户内客户/项目/站点/资产和设备归属 |
 | `conduit-simulator` | 演示用设备模拟器与可靠上报参考实现：自动创建演示产品/设备、导入演示物模型、按间隔上报；收到平台业务回执才从内存待确认队列删除，超时原样重发、队列满后背压；配置平台管理员密码后模拟各租户的物模型产品 |
-| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架（分组可折叠侧栏、面包屑顶栏、PageHeader）、首页总览、暗色模式、按角色的菜单与写操作、平台首页与租户/用户管理 |
+| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架（分组可折叠侧栏、面包屑顶栏、PageHeader）、首页总览、暗色模式、按角色的菜单与写操作、平台首页、租户/用户管理、组织管理与设备组织归属 |
 | `conduit-e2e` | 端到端测试（`-Pe2e`）：Testcontainers 临时环境 + 本地 jar 进程，杀 server / 主 transport / 全部 transport、重启 EMQX 及可靠设备上报途中强杀 EMQX 五个场景不丢数据 |
 | `deploy/` | 开发环境包 `dev/`（开发用）、独立部署包 `standalone/`（extends 基础服务 + 应用，预编译产物或源码构建）、`package.sh`（打独立部署包）；项目名均为 `conduit` |
 
 ### 1.2 关键设计决定
 
-- **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。Redis 键和 InfluxDB 标签暂不增加组织维度；未来 B2 的项目/站点权限先在 PostgreSQL 验证设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
+- **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。租户侧栏「组织」页面以客户/项目/站点/资产四个标签维护层级，只读用户仅查看；设备详情显示并可调整站点/资产。Redis 键和 InfluxDB 标签暂不增加组织维度；未来 B2 的项目/站点权限先在 PostgreSQL 验证设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
 
 - **消息总线**：经 `MessageBus` 接口，当前实现为 Redis Streams（消费组、`XPENDING` 认领、死信流 `conduit:stream:dead`）。将来评估 RabbitMQ（下行）、Kafka（大规模）时只换实现。
 - **投递语义**：至少一次。下游写入成功后才 ack；可恢复错误（时序库不可用、数据库连接失败等，判断时沿异常 cause 链查找）原地退避重试 1s→30s，不消耗投递次数；意外错误只把该条消息进死信 `PROCESSING_ERROR`；超过 5 次投递进死信 `MAX_DELIVERY_EXCEEDED`。接入侧：EMQX 开启磁盘持久会话，transport 写入总线成功后才回 PUBACK，transport 离线期间的消息存 EMQX 磁盘（保留 1 天），重连后补发。

@@ -29,6 +29,7 @@ export function createTestRouter(): Router {
         meta: ROUTE_META['product-detail'],
       },
       { path: '/devices', name: 'devices', component: Empty, meta: ROUTE_META.devices },
+      { path: '/organization', name: 'organization', component: Empty, meta: ROUTE_META.organization },
       {
         path: '/devices/:deviceKey',
         name: 'device-detail',

@@ -325,3 +325,10 @@ export interface ReplayRequest {
   from: number
   to: number
 }
+
+export type OrganizationStatus = 'ACTIVE' | 'DISABLED'
+export interface CustomerView { code: string; name: string; status: OrganizationStatus; createdAt: string }
+export interface ProjectView { code: string; name: string; customerCode: string | null; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
+export interface SiteView { code: string; name: string; projectCode: string; timezone: string; status: OrganizationStatus; systemDefault: boolean; createdAt: string }
+export interface AssetView { code: string; name: string; siteCode: string; parentCode: string | null; type: string | null; status: OrganizationStatus; createdAt: string }
+export interface DeviceAssignmentView { deviceKey: string; siteCode: string; assetCode: string | null }

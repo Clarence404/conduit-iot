@@ -1,6 +1,8 @@
 package dev.conduit.server.device;
 
 import dev.conduit.server.device.DeviceDtos.CreateDeviceRequest;
+import dev.conduit.server.device.DeviceDtos.AssignDeviceRequest;
+import dev.conduit.server.device.DeviceDtos.DeviceAssignmentView;
 import dev.conduit.server.device.DeviceDtos.DeviceCreated;
 import dev.conduit.server.device.DeviceDtos.DeviceView;
 import dev.conduit.server.device.DeviceDtos.SecretView;
@@ -67,6 +69,17 @@ public class DeviceController {
     @PutMapping("/{deviceKey}")
     public DeviceView update(@PathVariable String deviceKey, @Valid @RequestBody UpdateDeviceRequest request) {
         return service.update(deviceKey, request);
+    }
+
+    @GetMapping("/{deviceKey}/assignment")
+    public DeviceAssignmentView assignment(@PathVariable String deviceKey) {
+        return service.assignment(deviceKey);
+    }
+
+    @PutMapping("/{deviceKey}/assignment")
+    public DeviceAssignmentView assign(@PathVariable String deviceKey,
+                                       @Valid @RequestBody AssignDeviceRequest request) {
+        return service.assign(deviceKey, request);
     }
 
     @PostMapping("/{deviceKey}/reset-secret")

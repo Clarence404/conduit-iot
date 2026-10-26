@@ -4,11 +4,17 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import dev.conduit.server.device.DeviceDtos.CreateDeviceRequest;
+import dev.conduit.server.device.DeviceDtos.AssignDeviceRequest;
+import dev.conduit.server.device.DeviceDtos.DeviceAssignmentView;
 import dev.conduit.server.device.DeviceDtos.DeviceCreated;
 import dev.conduit.server.device.DeviceDtos.DeviceView;
 import dev.conduit.server.device.DeviceDtos.SecretView;
 import dev.conduit.server.device.DeviceDtos.UpdateDeviceRequest;
 import dev.conduit.server.presence.Presence;
+import dev.conduit.server.organization.Asset;
+import dev.conduit.server.organization.OrganizationService;
+import dev.conduit.server.organization.Site;
+import dev.conduit.server.organization.SiteMapper;
 import dev.conduit.server.presence.PresenceStore;
 import dev.conduit.server.product.Product;
 import dev.conduit.server.product.ProductMapper;
@@ -51,10 +57,13 @@ public class DeviceService {
     private final LatestValueStore latest;
     private final PresenceStore presence;
     private final Clock clock;
+    private final SiteMapper sites;
+    private final OrganizationService organizations;
 
     public DeviceService(DeviceMapper devices, ProductMapper products, ProductService productService,
                          KeyGenerator keys, SecretHasher hasher, DeviceIdentityCache identityCache,
-                         LatestValueStore latest, PresenceStore presence, Clock clock) {
+                         LatestValueStore latest, PresenceStore presence, Clock clock,
+                         SiteMapper sites, OrganizationService organizations) {
         this.devices = devices;
         this.products = products;
         this.productService = productService;
@@ -64,6 +73,8 @@ public class DeviceService {
         this.latest = latest;
         this.presence = presence;
         this.clock = clock;
+        this.sites = sites;
+        this.organizations = organizations;
     }
 
     /**
@@ -76,6 +87,14 @@ public class DeviceService {
 
         Device d = new Device();
         d.setProductId(product.getId());
+        Site site = request.siteCode() == null || request.siteCode().isBlank()
+                ? defaultSite() : organizations.requireSite(request.siteCode());
+        Asset asset = organizations.optionalAsset(request.assetCode());
+        if (asset != null && !asset.getSiteId().equals(site.getId())) {
+            throw ApiException.badRequest("资产不属于所选站点");
+        }
+        d.setSiteId(site.getId());
+        d.setAssetId(asset == null ? null : asset.getId());
         d.setDeviceKey(keys.deviceKey());
         d.setName(request.name());
         d.setSecretSalt(salt);
@@ -204,6 +223,30 @@ public class DeviceService {
         return toViews(List.of(require(deviceKey))).getFirst();
     }
 
+    /** 查询设备的组织归属。 */
+    public DeviceAssignmentView assignment(String deviceKey) {
+        Device d = require(deviceKey);
+        Site site = sites.selectById(d.getSiteId());
+        Asset asset = d.getAssetId() == null ? null : organizations.optionalAssetById(d.getAssetId());
+        return new DeviceAssignmentView(deviceKey, site.getCode(), asset == null ? null : asset.getCode());
+    }
+
+    /** 把设备移动到站点或站点内资产；产品归属不变。 */
+    public DeviceAssignmentView assign(String deviceKey, AssignDeviceRequest request) {
+        Device d = require(deviceKey);
+        Site site = organizations.requireSite(request.siteCode());
+        Asset asset = organizations.optionalAsset(request.assetCode());
+        if (asset != null && !asset.getSiteId().equals(site.getId())) {
+            throw ApiException.badRequest("资产不属于所选站点");
+        }
+        devices.update(null, new LambdaUpdateWrapper<Device>()
+                .eq(Device::getId, d.getId())
+                .set(Device::getSiteId, site.getId())
+                .set(Device::getAssetId, asset == null ? null : asset.getId())
+                .set(Device::getUpdatedAt, OffsetDateTime.now(clock)));
+        return new DeviceAssignmentView(deviceKey, site.getCode(), asset == null ? null : asset.getCode());
+    }
+
     /**
      * 重置设备密钥：生成新密钥与盐，更新后清除身份缓存，旧密钥随之失效。返回新的明文密钥（仅此一次）。
      */
@@ -279,5 +322,13 @@ public class DeviceService {
             return new DeviceView(d.getDeviceKey(), d.getName(), productKeys.get(d.getProductId()), d.getStatus(),
                     p != null && p.online(), lastReports.get(d.getDeviceKey()), d.getCreatedAt());
         }).toList();
+    }
+
+    private Site defaultSite() {
+        Site site = sites.selectOne(new LambdaQueryWrapper<Site>().eq(Site::getIsDefault, true));
+        if (site == null) {
+            throw new IllegalStateException("当前租户缺少默认站点");
+        }
+        return site;
     }
 }

@@ -120,9 +120,9 @@ class OverviewApiIT extends IntegrationTestBase {
     private String insertDevice(long tenantId, long productId, String name, String status) {
         String deviceKey = unique("dk");
         String salt = secretHasher.newSalt();
-        jdbc.update("insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt, status) "
-                        + "values (?, ?, ?, ?, ?, ?, ?)",
-                tenantId, productId, deviceKey, name, secretHasher.hash("secret-" + deviceKey, salt), salt, status);
+        jdbc.update("insert into device (tenant_id, product_id, site_id, device_key, name, secret_hash, secret_salt, status) "
+                        + "values (?, ?, (select id from site where tenant_id = ? and is_default), ?, ?, ?, ?, ?)",
+                tenantId, productId, tenantId, deviceKey, name, secretHasher.hash("secret-" + deviceKey, salt), salt, status);
         return deviceKey;
     }
 

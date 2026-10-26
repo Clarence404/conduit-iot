@@ -19,9 +19,9 @@ class TenantScopedForeignKeyIT extends IntegrationTestBase {
                 Long.class, b, unique("pk"));
 
         assertThatThrownBy(() -> jdbc.update("""
-                insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt)
-                values (?, ?, ?, 'cross', 'h', 's')
-                """, a, productB, unique("dk"))).isInstanceOf(DataIntegrityViolationException.class);
+                insert into device (tenant_id, product_id, site_id, device_key, name, secret_hash, secret_salt)
+                values (?, ?, (select id from site where tenant_id = ? and is_default), ?, 'cross', 'h', 's')
+                """, a, productB, a, unique("dk"))).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("""
                 insert into product_property (tenant_id, product_id, identifier, name, data_type)
                 values (?, ?, 'Ua', 'cross', 'DOUBLE')

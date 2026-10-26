@@ -13,6 +13,7 @@ import dev.conduit.server.auth.SessionService;
 import dev.conduit.server.auth.UsernamePolicy;
 import dev.conduit.server.device.DeviceIdentityCache;
 import dev.conduit.server.device.DeviceMapper;
+import dev.conduit.server.organization.OrganizationProvisioner;
 import dev.conduit.server.platform.PlatformDtos.AdminAccount;
 import dev.conduit.server.platform.PlatformDtos.CreateTenantRequest;
 import dev.conduit.server.platform.PlatformDtos.TenantView;
@@ -59,12 +60,14 @@ public class TenantAdminService {
     private final TenantStats stats;
     private final DeviceIdentityCache identityCache;
     private final SessionService sessions;
+    private final OrganizationProvisioner organizations;
     private final PasswordEncoder encoder;
     private final Clock clock;
 
     public TenantAdminService(TenantMapper tenants, AppUserMapper users, ProductMapper products, DeviceMapper devices,
                               PlatformStatsMapper statsMapper, TenantStats stats, DeviceIdentityCache identityCache,
-                              SessionService sessions, PasswordEncoder encoder, Clock clock) {
+                              SessionService sessions, OrganizationProvisioner organizations,
+                              PasswordEncoder encoder, Clock clock) {
         this.tenants = tenants;
         this.users = users;
         this.products = products;
@@ -73,6 +76,7 @@ public class TenantAdminService {
         this.stats = stats;
         this.identityCache = identityCache;
         this.sessions = sessions;
+        this.organizations = organizations;
         this.encoder = encoder;
         this.clock = clock;
     }
@@ -121,6 +125,7 @@ public class TenantAdminService {
         tenant.setName(name);
         tenant.setStatus(Tenant.ACTIVE);
         tenants.insert(tenant);
+        organizations.provision(tenant.getId());
         if (users.exists(new LambdaQueryWrapper<AppUser>().eq(AppUser::getUsername, username))) {
             throw ApiException.conflict("用户名已存在: " + username);
         }

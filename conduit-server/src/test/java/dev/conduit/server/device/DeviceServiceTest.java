@@ -3,6 +3,8 @@ package dev.conduit.server.device;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import dev.conduit.server.presence.PresenceStore;
+import dev.conduit.server.organization.OrganizationService;
+import dev.conduit.server.organization.SiteMapper;
 import dev.conduit.server.product.ProductMapper;
 import dev.conduit.server.product.ProductService;
 import dev.conduit.server.security.KeyGenerator;
@@ -36,7 +38,8 @@ class DeviceServiceTest {
         LatestValueStore latest = mock(LatestValueStore.class);
         PresenceStore presence = mock(PresenceStore.class);
         DeviceService service = new DeviceService(devices, mock(ProductMapper.class), mock(ProductService.class),
-                mock(KeyGenerator.class), mock(SecretHasher.class), identityCache, latest, presence, Clock.systemUTC());
+                mock(KeyGenerator.class), mock(SecretHasher.class), identityCache, latest, presence, Clock.systemUTC(),
+                mock(SiteMapper.class), mock(OrganizationService.class));
 
         Device d = new Device();
         d.setId(7L);
@@ -61,7 +64,8 @@ class DeviceServiceTest {
         PresenceStore presence = mock(PresenceStore.class);
         DeviceService service = new DeviceService(devices, mock(ProductMapper.class), mock(ProductService.class),
                 mock(KeyGenerator.class), mock(SecretHasher.class), mock(DeviceIdentityCache.class),
-                mock(LatestValueStore.class), presence, Clock.systemUTC());
+                mock(LatestValueStore.class), presence, Clock.systemUTC(), mock(SiteMapper.class),
+                mock(OrganizationService.class));
         Device d = new Device();
         d.setId(1L);
         d.setDeviceKey("dk1");
@@ -82,7 +86,8 @@ class DeviceServiceTest {
         LatestValueStore latest = mock(LatestValueStore.class);
         DeviceService service = new DeviceService(devices, mock(ProductMapper.class), mock(ProductService.class),
                 mock(KeyGenerator.class), mock(SecretHasher.class), mock(DeviceIdentityCache.class),
-                latest, mock(PresenceStore.class), Clock.systemUTC());
+                latest, mock(PresenceStore.class), Clock.systemUTC(), mock(SiteMapper.class),
+                mock(OrganizationService.class));
         Device d = new Device();
         d.setId(1L);
         d.setDeviceKey("dk1");

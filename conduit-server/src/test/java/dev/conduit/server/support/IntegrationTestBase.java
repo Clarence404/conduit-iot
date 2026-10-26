@@ -64,9 +64,11 @@ public abstract class IntegrationTestBase {
         Long productId = jdbc.queryForObject(
                 "insert into product (tenant_id, product_key, name) values (?, ?, 'test product') returning id",
                 Long.class, tenantId, productKey);
-        jdbc.update("insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt, status) "
-                        + "values (?, ?, ?, 'test device', ?, ?, ?)",
-                tenantId, productId, deviceKey, secretHasher.hash(secret, salt), salt, status);
+        Long siteId = jdbc.queryForObject("select id from site where tenant_id = ? and is_default", Long.class,
+                tenantId);
+        jdbc.update("insert into device (tenant_id, product_id, site_id, device_key, name, secret_hash, secret_salt, status) "
+                        + "values (?, ?, ?, ?, 'test device', ?, ?, ?)",
+                tenantId, productId, siteId, deviceKey, secretHasher.hash(secret, salt), salt, status);
         return new TestDevice(tenantId, productKey, deviceKey, secret);
     }
 
@@ -100,8 +102,17 @@ public abstract class IntegrationTestBase {
 
     protected long createTenant(String codePrefix) {
         String code = unique(codePrefix);
-        return jdbc.queryForObject("insert into tenant (code, name) values (?, ?) returning id",
+        long tenantId = jdbc.queryForObject("insert into tenant (code, name) values (?, ?) returning id",
                 Long.class, code, code);
+        Long projectId = jdbc.queryForObject("""
+                insert into project (tenant_id, code, name, is_default)
+                values (?, 'default', '默认项目', true) returning id
+                """, Long.class, tenantId);
+        jdbc.update("""
+                insert into site (tenant_id, project_id, code, name, is_default)
+                values (?, ?, 'default', '默认站点', true)
+                """, tenantId, projectId);
+        return tenantId;
     }
 
     /**

@@ -59,8 +59,9 @@ class TenantIsolationIT extends IntegrationTestBase {
         Long productId = jdbc.queryForObject(
                 "insert into product (tenant_id, product_key, name) values (?, ?, 'p') returning id",
                 Long.class, tenant, pk);
-        jdbc.update("insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt) "
-                + "values (?, ?, ?, 'd', 'h', 's')", tenant, productId, dk);
+        jdbc.update("insert into device (tenant_id, product_id, site_id, device_key, name, secret_hash, secret_salt) "
+                + "values (?, ?, (select id from site where tenant_id = ? and is_default), ?, 'd', 'h', 's')",
+                tenant, productId, tenant, dk);
 
         DeviceIdentity identity = TenantContext.callAsSystem("pipeline-identity",
                 () -> identities.findIdentity(dk));

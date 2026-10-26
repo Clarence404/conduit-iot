@@ -21,6 +21,8 @@ public class Device {
     private Long id;
     private Long tenantId;
     private Long productId;
+    private Long siteId;
+    private Long assetId;
     private String deviceKey;
     private String name;
     private String secretHash;

@@ -14,8 +14,9 @@ public final class DeviceDtos {
     private DeviceDtos() {
     }
 
-    /** 创建设备请求：所属产品 Key 与设备名称。 */
-    public record CreateDeviceRequest(@NotBlank String productKey, @NotBlank @Size(max = 128) String name) {
+    /** 创建设备请求：站点为空时归入系统默认站点；assetCode 非空时必须属于所选站点。 */
+    public record CreateDeviceRequest(@NotBlank String productKey, @NotBlank @Size(max = 128) String name,
+                                      String siteCode, String assetCode) {
     }
 
     /** 更新设备请求：新名称与状态（ENABLED / DISABLED）。 */
@@ -42,5 +43,13 @@ public final class DeviceDtos {
      * 重置密钥的响应；deviceSecret 为新的明文密钥，仅此一次返回。
      */
     public record SecretView(String deviceKey, String deviceSecret) {
+    }
+
+    /** 调整设备组织归属。 */
+    public record AssignDeviceRequest(@NotBlank String siteCode, String assetCode) {
+    }
+
+    /** 设备组织归属视图。 */
+    public record DeviceAssignmentView(String deviceKey, String siteCode, String assetCode) {
     }
 }

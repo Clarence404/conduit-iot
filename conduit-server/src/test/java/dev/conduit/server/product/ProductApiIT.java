@@ -197,9 +197,10 @@ class ProductApiIT extends IntegrationTestBase {
     private String insertDevice(long productId, String status) {
         String deviceKey = unique("dk");
         String salt = secretHasher.newSalt();
-        jdbc.update("insert into device (tenant_id, product_id, device_key, name, secret_hash, secret_salt, status) "
-                        + "values (?, ?, ?, '计数测试设备', ?, ?, ?)",
-                defaultTenantId(), productId, deviceKey, secretHasher.hash("secret-" + deviceKey, salt), salt, status);
+        long tenantId = defaultTenantId();
+        jdbc.update("insert into device (tenant_id, product_id, site_id, device_key, name, secret_hash, secret_salt, status) "
+                        + "values (?, ?, (select id from site where tenant_id = ? and is_default), ?, '计数测试设备', ?, ?, ?)",
+                tenantId, productId, tenantId, deviceKey, secretHasher.hash("secret-" + deviceKey, salt), salt, status);
         return deviceKey;
     }
 }

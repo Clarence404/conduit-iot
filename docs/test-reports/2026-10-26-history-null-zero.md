@@ -26,3 +26,11 @@
 ## 架构同步
 
 已更新 README、CLAUDE.md第4节、全局数据语义文档和 API DTO 注释；检查现有系统/模块/组织SVG，组件拓扑、模块依赖与领域关系均未改变，无需改图。历史查询扫描上限计划明确标记暂停。
+
+## VM 发布验收
+
+- 发布提交 `b8e2781`，目录 `/opt/conduit-releases/b8e2781/deploy/standalone`。干净检出打包成功；仅 `docker compose up -d --build --no-deps conduit-server conduit-web` 更新服务端和网页，未重建 InfluxDB 或调整参数。
+- server healthy；登录后查询默认租户「1号楼1层 环境监测01」温度最近24小时：bucketMs=300000，289桶，285非空桶、4个null桶、0个真实零温度桶。
+- 自动验证相邻桶间距等于bucketMs，所有缺测桶均为 `[ts,null,null,null]`，`history_bucket_contract=PASS`。
+- 浏览器实际打开同设备24小时历史，温度正常绘制，尾部缺测保留空白，不归零或延续。页面证据 `target/history-null-zero-vm.png`。
+- 真实0/false/枚举0由后端与前端回归验证；未向共享演示库写入人工测试遥测。

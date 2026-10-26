@@ -79,6 +79,27 @@ describe('labels and classification', () => {
 })
 
 describe('numeric charts', () => {
+  it('keeps null gaps in all band lines and preserves reported zero', () => {
+    const s = series({ mode: 'AGG', points: [[0, 5, 4, 6], [5, null, null, null], [10, 0, 0, 0], [15, 2, 1, 3]] })
+    const o = parts(buildChartOption(s, AGG_CTX))
+    for (const line of o.series) {
+      expect(line).toMatchObject({ connectNulls: false })
+      expect(line.data[1]).toEqual([5, null])
+      expect(line.data[2]).toEqual([10, 0])
+    }
+    expect(pointText(s, s.points[1])).toBe('无数据')
+    expect(pointText(s, s.points[2])).toContain('0.0 V')
+  })
+
+  it('preserves null and false in state lines and null in raw numeric lines', () => {
+    const s = series({ dataType: 'BOOL', points: [[0, true], [5, null], [10, false]] })
+    expect(parts(buildChartOption(s, RAW_CTX)).series[0]).toMatchObject({
+      connectNulls: false, data: [[0, 1], [5, null], [10, 0]],
+    })
+    expect(pointText(s, [5, null])).toBe('无数据')
+    expect(parts(buildChartOption(series({ points: [[0, 1], [5, null], [10, 0]] }), RAW_CTX)).series[0])
+      .toMatchObject({ connectNulls: false, data: [[0, 1], [5, null], [10, 0]] })
+  })
   it('draws one line for raw data with the unit as axis name', () => {
     const o = parts(buildChartOption(series(), RAW_CTX))
 

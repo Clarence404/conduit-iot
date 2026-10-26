@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -161,7 +162,7 @@ public class HistoryService {
         return result;
     }
 
-    /** 聚合模式：数值测点得到 [桶起点, avg, min, max]，状态测点得到 [桶起点, 最后值]；桶内无值的测点不输出该桶。 */
+    /** 聚合模式补齐时间桶；无值使用 null 占位，保留真实 0/false，禁止跨缺桶连线。 */
     private Map<String, List<List<Object>>> queryAggregate(Scope scope, List<Resolved> present, Duration bucket) {
         List<AggColumn> columns = present.stream().map(r -> new AggColumn(r.identifier(), r.state())).toList();
         Map<String, List<List<Object>>> result = new HashMap<>();
@@ -186,6 +187,19 @@ public class HistoryService {
                     result.computeIfAbsent(column.identifier(), k -> new ArrayList<>()).add(point);
                 }
             }
+        }
+        long width = bucket.toMillis();
+        long first = Math.floorDiv(scope.from(), width) * width;
+        for (AggColumn column : columns) {
+            Map<Long, List<Object>> byTime = new HashMap<>();
+            result.getOrDefault(column.identifier(), List.of()).forEach(p -> byTime.put((Long) p.getFirst(), p));
+            List<List<Object>> aligned = new ArrayList<>();
+            for (long ts = first; ts < scope.to(); ts += width) {
+                List<Object> point = byTime.get(ts);
+                aligned.add(point != null ? point : column.state()
+                        ? Arrays.asList(ts, null) : Arrays.asList(ts, null, null, null));
+            }
+            result.put(column.identifier(), aligned);
         }
         return result;
     }

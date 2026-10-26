@@ -163,7 +163,9 @@ class HistoryApiIT extends IntegrationTestBase {
 
         assertThat((String) read(body, "$.series[3].dataType")).isEqualTo("DOUBLE");
         List<Object> spPoints = read(body, "$.series[3].points");
-        assertThat(spPoints).as("buckets without a value emit no point").hasSize(10);
+        assertThat(spPoints).as("empty buckets keep explicit null gaps").hasSize(240);
+        List<Object> emptyBucket = read(body, "$.series[3].points[10]");
+        assertThat(emptyBucket).containsExactly(t0 + 50_000, null, null, null);
     }
 
     @Test

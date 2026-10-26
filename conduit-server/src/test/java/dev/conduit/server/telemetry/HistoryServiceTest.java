@@ -107,7 +107,8 @@ class HistoryServiceTest {
         counts(row("n_0", 1001, "n_1", 5));
         when(client.querySql(eq("telemetry"), startsWith("SELECT date_bin"), anyMap())).thenReturn(List.of(
                 row("t", "2025-10-14T00:00:00", "avg_0", 220.0, "min_0", 219.0, "max_0", 221.0, "last_1", 2),
-                row("t", "2025-10-14T00:00:05", "avg_0", null, "min_0", null, "max_0", null, "last_1", 0)));
+                row("t", "2025-10-14T00:00:05", "avg_0", null, "min_0", null, "max_0", null, "last_1", 0),
+                row("t", "2025-10-14T00:00:15", "avg_0", 0.0, "min_0", 0.0, "max_0", 0.0)));
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
 
         HistoryView view = query(Map.of("st", enumSpec("st")), "Ua", "st");
@@ -118,10 +119,16 @@ class HistoryServiceTest {
         SeriesView ua = view.series().get(0);
         assertThat(ua.dataType()).isEqualTo(DataType.DOUBLE);
         assertThat(ua.mode()).isEqualTo(Mode.AGG);
-        assertThat(ua.points()).containsExactly(List.of(FROM, 220.0, 219.0, 221.0));
+        assertThat(ua.points()).hasSize(720);
+        assertThat(ua.points().getFirst()).isEqualTo(List.of(FROM, 220.0, 219.0, 221.0));
+        assertThat(ua.points().get(1)).containsExactly(FROM + 5_000, null, null, null);
+        assertThat(ua.points().get(2)).containsExactly(FROM + 10_000, null, null, null);
+        assertThat(ua.points().get(3)).containsExactly(FROM + 15_000, 0.0, 0.0, 0.0);
+        assertThat(ua.points().getLast()).containsExactly(TO - 5_000, null, null, null);
         SeriesView st = view.series().get(1);
         assertThat(st.mode()).isEqualTo(Mode.LAST);
-        assertThat(st.points()).containsExactly(List.of(FROM, 2), List.of(FROM + 5_000, 0));
+        assertThat(st.points()).hasSize(720).startsWith(List.of(FROM, 2), List.of(FROM + 5_000, 0));
+        assertThat(st.points().get(2)).containsExactly(FROM + 10_000, null);
     }
 
     @Test

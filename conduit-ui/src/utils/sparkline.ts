@@ -16,6 +16,7 @@ export function sparklineOption(points: readonly SparkPoint[]): EChartsCoreOptio
     series: [
       {
         type: 'line',
+        connectNulls: false,
         data: points.map((p) => [p[0], p[1]]),
         symbol: 'none',
         silent: true,

@@ -91,7 +91,7 @@
 
 - 历史原始模式的查询不过滤"所选测点全为空"的行：很少上报的测点在 30 天范围内可能读出大量空行（应加 `"col" IS NOT NULL OR …` 条件）
 - `date_bin` 按 1970 原点对齐，按跨度选桶时首尾可能多出一个桶（最多 1001 点）
-- InfluxDB 的查询/规划错误同样返回 5xx，目前被映射为 503「时序库暂不可用」，而不是 500
+- InfluxDB 的查询/规划错误同样返回 5xx，目前被映射为 503「时序库暂不可用」。2026-10-26 已在 VM 复现文件扫描超限（432 个 Parquet 文件），近期优先调整有界扫描参数、细分错误提示并标记失败后保留的旧曲线范围；分段查询归入 V0.3-E。见 [处理计划](superpowers/plans/2026-10-26-history-query-limits.md)，待实施。
 - 物模型类型与列实际类型不一致时（如旧浮点列被定义为布尔）的展示与聚合
 - 历史接口中 `IllegalStateException` / `IllegalArgumentException` 走 Spring 默认错误页而非 ProblemDetail
 - 参数错误信息直接回显原始测点名（未截断）；标识符正则与保留名在 `telemetry` 与 `thingmodel` 各有一份

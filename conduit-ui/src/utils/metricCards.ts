@@ -6,7 +6,7 @@ import type { DataType, HistoryView, PointView, PropertyView } from '@/api/types
 import { formatValue } from './connection'
 
 /** 趋势线上的一个点：[时间毫秒, 数值] */
-export type SparkPoint = [number, number]
+export type SparkPoint = [number, number | null]
 
 /** 最多为多少个数值测点画趋势线（一次历史查询的上限也是 8） */
 export const MAX_SPARKLINES = 8
@@ -97,8 +97,8 @@ export function sparklineSeries(view: HistoryView): Record<string, SparkPoint[]>
   const result: Record<string, SparkPoint[]> = {}
   for (const s of view.series) {
     result[s.identifier] = s.points
-      .filter((p) => typeof p[0] === 'number' && typeof p[1] === 'number')
-      .map((p) => [p[0] as number, p[1] as number])
+      .filter((p) => typeof p[0] === 'number' && (typeof p[1] === 'number' || p[1] === null))
+      .map((p) => [p[0] as number, p[1] as number | null])
   }
   return result
 }

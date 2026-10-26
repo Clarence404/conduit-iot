@@ -50,6 +50,7 @@ export function stateLabel(s: SeriesView, value: unknown): string {
 
 /** 一个点的提示文本（未转义）：状态取名称；AGG 显示平均/最小/最大；RAW 显示数值 */
 export function pointText(s: SeriesView, point: HistoryPoint): string {
+  if (point[1] == null) return '无数据'
   if (isStateSeries(s)) {
     return stateLabel(s, point[1])
   }
@@ -91,9 +92,10 @@ function numericParts(s: SeriesView) {
     return {
       yAxis,
       series: [
-        { name: '最小', type: 'line', stack: 'band', stackStrategy: 'all', symbol: 'none', silent: true, lineStyle: { opacity: 0 }, data: s.points.map((p) => [p[0], p[2]]) },
+        { name: '最小', type: 'line', connectNulls: false, stack: 'band', stackStrategy: 'all', symbol: 'none', silent: true, lineStyle: { opacity: 0 }, data: s.points.map((p) => [p[0], p[2]]) },
         {
           name: '波动范围',
+          connectNulls: false,
           type: 'line',
           stack: 'band',
           stackStrategy: 'all',
@@ -101,15 +103,15 @@ function numericParts(s: SeriesView) {
           silent: true,
           lineStyle: { opacity: 0 },
           areaStyle: { opacity: 0.2 },
-          data: s.points.map((p) => [p[0], (p[3] as number) - (p[2] as number)]),
+          data: s.points.map((p) => [p[0], typeof p[3] === 'number' && typeof p[2] === 'number' ? p[3] - p[2] : null]),
         },
-        { name: '平均', type: 'line', symbol: 'none', data: s.points.map((p) => [p[0], p[1]]) },
+        { name: '平均', type: 'line', connectNulls: false, symbol: 'none', data: s.points.map((p) => [p[0], p[1]]) },
       ],
     }
   }
   return {
     yAxis,
-    series: [{ name: '值', type: 'line', symbol: 'circle', showSymbol: s.points.length === 1, data: s.points.map((p) => [p[0], p[1]]) }],
+    series: [{ name: '值', type: 'line', connectNulls: false, symbol: 'circle', showSymbol: s.points.length === 1, data: s.points.map((p) => [p[0], p[1]]) }],
   }
 }
 
@@ -127,6 +129,7 @@ function stateParts(s: SeriesView) {
     series: [
       {
         name: '状态',
+        connectNulls: false,
         type: 'line',
         step: 'end',
         symbol: 'none',

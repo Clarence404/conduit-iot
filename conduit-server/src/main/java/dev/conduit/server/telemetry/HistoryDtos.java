@@ -22,7 +22,8 @@ public final class HistoryDtos {
      * @param name      物模型名称；无物模型时为 null（unit、decimals、enumItems 同理）
      * @param dataType  物模型类型，无物模型时按列类型取 DOUBLE/INT/BOOL；列也不存在时为 null
      * @param enumItems 仅 ENUM 有值
-     * @param points    RAW/LAST 为 [ts, value]，AGG 为 [ts, avg, min, max]；ts 为毫秒（聚合时为桶起点，可能早于 from）
+     * @param points    RAW/LAST 为 [ts, value]，AGG 为 [ts, avg, min, max]；聚合无值桶为 null 占位，0/false 保留。
+     *                  ts 为毫秒（聚合时为桶起点，可能早于 from）；原始模式不推测采样周期。
      */
     public record SeriesView(String identifier, String name, DataType dataType, String unit, Integer decimals,
                              List<EnumItem> enumItems, Mode mode, List<List<Object>> points) {

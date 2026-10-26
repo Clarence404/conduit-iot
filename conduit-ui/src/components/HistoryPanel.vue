@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
       <template v-else-if="data">
         <div v-for="s in data.series" :key="s.identifier" class="chart-row">
           <div class="chart-title">{{ seriesLabel(s) }}</div>
-          <div v-if="s.points.length === 0" class="empty">该时段没有数据</div>
+          <div v-if="!s.points.some(p => p[1] != null)" class="empty">该时段没有数据</div>
           <div v-else :ref="(el) => setChartEl(s.identifier, el as HTMLElement | null)" class="chart" />
         </div>
       </template>

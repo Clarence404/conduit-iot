@@ -10,6 +10,8 @@ Conduit IoT 以建设面向工业、能源、园区与设备运营场景的生�
 
 ## 架构
 
+遥测数据统一遵守 [缺测与零值约定](docs/telemetry-value-semantics.md)：null 表示该时刻未上报，0 表示实际上报零值。聚合历史空桶明确返回 null，曲线与趋势线在缺桶处断开；原始历史没有采样周期时不推测缺失时刻。
+
 ![Conduit 当前架构：设备接入、同步鉴权、异步数据流水线与存储](docs/images/architecture.svg)
 
 图中展示当前已实现架构；后续 SaaS 能力见 [Roadmap](docs/roadmap-saas.md)。存储连线表示 server 进程的数据访问，具体入口职责见下文。

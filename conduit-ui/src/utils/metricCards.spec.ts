@@ -78,6 +78,10 @@ describe('sparklineIdentifiers', () => {
 })
 
 describe('sparklineSeries', () => {
+  it('retains missing buckets and real zero for sparklines', () => {
+    const view = { series: [{ identifier: 'x', points: [[0, 4], [5, null], [10, 0]] }] } as unknown as HistoryView
+    expect(sparklineSeries(view)).toEqual({ x: [[0, 4], [5, null], [10, 0]] })
+  })
   it('uses the average of aggregated points and the value of raw points, skipping non-numbers', () => {
     const view: HistoryView = {
       deviceKey: 'dk1',

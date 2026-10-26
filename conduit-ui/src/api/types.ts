@@ -134,7 +134,7 @@ export interface LatestView {
 export type HistoryMode = 'RAW' | 'AGG' | 'LAST'
 
 /** 一个点：RAW/LAST 为 [ts, value]，AGG 为 [ts, avg, min, max]；ts 为毫秒（聚合时为桶起点） */
-export type HistoryPoint = (number | boolean)[]
+export type HistoryPoint = (number | boolean | null)[]
 
 /** 一个测点的历史曲线；name/unit/decimals/enumItems 在物模型未定义时为 null */
 export interface SeriesView {

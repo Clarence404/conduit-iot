@@ -81,7 +81,8 @@ public class OrganizationService {
     public List<ProjectView> projects() {
         List<Project> rows = projects.selectList(new LambdaQueryWrapper<Project>().orderByAsc(Project::getName));
         List<Long> customerIds = rows.stream().map(Project::getCustomerId).filter(id -> id != null).distinct().toList();
-        Map<Long, String> customerCodes = customerIds.isEmpty() ? Map.of() : codes(customers.selectBatchIds(customerIds));
+        Map<Long, String> customerCodes = customerIds.isEmpty()
+                ? new HashMap<>() : codes(customers.selectBatchIds(customerIds));
         return rows.stream().map(p -> new ProjectView(p.getCode(), p.getName(), customerCodes.get(p.getCustomerId()),
                 p.getStatus(), Boolean.TRUE.equals(p.getIsDefault()), p.getCreatedAt())).toList();
     }
@@ -358,14 +359,14 @@ public class OrganizationService {
     }
 
     private Map<Long, String> projectCodes(List<Long> ids) {
-        if (ids.isEmpty()) return Map.of();
+        if (ids.isEmpty()) return new HashMap<>();
         Map<Long, String> result = new HashMap<>();
         projects.selectBatchIds(ids).forEach(p -> result.put(p.getId(), p.getCode()));
         return result;
     }
 
     private Map<Long, String> siteCodes(List<Long> ids) {
-        if (ids.isEmpty()) return Map.of();
+        if (ids.isEmpty()) return new HashMap<>();
         Map<Long, String> result = new HashMap<>();
         sites.selectBatchIds(ids).forEach(s -> result.put(s.getId(), s.getCode()));
         return result;

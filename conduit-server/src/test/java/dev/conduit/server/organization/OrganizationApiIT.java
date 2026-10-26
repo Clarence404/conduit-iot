@@ -95,6 +95,9 @@ class OrganizationApiIT extends IntegrationTestBase {
 
     @Test
     void defaultProjectAndSiteCannotBeDeleted() throws Exception {
+        long tenantId = defaultTenantId();
+        jdbc.update("update project set customer_id = null where tenant_id = ?", tenantId);
+        jdbc.update("delete from customer where tenant_id = ?", tenantId);
         mvc.perform(get("/api/v1/projects").header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.code == 'default')]").isNotEmpty());

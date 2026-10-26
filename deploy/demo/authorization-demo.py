@@ -134,6 +134,46 @@ def verify(url, password, fixture):
     print('PASS: A writable; B read-only; C hidden; tenant user administration denied')
 
 
+def initialize_extended(api, fixture, manager_password, inspector_password):
+    """补充自定义巡检角色和由项目管理员委派的现有成员，不改动已存在的授权。"""
+    role_key = 'CUSTOM_INSPECTOR'
+    existing = next((r for r in api.call('GET', '/roles') if r['role_key'] == role_key), None)
+    if existing is None:
+        api.call('POST', '/roles', {'roleKey': role_key, 'name': '权限演示巡检员', 'scopeMask': 'PROJECT',
+                    'status': 'ACTIVE', 'permissions': ['device.read', 'telemetry.latest.read', 'telemetry.history.read']})
+    manager = Client(api.url)
+    manager.login(fixture['username'], manager_password)
+    account = 'rbac-inspector'
+    users = api.items('/users')
+    existing_user = next((u for u in users if u['username'] == account), None)
+    if existing_user is None:
+        initial_password = 'Init1-' + secrets.token_hex(12)
+        api.call('POST', '/users', {'username': account, 'displayName': '权限演示：自定义巡检员',
+                                  'role': 'TENANT_VIEWER', 'password': initial_password})
+        # 由项目管理员使用项目专属接口委派，脚本自身也验证跨项目权限边界。
+        manager.call('PUT', '/projects/' + fixture['projects']['a']['code'] + '/members/' + account + '/bindings', [
+            {'roleKey': role_key, 'scopeType': 'PROJECT', 'projectCode': fixture['projects']['a']['code']}])
+        inspector = Client(api.url)
+        inspector.login(account, initial_password)
+        inspector.call('PUT', '/me/password', {'oldPassword': initial_password, 'newPassword': inspector_password})
+    elif existing_user['displayName'] != '权限演示：自定义巡检员':
+        raise RuntimeError('rbac-inspector already exists with different metadata; preserve manual account')
+    return account
+
+
+def verify_extended(url, password, fixture, account):
+    inspector = Client(url)
+    inspector.login(account, password)
+    visible = inspector.items('/devices?' + urlencode({'productKey': fixture['product']['productKey']}))
+    if {d['deviceKey'] for d in visible} != {fixture['devices']['a']['deviceKey']}:
+        raise RuntimeError('Custom inspector visibility differs from project A; investigate role and binding')
+    key_a, key_b = fixture['devices']['a']['deviceKey'], fixture['devices']['b']['deviceKey']
+    inspector.call('GET', '/devices/' + key_a, expect=200)
+    inspector.call('GET', '/devices/' + key_b, expect=404)
+    inspector.call('PUT', '/devices/' + key_a, {'name': fixture['devices']['a']['name'], 'status': 'ENABLED'}, expect=404)
+    print('PASS: custom inspector reads only A; cannot write A or see B')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--demo', action='store_true', help='Explicitly confirm this is a demo environment')
@@ -148,12 +188,17 @@ def main():
     demo_password = os.environ.get('CONDUIT_DEMO_PASSWORD')
     if not demo_password:
         parser.error('Set CONDUIT_DEMO_PASSWORD; credentials are never embedded in the demo script')
+    inspector_password = os.environ.get('CONDUIT_DEMO_INSPECTOR_PASSWORD')
+    if not inspector_password:
+        parser.error('Set CONDUIT_DEMO_INSPECTOR_PASSWORD')
     api = Client(args.url)
     api.login(os.environ.get('CONDUIT_DEMO_ADMIN_USERNAME', 'admin'), admin_password)
     fixture = initialize(api, demo_password)
+    inspector = initialize_extended(api, fixture, demo_password, inspector_password)
     print(json.dumps({'username': fixture['username'], 'devices': {k: {'name': v['name'], 'deviceKey': v['deviceKey']} for k, v in fixture['devices'].items()}}, ensure_ascii=False, indent=2))
     if args.verify:
         verify(args.url, demo_password, fixture)
+        verify_extended(args.url, inspector_password, fixture, inspector)
 
 
 if __name__ == '__main__':

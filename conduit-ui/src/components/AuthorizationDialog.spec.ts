@@ -16,7 +16,7 @@ function mountDialog() {
 describe('AuthorizationDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(authorizationApi.roles).mockResolvedValue([{role_key:'VIEWER',name:'只读成员',scope_mask:'TENANT,PROJECT,SITE',status:'ACTIVE',permissions:['device.read']}])
+    vi.mocked(authorizationApi.roles).mockResolvedValue([{role_key:'VIEWER',name:'只读成员',scope_mask:'TENANT,PROJECT,SITE',status:'ACTIVE',built_in:true,permissions:['device.read']}])
     vi.mocked(projectApi.list).mockResolvedValue([])
     vi.mocked(siteApi.list).mockResolvedValue([])
     vi.mocked(authorizationApi.bindings).mockResolvedValue([{role_key:'VIEWER',scope_type:'PROJECT',project_code:'project-a'}])

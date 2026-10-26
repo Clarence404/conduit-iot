@@ -29,7 +29,7 @@
   <path d="M460 304 V316 H750 V326" class="arrow"/>
   <rect x="40" y="332" width="260" height="72" rx="10" class="card"/>
   <text x="170" y="359" class="name">PostgreSQL</text>
-  <text x="170" y="386" class="sub">组织 / 设备 / 角色与范围绑定</text>
+  <text x="170" y="386" class="sub">组织 / 设备 / 自定义角色与绑定</text>
   <rect x="330" y="332" width="260" height="72" rx="10" class="card"/>
   <text x="460" y="359" class="name">Redis</text>
   <text x="460" y="386" class="sub">已授权设备的最新值 / 在线状态</text>

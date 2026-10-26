@@ -160,4 +160,65 @@ class AuthorizationIT extends IntegrationTestBase {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"Valid-reset-123\"}"))
                 .andExpect(status().isForbidden());
     }
+    @Test void customRoleCanBeBoundDisabledAndDeletedOnlyAfterUnbind() throws Exception {
+        String key="CUSTOM_"+unique("METER").toUpperCase().replace('-','_');
+        String target=createUser(defaultTenantId(),"TENANT_VIEWER",false);
+        String project=jdbc.queryForObject("select code from project where id=?",String.class,pa);
+        String active="""
+                {"roleKey":"%s","name":"巡检只读","scopeMask":"PROJECT","status":"ACTIVE",
+                 "permissions":["device.read","telemetry.latest.read"]}
+                """.formatted(key);
+        mvc.perform(post("/api/v1/roles").header(HttpHeaders.AUTHORIZATION,admin).contentType(MediaType.APPLICATION_JSON)
+                .content(active)).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/roles").header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON)
+                .content(active)).andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/users/{u}/bindings",target).header(HttpHeaders.AUTHORIZATION,admin)
+                .contentType(MediaType.APPLICATION_JSON).content("[{\"roleKey\":\""+key+"\",\"scopeType\":\"PROJECT\",\"projectCode\":\""+project+"\"}]"))
+                .andExpect(status().isOk());
+        String member=bearer(login(target,TEST_PASSWORD));
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+b).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
+        mvc.perform(delete("/api/v1/roles/"+key).header(HttpHeaders.AUTHORIZATION,admin)).andExpect(status().isConflict());
+        mvc.perform(put("/api/v1/roles/"+key).header(HttpHeaders.AUTHORIZATION,admin).contentType(MediaType.APPLICATION_JSON)
+                .content(active.replace("\"ACTIVE\"","\"DISABLED\""))).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
+        mvc.perform(put("/api/v1/users/{u}/bindings",target).header(HttpHeaders.AUTHORIZATION,admin)
+                .contentType(MediaType.APPLICATION_JSON).content("[]")).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/roles/"+key).header(HttpHeaders.AUTHORIZATION,admin)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/roles/VIEWER").header(HttpHeaders.AUTHORIZATION,admin)).andExpect(status().isConflict());
+    }
+    @Test void projectAdminDelegatesOnlyOwnProjectWithoutTenantEscalation() throws Exception {
+        String target=createUser(defaultTenantId(),"TENANT_VIEWER",false);
+        String project=jdbc.queryForObject("select code from project where id=?",String.class,pa);
+        String foreign=jdbc.queryForObject("select code from project where id=?",String.class,pb);
+        mvc.perform(get("/api/v1/projects/{p}/members/roles",project).header(HttpHeaders.AUTHORIZATION,token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[?(@.role_key == 'VIEWER')]").isNotEmpty());
+        String view="[{\"roleKey\":\"VIEWER\",\"scopeType\":\"PROJECT\",\"projectCode\":\""+project+"\"}]";
+        mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",foreign,target)
+                .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON).content(view))
+                .andExpect(status().isNotFound());
+        mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",project,"admin")
+                .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON).content(view))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",project,target)
+                .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"roleKey\":\"TENANT_ADMIN\",\"scopeType\":\"TENANT\"}]"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",project,target)
+                .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON).content(view))
+                .andExpect(status().isOk());
+        String member=bearer(login(target,TEST_PASSWORD));
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+b).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/projects/{p}/members",project).header(HttpHeaders.AUTHORIZATION,token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[?(@.username == '"+target+"')]").isNotEmpty());
+        mvc.perform(get("/api/v1/projects/{p}/members/{u}/bindings",project,target).header(HttpHeaders.AUTHORIZATION,token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].role_key").value("VIEWER"));
+        mvc.perform(get("/api/v1/projects/{p}/members/{u}/bindings",foreign,target).header(HttpHeaders.AUTHORIZATION,token))
+                .andExpect(status().isNotFound());
+        mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",project,target)
+                .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON).content("[]"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
+    }
 }

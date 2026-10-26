@@ -11,6 +11,14 @@ public record AuthorizedScope(long tenant, List<Grant> grants, boolean writable)
         return grants.stream().anyMatch(g -> g.scope.equals("TENANT") && g.permissions.contains(permission));
     }
     public boolean any(String permission) { return grants.stream().anyMatch(g -> g.permissions.contains(permission)); }
+    /** 指定项目/站点内实际可用的权限；成员委派不得越过操作者在该范围的权限。 */
+    public Set<String> permissionsAt(long project,Long site) {
+        return grants.stream().filter(g->g.scope.equals("TENANT")
+                || (g.scope.equals("PROJECT") && Objects.equals(g.project,project))
+                || (site!=null && g.scope.equals("SITE") && Objects.equals(g.site,site)))
+                .flatMap(g->g.permissions.stream()).filter(p->writable || p.endsWith(".read"))
+                .collect(Collectors.toUnmodifiableSet());
+    }
     /** 为组织或设备表生成权限范围；共享模板无需组织条件，所有子查询显式带租户。 */
     public String predicate(String table, String qualifier, String permission) {
         boolean write=!permission.endsWith(".read");

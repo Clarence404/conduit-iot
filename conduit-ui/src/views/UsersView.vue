@@ -22,10 +22,12 @@ import FilterBar from '@/components/FilterBar.vue'
 import UserFormDialog from '@/components/UserFormDialog.vue'
 import ResetPasswordDialog from '@/components/ResetPasswordDialog.vue'
 import AuthorizationDialog from '@/components/AuthorizationDialog.vue'
+import RoleManagementDialog from '@/components/RoleManagementDialog.vue'
 
 const auth = useAuthStore()
 const { isImpersonating, can } = usePermission()
 const authorizationVisible = ref(false)
+const rolesVisible = ref(false)
 const authorizing = ref('')
 
 const filters = reactive({ keyword: '', role: '' as '' | TenantRole, status: '' as '' | AccountStatus })
@@ -150,6 +152,7 @@ onMounted(() => {
   <div>
     <PageHeader title="用户" subtitle="维护租户账号与资源授权；项目和站点权限在「资源权限」中分配。">
       <template #actions>
+        <el-button v-if="can('role.manage', true)" @click="rolesVisible = true">角色管理</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
       </template>
     </PageHeader>
@@ -248,6 +251,7 @@ onMounted(() => {
     />
     <ResetPasswordDialog v-model="resetVisible" :username="resetting?.username ?? ''" :save="savePassword" />
     <AuthorizationDialog v-model="authorizationVisible" :username="authorizing" />
+    <RoleManagementDialog v-model="rolesVisible" />
   </div>
 </template>
 

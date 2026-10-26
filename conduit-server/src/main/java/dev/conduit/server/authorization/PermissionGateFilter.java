@@ -51,6 +51,7 @@ public class PermissionGateFilter extends OncePerRequestFilter {
     static String permission(String path,boolean read) {
         if(path.startsWith("/api/v1/authorization")) return "tenant.read";
         if(path.startsWith("/api/v1/roles")) return "role.manage";
+        if(path.matches("/api/v1/projects/[^/]+/members(?:/.*)?")) return "project.member.manage";
         if(path.startsWith("/api/v1/users")) return path.endsWith("/bindings") ? "role.manage" : read ? "member.read" : "member.manage";
         if(path.startsWith("/api/v1/devices/")) {
             if(path.endsWith("/latest")) return "telemetry.latest.read";

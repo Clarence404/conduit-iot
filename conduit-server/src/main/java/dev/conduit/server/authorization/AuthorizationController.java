@@ -29,6 +29,52 @@ public class AuthorizationController {
         return PermissionCatalog.ALL;
     }
 
+    /** 创建租户自定义角色；内置角色不可覆盖。 */
+    @PostMapping("/roles")
+    public void createRole(@AuthenticationPrincipal AuthPrincipal actor,
+                           @RequestBody AuthorizationService.RoleInput input) {
+        service.createRole(actor,input);
+    }
+
+    /** 更新自定义角色名称、作用域、状态和权限。 */
+    @PutMapping("/roles/{key}")
+    public void updateRole(@AuthenticationPrincipal AuthPrincipal actor,@PathVariable String key,
+                           @RequestBody AuthorizationService.RoleInput input) {
+        service.updateRole(actor,key,input);
+    }
+
+    /** 只删除没有任何绑定的自定义角色。 */
+    @DeleteMapping("/roles/{key}")
+    public void deleteRole(@AuthenticationPrincipal AuthPrincipal actor,@PathVariable String key) {
+        service.deleteRole(actor,key);
+    }
+
+    /** 查看当前项目已经显式授权的成员。 */
+    @GetMapping("/projects/{code}/members")
+    public List<Map<String,Object>> projectMembers(@AuthenticationPrincipal AuthPrincipal actor,@PathVariable String code) {
+        return service.projectMembers(actor,code);
+    }
+
+    /** 列出当前项目管理员可委派的角色。 */
+    @GetMapping("/projects/{code}/members/roles")
+    public List<Map<String,Object>> projectRoles(@AuthenticationPrincipal AuthPrincipal actor,@PathVariable String code) {
+        return service.projectRoles(actor,code);
+    }
+
+    /** 读取目标账号仅在当前项目的绑定。 */
+    @GetMapping("/projects/{code}/members/{username}/bindings")
+    public List<Map<String,Object>> projectMemberBindings(@AuthenticationPrincipal AuthPrincipal actor,
+                                                          @PathVariable String code,@PathVariable String username) {
+        return service.projectMemberBindings(actor,code,username);
+    }
+
+    /** 只替换目标成员在当前项目的授权，不触及其他范围。 */
+    @PutMapping("/projects/{code}/members/{username}/bindings")
+    public void replaceProjectMember(@AuthenticationPrincipal AuthPrincipal actor,@PathVariable String code,
+                                     @PathVariable String username,@RequestBody List<AuthorizationService.Binding> bindings) {
+        service.replaceProjectMember(actor,code,username,bindings);
+    }
+
     /** 读取目标账号显式绑定，目标必须属于当前租户。 */
     @GetMapping("/users/{username}/bindings")
     public List<Map<String,Object>> bindings(@PathVariable String username) {

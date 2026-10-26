@@ -7,6 +7,7 @@ import { problemMessage } from '@/api/errors'
 import type { AssetView, CustomerView, OrganizationStatus, ProjectView, SiteView } from '@/api/types'
 import { usePermission } from '@/composables/usePermission'
 import PageHeader from '@/components/PageHeader.vue'
+import ProjectMembersDialog from '@/components/ProjectMembersDialog.vue'
 
 type Kind = 'customer' | 'project' | 'site' | 'asset'
 type Row = CustomerView | ProjectView | SiteView | AssetView
@@ -21,6 +22,8 @@ const projects = ref<ProjectView[]>([])
 const sites = ref<SiteView[]>([])
 const assets = ref<AssetView[]>([])
 const dialog = ref(false)
+const membersDialog = ref(false)
+const memberProject = ref<ProjectView | null>(null)
 const editing = ref<Row | null>(null)
 const saving = ref(false)
 const form = reactive({ code: '', name: '', status: 'ACTIVE' as OrganizationStatus, customerCode: '', projectCode: '', timezone: 'Asia/Shanghai', siteCode: '', parentCode: '', type: '' })
@@ -81,6 +84,7 @@ function relation(row: Row) {
   return '—'
 }
 function isDefault(row: Row) { return 'systemDefault' in row && row.systemDefault }
+function canManageMembers(row: Row) { return active.value === 'project' && (row.permissions?.includes('project.member.manage') ?? can('project.member.manage')) }
 onMounted(load)
 </script>
 
@@ -99,7 +103,7 @@ onMounted(load)
         <el-table-column v-if="active === 'site'" prop="timezone" label="时区" width="150"/>
         <el-table-column v-if="active === 'asset'" prop="type" label="类型" width="140"><template #default="{ row }">{{ row.type || '—' }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '禁用' }}</el-tag><el-tag v-if="isDefault(row)" class="default-tag" type="warning">默认</el-tag></template></el-table-column>
-        <el-table-column v-if="canWrite" label="操作" width="150"><template #default="{ row }"><el-button v-if="rowCan(row)" link type="primary" @click="openEdit(row)">编辑</el-button><el-button v-if="rowCan(row) && !isDefault(row)" link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
+        <el-table-column v-if="canWrite || (active === 'project' && can('project.member.manage'))" label="操作" width="220"><template #default="{ row }"><el-button v-if="rowCan(row)" link type="primary" @click="openEdit(row)">编辑</el-button><el-button v-if="canManageMembers(row)" link type="primary" @click="memberProject = row as ProjectView; membersDialog = true">成员</el-button><el-button v-if="rowCan(row) && !isDefault(row)" link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
         <template #empty><el-empty :description="`暂无${titles[active]}`"><el-button v-if="canCreate" type="primary" @click="openCreate">新建{{ titles[active] }}</el-button></el-empty></template>
       </el-table>
     </div>
@@ -117,6 +121,7 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存</el-button></template>
     </el-dialog>
+    <ProjectMembersDialog v-if="memberProject" v-model="membersDialog" :project-code="memberProject.code" :project-name="memberProject.name" />
   </div>
 </template>
 

@@ -1,6 +1,6 @@
-# 项目与站点授权（B2 前半段）
+# 项目与站点授权（B2）
 
-本阶段交付五个预置角色、租户/项目/站点绑定、SQL 数据范围与用户页的「资源权限」。自定义角色编辑、项目成员委派、邀请、会话注册/吊销与持久化审计仍按 B2 后半段、B3、B4 推进；权限目录中预留的命令、审计与重放权限不代表对应租户接口已开放。
+已交付五个预置角色、自定义角色、租户/项目/站点绑定、SQL 数据范围、用户页的「资源权限」与「角色管理」、组织页的项目「成员」委派。邀请、会话注册/吊销与持久化审计仍按 B3、B4 推进；权限目录中预留的命令、审计与重放权限不代表对应租户接口已开放。
 
 ![项目与站点授权链路](images/authorization-flow.svg)
 
@@ -18,7 +18,9 @@
 | OPERATOR | 项目 / 站点 | 查看范围内资源，管理设备、重置设备密钥 |
 | VIEWER | 租户 / 项目 / 站点 | 只读范围内资源与遥测 |
 
-项目成员委派尚未开放，PROJECT_ADMIN 的 `project.member.manage` 暂为预留。设备命令接口、租户重放与审计接口也未在本阶段新增。停用项目或站点不阻断设备遥测，停用组织内的设备/资产管理操作被拒绝；租户管理员仍可恢复组织状态。
+租户管理员在「用户 → 角色管理」创建自定义角色，角色键以 `CUSTOM_` 开头，只能选择权限目录中的权限码且不能授予自己没有的权限；`tenant.manage` 保留给内置 OWNER。内置角色的权限不可编辑，绑定中的自定义角色不能删除；停用角色后绑定保留但权限从下一次请求失效。变更绑定中角色的可用作用域时若有不兼容的绑定会返回 409。角色元数据沿用 V8 预留表，本阶段无需新迁移。
+
+项目管理员在「组织 → 项目 → 成员」给租户内已有账号委派本项目或项目下站点的角色。只能委派自己在此项目已拥有、且属于项目管理员可委派集合的权限；不能改租户级或其他项目的绑定，也不能操作租户管理员/所有者。首次给兼容 viewer 分配项目授权会接管旧全租户 viewer 权限，界面明确提示；空列表只撤销当前项目的绑定。邀请新账号属于 B3，当前必须由租户管理员先建账号。设备命令接口、租户重放与审计接口本阶段仍未新增。停用项目或站点不阻断设备遥测，停用组织内的设备/资产管理操作被拒绝；租户管理员仍可恢复组织状态。
 
 ## 兼容迁移
 
@@ -49,8 +51,15 @@ Flyway V8 只扩展表，不删除旧 `app_user.role` 或 JWT role。`authz_mana
 | GET /api/v1/authorization/me | 当前模式、有效绑定与权限并集 |
 | GET /api/v1/roles | 当前租户角色定义与权限；新租户幂等补齐预置角色元数据 |
 | GET /api/v1/roles/permissions | 稳定权限目录 |
+| POST /api/v1/roles | 创建自定义角色 |
+| PUT /api/v1/roles/{key} | 修改自定义角色及启用状态 |
+| DELETE /api/v1/roles/{key} | 仅删除未绑定的自定义角色 |
 | GET /api/v1/users/{username}/bindings | 用户的显式绑定；空列表可能仍处于兼容授权 |
 | PUT /api/v1/users/{username}/bindings | 全量替换并接管账号，最多 100 条；重复/非法绑定整体拒绝 |
+| GET /api/v1/projects/{code}/members | 此项目已显式绑定的成员 |
+| GET /api/v1/projects/{code}/members/roles | 操作者在此项目可委派的角色 |
+| GET /api/v1/projects/{code}/members/{username}/bindings | 目标在此项目的绑定 |
+| PUT /api/v1/projects/{code}/members/{username}/bindings | 仅替换此项目绑定，最多 100 条 |
 
 PUT 的条目为 `{roleKey, scopeType, projectCode, siteCode}`。TENANT 不指定项目/站点；PROJECT 只指定项目；SITE 必须指定匹配的项目与站点。角色/绑定管理需要租户级 role.manage，不能授予操作者没有的权限。授权变更记录 INFO（操作者、租户、目标用户、条数），不记录密码、密钥或请求体；完整审计在 B4 实施。
 
@@ -58,7 +67,7 @@ PUT 的条目为 `{roleKey, scopeType, projectCode, siteCode}`。TENANT 不指�
 
 独立演示初始化脚本 `deploy/demo/authorization-demo.py` 通过正式 API 创建关系数据，避免在 Flyway 中嵌入可登录账号或绕过首次改密。V8 负责授权表结构和预置角色；演示脚本仅在显式 `--demo` 时执行，限定默认演示租户。首次新增账号先绑定范围，再完成初始密码修改；重跑不覆盖既有账号的密码、状态或人工授权，也不移动已有设备。遇到同编码对象的归属不符，明确报错并保留现场。
 
-设置 `CONDUIT_DEMO_ADMIN_PASSWORD`（现有默认租户管理员密码），同时设置演示账号密码 `CONDUIT_DEMO_PASSWORD`，按需设置 `CONDUIT_DEMO_ADMIN_USERNAME`，执行：
+设置 `CONDUIT_DEMO_ADMIN_PASSWORD`（现有默认租户管理员密码）、`CONDUIT_DEMO_PASSWORD`（A/B/C 演示管理员）与 `CONDUIT_DEMO_INSPECTOR_PASSWORD`（自定义巡检员），按需设置 `CONDUIT_DEMO_ADMIN_USERNAME`，执行：
 
 ```sh
 python3 deploy/demo/authorization-demo.py --demo --url http://127.0.0.1:8091 --verify
@@ -67,8 +76,9 @@ python3 deploy/demo/authorization-demo.py --demo --url http://127.0.0.1:8091 --v
 `--verify` 要求 enforce 模式，会实测 A 可写、B 写入 404、C 详情与写入 404、用户管理 403，并核对列表恰含 A/B。初始化本身也可在 shadow 期间先执行；不开 `--verify` 不代表完成权限验收。
 
 - 演示账号：`rbac-demo`；首次初始化密码由 `CONDUIT_DEMO_PASSWORD` 指定，不在仓库内置；已有密码不重置。
+- 扩展演示账号：`rbac-inspector`；`CUSTOM_INSPECTOR` 角色仅有设备读取与最新值、历史读取权限，由 `rbac-demo` 在项目 A 委派。登录密码由 `CONDUIT_DEMO_INSPECTOR_PASSWORD` 指定。A 设备可读不可写，B/C 不可见；已有账号或角色被人工调整时脚本不覆盖，验收会明确失败。
 - 管理员入口：「用户 → rbac-demo → 资源权限」，可看到 A 的 PROJECT_ADMIN 与 B 的 VIEWER。
 - 演示账号入口：「组织」能看到「权限演示 A（可写）」「权限演示 B（只读）」；「设备」有「权限演示设备 A/B」，A 有写按钮，B 仅查看。
 - C 的项目/站点/资产/设备只供管理员查看，演示账号不可见，直接复制其 URL 返回 404。
-- 脚本创建 1 客户、3 项目、3 站点、3 资产、1 产品、3 测点、3 设备、1 用户及 2 绑定；编码均以 `authz-demo` 开头。
+- 脚本创建 1 客户、3 项目、3 站点、3 资产、1 产品、3 测点、3 设备、2 用户、1 自定义角色及 3 绑定；组织编码均以 `authz-demo` 开头。
 - 动态遥测由现有多租户模拟器在发现新产品后生成；初始化后重启演示模拟器即可发现三台新设备，间隔仍为 `SIM_INTERVAL_MS`（默认 10000）。脚本不会伪造 Redis 在线状态、最近上报或历史数据。实时链路故障需单独处理，不能用静态写库掩盖。

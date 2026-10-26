@@ -8,6 +8,20 @@ import java.util.*;
 public interface AuthorizationMapper {
     @Select("select * from role_definition order by id")
     List<Map<String,Object>> roles();
+    @Select("select * from role_definition where tenant_id=#{tenant} and role_key=#{key}")
+    Map<String,Object> role(long tenant,String key);
+    @Insert("insert into role_definition(tenant_id,role_key,name,scope_mask,built_in,status) values(#{tenant},#{key},#{name},#{scopes},false,'ACTIVE')")
+    void createRole(long tenant,String key,String name,String scopes);
+    @Update("update role_definition set name=#{name},scope_mask=#{scopes},status=#{status} where tenant_id=#{tenant} and role_key=#{key} and not built_in")
+    int updateRole(long tenant,String key,String name,String scopes,String status);
+    @Delete("delete from role_permission where tenant_id=#{tenant} and role_id=#{role}")
+    void clearPermissions(long tenant,long role);
+    @Select("select count(*) from role_binding where tenant_id=#{tenant} and role_id=#{role}")
+    int roleBindings(long tenant,long role);
+    @Select("select count(*) from role_binding where tenant_id=#{tenant} and role_id=#{role} and scope_type != all(string_to_array(#{scopes},','))")
+    int incompatibleRoleBindings(long tenant,long role,String scopes);
+    @Delete("delete from role_definition where tenant_id=#{tenant} and id=#{role} and not built_in")
+    int deleteRole(long tenant,long role);
     @Select("select permission_code from role_permission where role_id=#{role}")
     Set<String> permissions(long role);
     @Select("select b.*, r.role_key, r.status role_status, p.code project_code, s.code site_code from role_binding b join role_definition r on r.id=b.role_id and r.tenant_id=b.tenant_id left join project p on p.id=b.project_id and p.tenant_id=b.tenant_id left join site s on s.id=b.site_id and s.tenant_id=b.tenant_id where b.user_id=#{user}")
@@ -32,4 +46,8 @@ public interface AuthorizationMapper {
     int projectBindings(long project);
     @Select("select count(*) from role_binding where site_id=#{site}")
     int siteBindings(long site);
+    @Select("select distinct u.username,u.display_name,u.status from app_user u join role_binding b on b.user_id=u.id and b.tenant_id=u.tenant_id where b.tenant_id=#{tenant} and b.project_id=#{project} order by u.username")
+    List<Map<String,Object>> projectMembers(long tenant,long project);
+    @Delete("delete from role_binding where tenant_id=#{tenant} and user_id=#{user} and project_id=#{project}")
+    void clearProjectBindings(long tenant,long user,long project);
 }

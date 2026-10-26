@@ -34,7 +34,7 @@
 
 ### 1.2 关键设计决定
 
-- **项目/站点授权（V0.3-B2 前半段）**：五个预置角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护，禁止故障时恢复旧管理员全权。用户页「资源权限」配置，产品保持租户级共享。自定义角色、项目成员委派、邀请、会话注册/吊销与持久化审计仍待后续阶段。详见 `docs/authorization.md`。
+- **项目/站点授权（V0.3-B2）**：五个预置角色、自定义角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护，禁止故障时恢复旧管理员全权。用户页可配置资源权限与自定义角色；项目管理员可在当前项目委派权限，不能触及租户和其他项目。产品保持租户级共享。邀请、会话注册/吊销与持久化审计仍待 B3/B4。详见 `docs/authorization.md`。
 
 ![项目与站点授权链路](docs/images/authorization-flow.svg)
 
@@ -175,5 +175,5 @@
 
 - 2026-10-22 V0.3 前置租户隔离加固：决定暂不实施 PostgreSQL RLS，以 MyBatis-Plus 租户拦截器为主体，补充租户组合外键、唯一的 `tenant.system` + `TenantContext.callAsSystem` 跨租户通道、一事务一租户断言与越权测试。Redis/InfluxDB 延续共享存储逻辑隔离，访问必须使用经 PostgreSQL 租户查询确认的设备身份。出现真实跨租户泄露、引入不经 MyBatis 的数据访问路径，或多人协作/业务表超过 10 张时重新评估 RLS（`2026-10-22-conduit-tenant-isolation-design.md`）。
 - 2026-10-26 V0.3-B1 组织骨架：新增租户内 `customer → project → site → asset` 业务层级；项目与站点作为后续授权范围，客户不是子租户；产品仍在租户内共享，设备必须归属一个站点并可选关联同站点资产。V6 为存量和新建租户提供受保护的默认项目/站点，组合外键强制租户与站点一致；本阶段只交付数据模型和后端接口，细粒度授权、自定义角色、邀请、会话吊销、审计与界面按 B2～B4 实施（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
-- 2026-10-26 V0.3-B2 前半段：新增预置角色与租户/项目/站点绑定、每请求新鲜授权和 SQL 范围过滤；兼容账号以 authz_managed 标记显式接管，撤权不能恢复旧角色。提供 shadow/enforce/read-only 开关、OWNER 保护与用户页资源权限配置；暂不交付自定义角色、项目成员委派和 B3/B4。业务表超过 10 张后复核 RLS，继续以可迁移的 MyBatis-Plus + 组合外键和受控系统 Mapper 为应用边界，见 docs/authorization.md。
+- 2026-10-26 V0.3-B2：预置角色与租户/项目/站点绑定、每请求新鲜授权和 SQL 范围过滤；兼容账号以 authz_managed 标记显式接管，撤权不能恢复旧角色。提供 shadow/enforce/read-only 开关、OWNER 保护、用户资源权限与自定义角色管理，以及项目管理员限本项目的成员委派；自定义角色停用立即失效，有绑定时不得删除，`tenant.manage` 只属于内置 OWNER。B3/B4 的邀请、会话治理与持久化审计仍待实施。业务表超过 10 张后复核 RLS，继续以可迁移的 MyBatis-Plus + 组合外键和受控系统 Mapper 为应用边界，见 docs/authorization.md。
 - 2026-10-26 全局演示约定：新增功能必须配套可复现的演示数据、可操作入口、查看步骤和测试报告；不得只在当前 VM 手工造数或交付空页面；初始化不能覆盖人工配置与凭据。

@@ -70,6 +70,8 @@ class AuthorizationIT extends IntegrationTestBase {
     @Test void revokeIsImmediateAndNoLegacyViewerFallback() throws Exception {
         mvc.perform(put("/api/v1/users/{u}/bindings",username).header(HttpHeaders.AUTHORIZATION,admin)
                 .contentType(MediaType.APPLICATION_JSON).content("[]")).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isUnauthorized());
+        token=bearer(login(username,TEST_PASSWORD));
         mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/devices").header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isForbidden());
     }
@@ -94,6 +96,8 @@ class AuthorizationIT extends IntegrationTestBase {
                 .contentType(MediaType.APPLICATION_JSON).content("""
                 [{"roleKey":"OPERATOR","scopeType":"SITE","projectCode":"%s","siteCode":"%s"}]
                 """.formatted(ac,asc))).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices").header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isUnauthorized());
+        token=bearer(login(username,TEST_PASSWORD));
         mvc.perform(get("/api/v1/devices?size=100").header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));
         mvc.perform(get("/api/v1/devices/"+hidden.deviceKey()).header(HttpHeaders.AUTHORIZATION,token)).andExpect(status().isNotFound());
@@ -181,6 +185,8 @@ class AuthorizationIT extends IntegrationTestBase {
         mvc.perform(delete("/api/v1/roles/"+key).header(HttpHeaders.AUTHORIZATION,admin)).andExpect(status().isConflict());
         mvc.perform(put("/api/v1/roles/"+key).header(HttpHeaders.AUTHORIZATION,admin).contentType(MediaType.APPLICATION_JSON)
                 .content(active.replace("\"ACTIVE\"","\"DISABLED\""))).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isUnauthorized());
+        member=bearer(login(target,TEST_PASSWORD));
         mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
         mvc.perform(put("/api/v1/users/{u}/bindings",target).header(HttpHeaders.AUTHORIZATION,admin)
                 .contentType(MediaType.APPLICATION_JSON).content("[]")).andExpect(status().isOk());
@@ -219,6 +225,8 @@ class AuthorizationIT extends IntegrationTestBase {
         mvc.perform(put("/api/v1/projects/{p}/members/{u}/bindings",project,target)
                 .header(HttpHeaders.AUTHORIZATION,token).contentType(MediaType.APPLICATION_JSON).content("[]"))
                 .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isUnauthorized());
+        member=bearer(login(target,TEST_PASSWORD));
         mvc.perform(get("/api/v1/devices/"+a).header(HttpHeaders.AUTHORIZATION,member)).andExpect(status().isNotFound());
     }
 }

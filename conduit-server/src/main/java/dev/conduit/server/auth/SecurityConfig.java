@@ -34,7 +34,8 @@ public class SecurityConfig {
     /** 构建过滤链（规则见类注释）。 */
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwt, ObjectMapper objectMapper,
-                                            TenantMapper tenants, AuthorizationService authorization) throws Exception {
+                                            TenantMapper tenants, AuthorizationService authorization,
+                                            UserSessionRegistry registry) throws Exception {
         http
                 // 无会话 + refresh Cookie 为 SameSite=Strict 且只发往 /api/v1/auth，关闭 CSRF
                 .csrf(c -> c.disable())
@@ -42,7 +43,8 @@ public class SecurityConfig {
                 .formLogin(f -> f.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(rules -> rules
-                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
+                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout",
+                                "/api/v1/invitations/accept").permitAll()
                         .requestMatchers("/internal/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
                         .requestMatchers("/actuator/**").hasRole(Roles.PLATFORM_ADMIN)
@@ -63,7 +65,7 @@ public class SecurityConfig {
                                 writeProblem(res, objectMapper, HttpStatus.UNAUTHORIZED, "未认证或登录已过期", null))
                         .accessDeniedHandler((req, res, ex) ->
                                 writeProblem(res, objectMapper, HttpStatus.FORBIDDEN, "无权限", null)))
-                .addFilterBefore(new JwtAuthFilter(jwt), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new JwtAuthFilter(jwt, registry), UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new PasswordChangeGateFilter(objectMapper), JwtAuthFilter.class)
                 .addFilterAfter(new ImpersonationLogFilter(tenants), PasswordChangeGateFilter.class)
                 .addFilterAfter(new PermissionGateFilter(authorization,objectMapper), ImpersonationLogFilter.class);

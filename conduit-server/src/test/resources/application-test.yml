@@ -1,4 +1,6 @@
 conduit:
+  notification:
+    public-url: http://localhost:8090
   bootstrap:
     admin-username: admin
     admin-password: admin-pass-123
@@ -6,6 +8,8 @@ conduit:
     platform-admin-password: sysadmin-pass-123
   auth:
     jwt-secret: test-jwt-secret-test-jwt-secret-0123456789
+    # Existing API tests mint JWTs directly; production defaults to rejecting tokens without sid.
+    allow-legacy-sessions: true
   internal:
     token: test-internal-token
     transport-username: conduit-transport

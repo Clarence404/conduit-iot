@@ -11,12 +11,15 @@ import { usePermission } from '@/composables/usePermission'
 import { problemMessage } from '@/api/errors'
 import { passwordProblem } from '@/utils/accountRules'
 import { roleLabel } from '@/utils/permissions'
+import { sessionsApi, type UserSession } from '@/api/sessions'
 
 const visible = defineModel<boolean>({ required: true })
 const auth = useAuthStore()
 const { isImpersonating } = usePermission()
 
-const tab = ref<'profile' | 'password'>('profile')
+const tab = ref<'profile' | 'password' | 'sessions'>('profile')
+const userSessions = ref<UserSession[]>([])
+const sessionsLoading = ref(false)
 const displayName = ref('')
 const pw = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 const error = ref('')
@@ -45,7 +48,46 @@ watch(
 
 watch(tab, () => {
   error.value = ''
+  if (tab.value === 'sessions') void loadSessions()
 })
+
+async function loadSessions() {
+  sessionsLoading.value = true
+  try {
+    userSessions.value = await sessionsApi.list()
+  } catch (e) {
+    error.value = problemMessage(e)
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+async function revokeSession(session: UserSession) {
+  try {
+    await sessionsApi.revoke(session.id)
+    if (session.current) {
+      auth.clear()
+      visible.value = false
+      window.location.assign('/login')
+      return
+    }
+    await loadSessions()
+    ElMessage.success('会话已退出')
+  } catch (e) {
+    error.value = problemMessage(e)
+  }
+}
+
+async function revokeAllSessions() {
+  try {
+    await sessionsApi.revokeAll()
+    auth.clear()
+    visible.value = false
+    window.location.assign('/login')
+  } catch (e) {
+    error.value = problemMessage(e)
+  }
+}
 
 /** 保存显示名称（去首尾空白，空白即清除），成功后关闭 */
 async function saveProfile() {
@@ -138,6 +180,21 @@ async function savePassword() {
           </el-form-item>
         </el-form>
       </el-tab-pane>
+      <el-tab-pane label="登录会话" name="sessions">
+        <div class="session-actions">
+          <el-button :loading="sessionsLoading" @click="loadSessions">刷新</el-button>
+          <el-button type="danger" plain @click="revokeAllSessions">退出全部设备</el-button>
+        </div>
+        <el-empty v-if="!sessionsLoading && !userSessions.length" description="暂无会话" />
+        <div v-for="session in userSessions" :key="session.id" class="session-row">
+          <div>
+            <strong>{{ session.current ? '当前会话' : '其他会话' }}</strong>
+            <div>登录：{{ new Date(session.createdAt).toLocaleString() }}</div>
+            <small>{{ session.revokedAt ? '已退出' : new Date(session.expiresAt) < new Date() ? '已过期' : '有效' }}</small>
+          </div>
+          <el-button v-if="!session.revokedAt" size="small" @click="revokeSession(session)">退出</el-button>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </el-dialog>
 </template>
@@ -146,4 +203,6 @@ async function savePassword() {
 .error {
   margin-bottom: var(--cd-space-3);
 }
+.session-actions { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.session-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--el-border-color-light); }
 </style>

@@ -39,6 +39,17 @@ services:
       # 独立部署包中鉴权回调固定指向容器内的 conduit-server（.env 中的同名变量只用于满足 dev 文件的必填检查）
       CONDUIT_AUTH_URL: http://conduit-server:8080
 
+  # Demo mailbox: invitation emails are delivered here; replace SMTP config for production.
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - mailpit-data:/data
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    restart: unless-stopped
+
   conduit-server:
     build:
       context: ../..
@@ -59,6 +70,12 @@ services:
       CONDUIT_PLATFORM_ADMIN_USERNAME: ${CONDUIT_PLATFORM_ADMIN_USERNAME:-sysadmin}
       CONDUIT_PLATFORM_ADMIN_PASSWORD: ${CONDUIT_PLATFORM_ADMIN_PASSWORD:-}
       CONDUIT_JWT_SECRET: ${CONDUIT_JWT_SECRET:?CONDUIT_JWT_SECRET is required}
+      SPRING_MAIL_HOST: ${SMTP_HOST:-mailpit}
+      SPRING_MAIL_PORT: ${SMTP_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${SMTP_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD:-}
+      CONDUIT_NOTIFICATION_EMAIL_FROM: ${SMTP_FROM:-demo@conduit.local}
+      CONDUIT_NOTIFICATION_PUBLIC_URL: ${CONDUIT_PUBLIC_URL:-http://localhost:8090}
       CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN}
       TRANSPORT_MQTT_USERNAME: ${TRANSPORT_MQTT_USERNAME:-conduit-transport}
       TRANSPORT_MQTT_PASSWORD: ${TRANSPORT_MQTT_PASSWORD:?TRANSPORT_MQTT_PASSWORD is required}
@@ -76,6 +93,8 @@ services:
         condition: service_healthy
       influxdb:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     healthcheck:
       # JRE 镜像无 curl/wget：用 bash /dev/tcp 请求 readiness 探针，
       # 只有 ApplicationRunner（含 AdminBootstrap）执行完毕后才返回 UP
@@ -192,3 +211,4 @@ volumes:
   influx-explorer-data:
   emqx-data:
   conduit-logs:
+  mailpit-data:

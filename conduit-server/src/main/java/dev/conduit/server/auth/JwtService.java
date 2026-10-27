@@ -16,7 +16,8 @@ import java.util.Date;
 
 /**
  * JWT 的签发与校验（HS 系列对称签名）。声明：sub 用户 id、tid 租户 id（平台管理员没有）、usr 用户名、role 有效角色、
- * typ 令牌类型、imp 代入的平台管理员用户 id（仅代入时）、mcp 需要先修改密码（仅为 true 时）。
+ * typ 令牌类型、imp 代入的平台管理员用户 id（仅代入时）、mcp 需要先修改密码（仅为 true 时）、
+ * sid 服务端会话 id 与 av 授权版本。
  * 由 {@link SessionService} 签发、{@link JwtAuthFilter} 与刷新接口校验。
  */
 @Component
@@ -43,6 +44,7 @@ public class JwtService {
         Instant now = clock.instant();
         Duration ttl = type == TokenType.ACCESS ? props.accessTtl() : props.refreshTtl();
         JwtBuilder builder = Jwts.builder()
+                .id(java.util.UUID.randomUUID().toString())
                 .subject(Long.toString(principal.userId()))
                 .claim("usr", principal.username())
                 .claim("role", principal.role())
@@ -55,6 +57,9 @@ public class JwtService {
         }
         if (principal.mustChangePassword()) {
             builder.claim("mcp", true);
+        }
+        if (principal.sessionId() != null) {
+            builder.claim("sid", principal.sessionId().toString()).claim("av", principal.authzVersion());
         }
         return builder.issuedAt(Date.from(now)).expiration(Date.from(now.plus(ttl))).signWith(key).compact();
     }
@@ -81,7 +86,9 @@ public class JwtService {
                 claims.get("usr", String.class),
                 claims.get("role", String.class),
                 optionalLong(claims.get("imp")),
-                Boolean.TRUE.equals(claims.get("mcp", Boolean.class)));
+                Boolean.TRUE.equals(claims.get("mcp", Boolean.class)),
+                claims.get("sid", String.class) == null ? null : java.util.UUID.fromString(claims.get("sid", String.class)),
+                optionalLong(claims.get("av")) == null ? 0 : optionalLong(claims.get("av")));
     }
 
     /** 数值声明转 Long；声明不存在时为 null。 */

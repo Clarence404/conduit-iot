@@ -22,7 +22,7 @@ public class PermissionGateFilter extends OncePerRequestFilter {
         String path=request.getRequestURI();
         if(authentication==null || !(authentication.getPrincipal() instanceof AuthPrincipal actor) || actor.tenantId()==null
                 || !path.startsWith("/api/v1/") || path.startsWith("/api/v1/auth/") || path.equals("/api/v1/me") || path.startsWith("/api/v1/me/")
-                || path.startsWith("/api/v1/platform/")) { chain.doFilter(request,response);return; }
+                || path.startsWith("/api/v1/platform/") || path.equals("/api/v1/invitations/accept")) { chain.doFilter(request,response);return; }
         boolean read="GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod());
         try {
             var scope=authorization.resolve(actor);
@@ -51,6 +51,7 @@ public class PermissionGateFilter extends OncePerRequestFilter {
     static String permission(String path,boolean read) {
         if(path.startsWith("/api/v1/authorization")) return "tenant.read";
         if(path.startsWith("/api/v1/roles")) return "role.manage";
+        if(path.startsWith("/api/v1/invitations")) return "member.manage";
         if(path.matches("/api/v1/projects/[^/]+/members(?:/.*)?")) return "project.member.manage";
         if(path.startsWith("/api/v1/users")) return path.endsWith("/bindings") ? "role.manage" : read ? "member.read" : "member.manage";
         if(path.startsWith("/api/v1/devices/")) {

@@ -14,6 +14,8 @@ import java.util.*;
 /** 每请求重新读取授权，撤权下一请求即生效；不依赖JWT中旧role，也不因Redis故障放行。 */
 @Service
 public class AuthorizationService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.auth.UserSessionRegistry sessionRegistry;
     private final AuthorizationMapper mapper;
     private final AppUserMapper users;
     private final TenantMapper tenants;
@@ -127,6 +129,7 @@ public class AuthorizationService {
         mapper.updateRole(tenant,key,input.name().strip(),scopes,input.status());
         mapper.clearPermissions(tenant,id);
         for(String permission:input.permissions()) mapper.addPermission(tenant,id,permission);
+        sessionRegistry.bumpRoleUsers(tenant,id);
     }
     /** 有任意绑定的角色不能删除，停用与撤销绑定是显式独立操作。 */
     @Transactional
@@ -211,6 +214,7 @@ public class AuthorizationService {
         mapper.clearProjectBindings(tenant,userId,project.getId());
         if(!Boolean.TRUE.equals(target.get("authz_managed"))) mapper.manage(tenant,userId);
         for(var v:validated) mapper.bind(tenant,userId,(long)v[0],(String)v[1],project.getId(),(Long)v[2],actor.userId());
+        sessionRegistry.bumpVersion(userId);
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Project membership changed: actor={} tenant={} project={} user={} bindings={}",
                 actor.username(),tenant,code,username,bindings.size());
     }
@@ -269,6 +273,7 @@ public class AuthorizationService {
         mapper.clearBindings(userId);
         mapper.manage(tenant,userId);
         for(var v:validated) mapper.bind(tenant,userId,(long)v[0],(String)v[1],(Long)v[2],(Long)v[3],actor.userId());
+        sessionRegistry.bumpVersion(userId);
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Authorization changed: actor={} tenant={} user={} bindings={}",actor.username(),tenant,username,bindings.size());
     }
     /** 判断显式所有者或仍处于兼容阶段的首个启用管理员。 */

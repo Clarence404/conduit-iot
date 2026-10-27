@@ -28,12 +28,17 @@ public class SessionService {
     private final TenantMapper tenants;
     private final JwtService jwt;
     private final JwtProperties props;
+    private final UserSessionRegistry registry;
+    private final java.time.Clock clock;
 
-    public SessionService(AppUserMapper users, TenantMapper tenants, JwtService jwt, JwtProperties props) {
+    public SessionService(AppUserMapper users, TenantMapper tenants, JwtService jwt, JwtProperties props,
+                          UserSessionRegistry registry, java.time.Clock clock) {
         this.users = users;
         this.tenants = tenants;
         this.jwt = jwt;
         this.props = props;
+        this.registry = registry;
+        this.clock = clock;
     }
 
     /**
@@ -64,22 +69,50 @@ public class SessionService {
     /** 用户自己的身份：角色、租户与「需改密码」标记都取数据库当前值。 */
     public AuthPrincipal principalOf(AppUser user) {
         return new AuthPrincipal(user.getId(), user.getTenantId(), user.getUsername(), user.getRole(), null,
-                Boolean.TRUE.equals(user.getMustChangePassword()));
+                Boolean.TRUE.equals(user.getMustChangePassword()), null,
+                user.getAuthzVersion() == null ? 0 : user.getAuthzVersion());
     }
 
     /** 平台管理员代入目标租户的身份：有效角色 TENANT_ADMIN，imp 为平台管理员自己的 id，不带改密码标记。 */
     public AuthPrincipal impersonation(AppUser admin, Tenant tenant) {
         return new AuthPrincipal(admin.getId(), tenant.getId(), admin.getUsername(), Roles.TENANT_ADMIN,
-                admin.getId(), false);
+                admin.getId(), false, null, admin.getAuthzVersion() == null ? 0 : admin.getAuthzVersion());
     }
 
     /** 签发令牌：refresh 写入 Cookie，access、有效期（秒）与当前用户视图放在响应体。 */
     public ResponseEntity<TokenResponse> issue(AuthPrincipal principal) {
+        java.util.UUID id = java.util.UUID.randomUUID();
+        AuthPrincipal bound = principal.withSession(id, registry.version(principal.userId()));
+        String refresh = jwt.issue(bound, JwtService.TokenType.REFRESH);
+        registry.createWithId(bound, refresh, clock.instant().plus(props.refreshTtl()));
+        return response(bound, refresh);
+    }
+
+    /** Refresh an existing session, rotating the refresh token atomically. */
+    public ResponseEntity<TokenResponse> refresh(AuthPrincipal old, AuthPrincipal updated, String oldToken) {
+        AuthPrincipal bound = updated.withSession(old.sessionId(), registry.version(old.userId()));
+        String refresh = jwt.issue(bound, JwtService.TokenType.REFRESH);
+        registry.rotate(old, oldToken, refresh, clock.instant().plus(props.refreshTtl()));
+        return response(bound, refresh);
+    }
+
+    /** Change effective identity without creating a second session. */
+    public ResponseEntity<TokenResponse> continueSession(AuthPrincipal old, AuthPrincipal updated) {
+        AuthPrincipal bound = updated.withSession(old.sessionId(), registry.version(old.userId()));
+        String refresh = jwt.issue(bound, JwtService.TokenType.REFRESH);
+        registry.replaceRefresh(old, refresh, clock.instant().plus(props.refreshTtl()));
+        return response(bound, refresh);
+    }
+
+    private ResponseEntity<TokenResponse> response(AuthPrincipal principal, String refresh) {
         String access = jwt.issue(principal, JwtService.TokenType.ACCESS);
-        String refresh = jwt.issue(principal, JwtService.TokenType.REFRESH);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie(refresh, props.refreshTtl()).toString())
                 .body(new TokenResponse(access, props.accessTtl().toSeconds(), userView(principal)));
+    }
+
+    public void revoke(AuthPrincipal principal) {
+        if (principal != null && principal.sessionId() != null) registry.revoke(principal.sessionId(), principal.userId());
     }
 
     /** 清除 refresh Cookie（Max-Age=0），登出时使用。 */

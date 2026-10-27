@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -33,11 +35,10 @@ class SessionIT extends IntegrationTestBase {
         return loginResult(username, TEST_PASSWORD).getResponse().getCookie(SessionService.REFRESH_COOKIE);
     }
 
-    private Cookie impersonationRefresh(long tenantId) {
-        long adminId = userId(PLATFORM_ADMIN);
-        String token = jwt.issue(new AuthPrincipal(adminId, tenantId, PLATFORM_ADMIN, Roles.TENANT_ADMIN, adminId, false),
-                JwtService.TokenType.REFRESH);
-        return new Cookie(SessionService.REFRESH_COOKIE, token);
+    private Cookie impersonationRefresh(long tenantId) throws Exception {
+        return mvc.perform(post("/api/v1/platform/tenants/{code}/enter", tenantCode(tenantId))
+                        .header(HttpHeaders.AUTHORIZATION, bearer(loginAsPlatformAdmin())))
+                .andExpect(status().isOk()).andReturn().getResponse().getCookie(SessionService.REFRESH_COOKIE);
     }
 
     @Test
@@ -55,6 +56,41 @@ class SessionIT extends IntegrationTestBase {
                 .andExpect(jsonPath("$.user.tenantCode").value(tenantCode(tenant)))
                 .andExpect(jsonPath("$.user.mustChangePassword").value(false))
                 .andExpect(jsonPath("$.user.impersonatedBy").isEmpty());
+    }
+
+    @Test
+    void revokingOneSessionInvalidatesItsAccessTokenButLeavesAnotherSessionActive() throws Exception {
+        String username = createUser(createTenant("ss-"), Roles.TENANT_VIEWER, false);
+        var first = loginResult(username, TEST_PASSWORD).getResponse();
+        var second = loginResult(username, TEST_PASSWORD).getResponse();
+        String firstToken = com.jayway.jsonpath.JsonPath.read(first.getContentAsString(), "$.accessToken");
+        String secondToken = com.jayway.jsonpath.JsonPath.read(second.getContentAsString(), "$.accessToken");
+        String firstId = jwt.parse(firstToken, JwtService.TokenType.ACCESS).sessionId().toString();
+
+        mvc.perform(delete("/api/v1/auth/sessions/{id}", firstId)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(secondToken)))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, bearer(firstToken)))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, bearer(secondToken)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void logoutAndAuthorizationVersionInvalidateAccessImmediately() throws Exception {
+        String username = createUser(createTenant("ss-"), Roles.TENANT_VIEWER, false);
+        var login = loginResult(username, TEST_PASSWORD).getResponse();
+        String token = com.jayway.jsonpath.JsonPath.read(login.getContentAsString(), "$.accessToken");
+        mvc.perform(post("/api/v1/auth/logout").cookie(login.getCookie(SessionService.REFRESH_COOKIE)))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, bearer(token)))
+                .andExpect(status().isUnauthorized());
+
+        String newToken = com.jayway.jsonpath.JsonPath.read(
+                loginResult(username, TEST_PASSWORD).getResponse().getContentAsString(), "$.accessToken");
+        jdbc.update("update app_user set authz_version=authz_version+1 where username=?", username);
+        mvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, bearer(newToken)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -148,9 +184,10 @@ class SessionIT extends IntegrationTestBase {
     @Test
     void exitTenantReturnsThePlatformAdminSession(CapturedOutput output) throws Exception {
         long tenant = createTenant("ss-");
-        long adminId = userId(PLATFORM_ADMIN);
-        String access = jwt.issue(new AuthPrincipal(adminId, tenant, PLATFORM_ADMIN, Roles.TENANT_ADMIN, adminId, false),
-                JwtService.TokenType.ACCESS);
+        String access = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(post("/api/v1/platform/tenants/{code}/enter", tenantCode(tenant))
+                        .header(HttpHeaders.AUTHORIZATION, bearer(loginAsPlatformAdmin())))
+                        .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(), "$.accessToken");
 
         mvc.perform(post("/api/v1/auth/exit-tenant").header(HttpHeaders.AUTHORIZATION, bearer(access)))
                 .andExpect(status().isOk())

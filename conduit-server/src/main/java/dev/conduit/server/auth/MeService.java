@@ -23,12 +23,15 @@ public class MeService {
     private final PasswordEncoder encoder;
     private final SessionService sessions;
     private final Clock clock;
+    private final UserSessionRegistry registry;
 
-    public MeService(AppUserMapper users, PasswordEncoder encoder, SessionService sessions, Clock clock) {
+    public MeService(AppUserMapper users, PasswordEncoder encoder, SessionService sessions, Clock clock,
+                     UserSessionRegistry registry) {
         this.users = users;
         this.encoder = encoder;
         this.sessions = sessions;
         this.clock = clock;
+        this.registry = registry;
     }
 
     /**
@@ -52,6 +55,7 @@ public class MeService {
      * @return 新的会话身份（调用方据此签发不带 mcp 的令牌）
      * @throws ApiException 409：代入期间；401：用户已不可用；400：原密码错误、新密码不合规或与原密码相同
      */
+    @org.springframework.transaction.annotation.Transactional
     public AuthPrincipal changePassword(AuthPrincipal principal, ChangePasswordRequest request) {
         if (principal.impersonating()) {
             throw ApiException.conflict("代入租户期间不能修改密码，请先退出租户");
@@ -70,6 +74,8 @@ public class MeService {
                 .set(AppUser::getMustChangePassword, false)
                 .set(AppUser::getUpdatedAt, OffsetDateTime.now(clock)));
         log.info("User {} changed the password", user.getUsername());
+        registry.bumpVersion(user.getId());
+        registry.revokeAll(user.getId());
         user.setMustChangePassword(false);
         return sessions.principalOf(user);
     }

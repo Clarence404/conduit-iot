@@ -45,6 +45,8 @@ public class UserService {
     private final Clock clock;
     @org.springframework.beans.factory.annotation.Autowired
     private dev.conduit.server.authorization.AuthorizationService authorization;
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.auth.UserSessionRegistry sessionRegistry;
 
     public UserService(AppUserMapper users, TenantMapper tenants, PasswordEncoder encoder, Clock clock) {
         this.users = users;
@@ -132,13 +134,14 @@ public class UserService {
                 .set(AppUser::getRole, role)
                 .set(AppUser::getUpdatedAt, OffsetDateTime.now(clock)));
         if (roleChanged) {
+            sessionRegistry.bumpVersion(target.getId());
             log.info("Changed role of user {} from {} to {} by {}", username, target.getRole(), role, actor.username());
         }
         return UserItem.of(users.selectById(target.getId()));
     }
 
     /**
-     * 启用或禁用用户（重复操作幂等）。禁用在对方下次续期时生效。
+     * 启用或禁用用户（重复操作幂等）。状态变化递增授权版本，旧令牌下一请求失效。
      *
      * @param status ACTIVE 或 DISABLED
      * @throws ApiException 404：用户不在当前租户；409：禁用自己，或禁用最后一个启用的租户管理员
@@ -158,6 +161,7 @@ public class UserService {
                 .eq(AppUser::getId, target.getId())
                 .set(AppUser::getStatus, status)
                 .set(AppUser::getUpdatedAt, OffsetDateTime.now(clock)));
+        if (!status.equals(target.getStatus())) sessionRegistry.bumpVersion(target.getId());
         log.info("Set status of user {} to {} by {}", username, status, actor.username());
         return UserItem.of(users.selectById(target.getId()));
     }
@@ -184,6 +188,8 @@ public class UserService {
         if (updated == 0) {
             throw ApiException.notFound("用户不存在: " + username);
         }
+        sessionRegistry.bumpVersion(target.getId());
+        sessionRegistry.revokeAll(target.getId());
         log.info("Reset password of user {} by {}", username, actor.username());
     }
 

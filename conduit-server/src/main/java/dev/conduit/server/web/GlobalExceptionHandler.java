@@ -16,10 +16,14 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
-    /** 按异常自带的状态码与消息返回。 */
+    /** 按异常自带的状态码与消息返回；异常带稳定错误码时写入 problem 的 code 属性。 */
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ProblemDetail> handleApi(ApiException e) {
-        return ResponseEntity.status(e.status()).body(ProblemDetail.forStatusAndDetail(e.status(), e.getMessage()));
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(e.status(), e.getMessage());
+        if (e.code() != null) {
+            problem.setProperty("code", e.code());
+        }
+        return ResponseEntity.status(e.status()).body(problem);
     }
 
     /** 批量校验失败：400，并在 problem 的 errors 属性中列出逐项错误。 */

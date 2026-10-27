@@ -222,6 +222,47 @@ describe('HistoryPanel', () => {
     wrapper.unmount()
   })
 
+  it('keeps the previous curves and states their real range when a refresh fails', async () => {
+    const wrapper = await mountPanel()
+    expect(fake.charts).toHaveLength(1)
+
+    // 刷新失败：工具栏已显示新范围，图表仍是上一段数据，必须显式说明屏幕上是哪一段
+    vi.mocked(historyApi.query).mockRejectedValueOnce(new Error('查询范围超过时序库限制，请缩短时间范围'))
+    vi.advanceTimersByTime(30_000)
+    await settle()
+
+    expect(wrapper.text()).toContain('本次查询失败')
+    expect(wrapper.text()).toContain('查询范围超过时序库限制')
+    expect(wrapper.text()).toContain('下方仍是上次成功查询的结果')
+    expect(wrapper.findComponent({ name: 'ElAlert' }).exists()).toBe(true)
+    // 旧曲线保留，没有被清空
+    expect(wrapper.text()).toContain('A 相电压（Ua）')
+
+    // 恢复成功后提示消失
+    vi.mocked(historyApi.query).mockResolvedValue(view())
+    vi.advanceTimersByTime(30_000)
+    await settle()
+    expect(wrapper.text()).not.toContain('本次查询失败')
+    wrapper.unmount()
+  })
+
+  it('offers a retry instead of an empty chart when the first load fails', async () => {
+    vi.mocked(historyApi.query).mockRejectedValue(new Error('时序库暂不可用'))
+    const wrapper = await mountPanel()
+
+    // 首次加载失败没有可保留的旧曲线，应给出可重试的空状态而不是空白
+    expect(wrapper.text()).toContain('时序库暂不可用')
+    expect(wrapper.text()).not.toContain('下方仍是上次成功查询的结果')
+    const retry = wrapper.findAll('button').find((b) => b.text() === '重试')
+    expect(retry).toBeTruthy()
+
+    vi.mocked(historyApi.query).mockResolvedValue(view())
+    await retry!.trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('A 相电压（Ua）')
+    wrapper.unmount()
+  })
+
   it('shows the aggregation bucket', async () => {
     vi.mocked(historyApi.query).mockResolvedValue(
       view({ bucketMs: 300_000, series: [ua([[NOW - HOUR, 220, 219, 221]], 'AGG')] }),

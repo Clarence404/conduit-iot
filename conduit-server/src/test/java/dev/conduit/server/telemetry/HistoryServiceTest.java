@@ -216,6 +216,24 @@ class HistoryServiceTest {
                 e -> assertThat(e.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
     }
 
+    /**
+     * 文件扫描上限虽然由 InfluxDB 报成 500，但缩短范围即可成功，必须与「时序库不可用」区分：
+     * 返回 400 并带稳定错误码，供前端提示用户缩短范围。
+     */
+    @Test
+    void fileScanLimitIs400WithStableCode() {
+        when(schema.lookup(List.of("Ua"))).thenReturn(Map.of("Ua", ColumnType.FLOAT));
+        when(client.querySql(anyString(), anyString(), anyMap())).thenThrow(new InfluxHttpException(500,
+                "External error: Query would scan 432 Parquet files, exceeding the file limit. "
+                        + "InfluxDB 3 Core caps file access to prevent performance degradation."));
+
+        assertThatThrownBy(() -> query(Map.of(), "Ua")).isInstanceOfSatisfying(ApiException.class, e -> {
+            assertThat(e.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(e.code()).isEqualTo("HISTORY_SCAN_LIMIT");
+            assertThat(e.getMessage()).isEqualTo("查询范围超过时序库限制，请缩短时间范围");
+        });
+    }
+
     @Test
     void otherInfluxErrorsAre500WithoutSql() {
         when(schema.lookup(List.of("Ua"))).thenReturn(Map.of("Ua", ColumnType.FLOAT));

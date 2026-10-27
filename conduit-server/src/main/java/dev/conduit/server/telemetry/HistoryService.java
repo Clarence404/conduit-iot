@@ -37,6 +37,9 @@ public class HistoryService {
     private static final Logger log = LoggerFactory.getLogger(HistoryService.class);
     static final String UNAVAILABLE = "时序库暂不可用";
     static final String QUERY_FAILED = "历史查询失败";
+    static final String SCAN_LIMIT = "查询范围超过时序库限制，请缩短时间范围";
+    /** 前端按此码区分「范围过大」与真正的服务故障，不匹配中文提示。 */
+    static final String SCAN_LIMIT_CODE = "HISTORY_SCAN_LIMIT";
 
     /**
      * 一个请求测点的解析结果。
@@ -232,8 +235,9 @@ public class HistoryService {
     }
 
     /**
-     * 执行一次 InfluxDB 调用并映射异常：不可达或 5xx → 503「时序库暂不可用」；其他 HTTP 错误 → 500「历史查询失败」。
-     * 原始错误（可能含 SQL）只写日志。
+     * 执行一次 InfluxDB 调用并映射异常：文件扫描上限 → 400 + {@link #SCAN_LIMIT_CODE}（用户缩短范围即可成功，
+     * 不是故障）；不可达或其他 5xx → 503「时序库暂不可用」；其他 HTTP 错误 → 500「历史查询失败」。
+     * 原始错误（可能含 SQL）只写日志，不返回给调用方。
      */
     private <T> T influx(Supplier<T> call) {
         try {
@@ -242,6 +246,10 @@ public class HistoryService {
             log.warn("InfluxDB unreachable during history query: {}", e.getMessage());
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, UNAVAILABLE);
         } catch (InfluxHttpException e) {
+            if (e.fileLimitExceeded()) {
+                log.warn("History query exceeds the InfluxDB file scan limit: {}", e.getMessage());
+                throw new ApiException(HttpStatus.BAD_REQUEST, SCAN_LIMIT, SCAN_LIMIT_CODE);
+            }
             if (e.status() >= 500) {
                 log.warn("InfluxDB error during history query: {}", e.getMessage());
                 throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, UNAVAILABLE);

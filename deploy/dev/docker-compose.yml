@@ -48,6 +48,16 @@ services:
         --admin-token-file /tmp/admin-token.json --disable-authz health,ping
     environment:
       INFLUX_TOKEN: ${INFLUX_TOKEN:?INFLUX_TOKEN is required}
+      # 单次查询允许打开的 parquet 文件数上限（InfluxDB 3 Core 默认 432）。
+      # Core 不做 compaction，时间范围内的文件全要打开，标签过滤不减少文件数，所以这个上限直接决定可查询的最大跨度。
+      # parquet 文件按 --gen1-duration 切分，而它只接受 1m/5m/10m（实测，--help 只写了默认值 10m 没写取值范围），
+      # 默认的 10m 已经是最大，**无法降低文件数**：144 个/天是下限。于是 432 ÷ 144 = 3 天，即默认配置下
+      # 任何超过 2 天的历史查询都必然失败。要支撑接口承诺的 30 天需要 30 × 144 = 4320 个，故取 5000 留余量。
+      # 不要再往上无限放大：打开数千个文件会显著抬高内存与延迟（InfluxDB 自身的报错也这么警告），
+      # 真正的解法是分段查询，排在 V0.3-E。
+      INFLUXDB3_QUERY_FILE_LIMIT: ${INFLUX_QUERY_FILE_LIMIT:-5000}
+    # 内存上限：长范围查询的内存随扫描文件数增长，不限制时一次失控查询会拖垮整台宿主机上的其他服务
+    mem_limit: ${INFLUX_MEM_LIMIT:-3g}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${INFLUX_PORT:-8096}:8181"
     volumes:

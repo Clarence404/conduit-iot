@@ -12,6 +12,7 @@ import { historyApi } from '@/api/history'
 import { thingModelApi } from '@/api/thingModel'
 import { deviceApi } from '@/api/devices'
 import { problemMessage } from '@/api/errors'
+import { formatDateTime } from '@/utils/format'
 import type { HistoryView } from '@/api/types'
 import { echarts, type ECharts } from '@/utils/echarts'
 import { createVisiblePoller } from '@/composables/usePolling'
@@ -45,12 +46,20 @@ const appliedCustom = ref<[Date, Date] | null>(null)
 const zoom = ref<TimeRange | null>(null)
 const data = ref<HistoryView | null>(null)
 const loading = ref(false)
+// 图表上这批数据实际对应的范围。查询失败时工具栏已经显示新选的范围，必须用它说明屏幕上是哪一段，否则会被误读
+const shownRange = ref<TimeRange | null>(null)
+// 最近一次查询失败的提示；成功后清空。data 为空时表示首次加载就失败，显示可重试的空状态
+const failure = ref('')
 
 const chartEls = new Map<string, HTMLElement>()
 const charts = new Map<string, ECharts>()
 const seq = createRequestSeq()
 const poller = createVisiblePoller(() => load(currentRange()), REFRESH_MS)
 const { isDark } = useTheme()
+
+/** 旧曲线对应范围的可读文案，查询失败时显示，说明屏幕上这批数据到底是哪一段 */
+const shownRangeLabel = computed(() =>
+  shownRange.value ? `${formatDateTime(shownRange.value.from)} ～ ${formatDateTime(shownRange.value.to)}` : '')
 
 const modeLabel = computed(() => {
   if (!data.value) {
@@ -111,13 +120,16 @@ async function load(range: TimeRange | null) {
       return
     }
     data.value = res
+    shownRange.value = range
+    failure.value = ''
     await nextTick()
     if (seq.isLatest(id)) {
       renderCharts()
     }
   } catch (e) {
     if (seq.isLatest(id)) {
-      ElMessage.error(problemMessage(e))
+      // 不弹 toast：快捷范围每 30 秒自动刷新，持续失败会刷屏。改为常驻提示，并保留旧曲线与它的真实范围
+      failure.value = problemMessage(e)
     }
   } finally {
     if (seq.isLatest(id)) {
@@ -297,8 +309,21 @@ onBeforeUnmount(() => {
       <span class="mode">{{ modeLabel }}</span>
       <span class="hint">{{ refreshHint }}</span>
     </div>
+    <el-alert
+      v-if="failure && data"
+      class="stale"
+      type="warning"
+      show-icon
+      :closable="false"
+      :title="`本次查询失败：${failure}`"
+      :description="`下方仍是上次成功查询的结果（${shownRangeLabel}）`"
+    />
     <div v-loading="loading" class="charts">
       <el-empty v-if="selected.length === 0" description="请选择测点" />
+      <!-- 首次加载就失败：没有可保留的旧曲线，给出可重试的空状态 -->
+      <el-empty v-else-if="failure && !data" :description="failure">
+        <el-button type="primary" @click="schedule">重试</el-button>
+      </el-empty>
       <template v-else-if="data">
         <div v-for="s in data.series" :key="s.identifier" class="chart-row">
           <div class="chart-title">{{ seriesLabel(s) }}</div>
@@ -336,6 +361,10 @@ onBeforeUnmount(() => {
 .hint {
   color: var(--el-text-color-secondary);
 }
+.stale {
+  margin-bottom: 8px;
+}
+
 .charts {
   min-height: 120px;
 }

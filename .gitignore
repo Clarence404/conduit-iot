@@ -17,6 +17,7 @@ dist/
 .env
 deploy/dev/.env
 deploy/standalone/.env
+deploy/demo/.env.local
 
 # 全量包的预编译产物（deploy/package.sh 在临时检出中生成），仓库里只保留占位文件
 deploy/standalone/artifacts/*

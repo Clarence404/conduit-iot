@@ -64,7 +64,10 @@ class MeApiIT extends IntegrationTestBase {
         mvc.perform(post("/api/v1/auth/logout").header(HttpHeaders.AUTHORIZATION, bearer(token)))
                 .andExpect(status().isNoContent());
 
-        String body = changePassword(token, TEST_PASSWORD, NEW_PASSWORD)
+        // 登出会吊销该会话；改密码前先取得新的会话。
+        String replacement = login(username, TEST_PASSWORD);
+
+        String body = changePassword(replacement, TEST_PASSWORD, NEW_PASSWORD)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.mustChangePassword").value(false))
                 .andReturn().getResponse().getContentAsString();
@@ -106,13 +109,19 @@ class MeApiIT extends IntegrationTestBase {
         Cookie refresh = login.getResponse().getCookie(SessionService.REFRESH_COOKIE);
 
         // 带 access token（refresh 是公开接口，不要求登录）
-        String withAccess = mvc.perform(post("/api/v1/auth/refresh").cookie(refresh)
+        var refreshed = mvc.perform(post("/api/v1/auth/refresh").cookie(refresh)
                         .header(HttpHeaders.AUTHORIZATION, bearer(access)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.mustChangePassword").value(true))
-                .andReturn().getResponse().getContentAsString();
+                .andReturn().getResponse();
+        String withAccess = refreshed.getContentAsString();
         // 不带 access token（access 已过期时与没有令牌等价）
-        String withoutAccess = mvc.perform(post("/api/v1/auth/refresh").cookie(refresh))
+        mvc.perform(post("/api/v1/auth/refresh").cookie(refresh)
+                .header(HttpHeaders.AUTHORIZATION, bearer(access)))
+                .andExpect(status().isUnauthorized());
+        // 旧 cookie 只能用一次，这里改用续期成功时返回的新 cookie。
+        String withoutAccess = mvc.perform(post("/api/v1/auth/refresh")
+                        .cookie(refreshed.getCookie(SessionService.REFRESH_COOKIE)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.mustChangePassword").value(true))
                 .andReturn().getResponse().getContentAsString();

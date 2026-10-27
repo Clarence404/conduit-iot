@@ -22,9 +22,11 @@ import java.util.List;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwt;
+    private final UserSessionRegistry registry;
 
-    public JwtAuthFilter(JwtService jwt) {
+    public JwtAuthFilter(JwtService jwt, UserSessionRegistry registry) {
         this.jwt = jwt;
+        this.registry = registry;
     }
 
     /**
@@ -38,13 +40,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             try {
                 AuthPrincipal principal = jwt.parse(header.substring(7), JwtService.TokenType.ACCESS);
+                if (!registry.valid(principal)) throw new JwtException("Session inactive");
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + principal.role())));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
                 if (principal.tenantId() != null) {
                     TenantContext.set(principal.tenantId());
                 }
-            } catch (JwtException | IllegalArgumentException ignored) {
+            } catch (JwtException | IllegalArgumentException | org.springframework.dao.DataAccessException ignored) {
                 // 保持未认证
             }
         }

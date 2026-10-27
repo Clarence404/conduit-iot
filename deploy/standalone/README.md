@@ -1,6 +1,8 @@
 # Conduit 独立部署包
 
-基础服务（PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX，定义在 `../dev/docker-compose.yml`，以 `extends` 引用）+ conduit-server、两个 transport（一主一备）、conduit-web 与演示模拟器。需要 Docker 与 Docker Compose v2。
+基础服务（PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX，定义在 `../dev/docker-compose.yml`，以 `extends` 引用）+ conduit-server、两个 transport（一主一备）、conduit-web、演示模拟器与 Mailpit 演示收件箱。需要 Docker 与 Docker Compose v2。
+
+邮件邀请需先在 `.env` 设置 `CONDUIT_PUBLIC_URL` 为收件人可打开的 Web 地址。演示邮件可在 `http://<docker-host>:8025` 查看；真实 SMTP 的替换方式、演示脚本与升级后会话行为见[身份治理说明](../../docs/identity-governance.md)。
 
 项目/站点授权采用扩展迁移与分阶段开关：`CONDUIT_AUTHORIZATION_MODE=shadow`（默认观察）、`enforce`（正式执行）、`read-only`（保留范围的只读保护）。启用前备份 PostgreSQL；已依赖范围授权后不能回退旧应用恢复全租户权限。配置和演示初始化见 [授权说明](../../docs/authorization.md)。新功能演示关系数据通过版本化 `deploy/demo/authorization-demo.py` 复现，动态遥测仍由模拟器生成。
 
@@ -23,7 +25,7 @@ cp .env.example .env    # 替换全部 change-me-* 口令；BUILD_FROM 保持 pr
 docker compose up -d --build
 ```
 
-宿主机上需已有镜像 `eclipse-temurin:21.0.6_7-jre`、`nginx:1.27.4-alpine` 以及基础服务的镜像（`postgres:16.8`、`redis:7.4.2`、`influxdb:3.12.0-core`、`influxdata/influxdb3-ui:1.11.0`、`emqx/emqx:5.10.5`）。包里只有部署文件与产物，没有源码；`.env` 不在包内。
+宿主机上需已有镜像 `eclipse-temurin:21.0.6_7-jre`、`nginx:1.27.4-alpine`、`axllent/mailpit:v1.27.4` 以及基础服务的镜像（`postgres:16.8`、`redis:7.4.2`、`influxdb:3.12.0-core`、`influxdata/influxdb3-ui:1.11.0`、`emqx/emqx:5.10.5`）。包里只有部署文件与产物，没有源码；`.env` 不在包内。
 
 ## 方式二：从源码构建（宿主机能联网）
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 714" role="img" aria-labelledby="title desc">
   <title id="title">Conduit 当前系统架构</title>
-  <desc id="desc">设备通过 MQTT 接入 EMQX。EMQX 同步调用 server 的鉴权回调。单活多备的 transport 将消息写入 Redis Streams，server 消费组异步拉取，经解码和物模型校验后写入存储。Vue 前端调用同一 server 进程的 REST 接口。server 访问 PostgreSQL、InfluxDB 3 和 Redis；PostgreSQL 保存租户内组织模型。图中存储连线为进程级访问关系。</desc>
+  <desc id="desc">设备通过 MQTT 接入 EMQX。EMQX 同步调用 server 的鉴权回调。单活多备的 transport 将消息写入 Redis Streams，server 消费组异步拉取，经解码和物模型校验后写入存储。Vue 前端调用同一 server 进程的 REST 接口。server 访问 PostgreSQL、InfluxDB 3 和 Redis，并通过可替换通知接口向 Mailpit 或正式 SMTP 服务发送邀请。PostgreSQL 保存租户组织、邀请与会话。图中存储连线为进程级访问关系。</desc>
   <style>
     :root {
       --fg:#1a1a2e; --muted:#6b7280; --bg:#f8f9fc; --card:#ffffff; --border:#e2e8f0;
@@ -38,6 +38,9 @@
   <rect class="box" x="780" y="70" width="260" height="68" rx="10"/>
   <text class="name" x="910" y="98" text-anchor="middle">Vue 前端（nginx）</text>
   <text class="sub" x="910" y="120" text-anchor="middle">组织、产品、设备、租户与历史曲线</text>
+  <rect class="box" x="400" y="70" width="280" height="68" rx="10"/>
+  <text class="name" x="540" y="98" text-anchor="middle">邮件通知通道</text>
+  <text class="sub" x="540" y="120" text-anchor="middle">演示 Mailpit / 可替换 SMTP</text>
 
   <rect class="box" x="40" y="190" width="260" height="68" rx="10"/>
   <text class="name" x="170" y="218" text-anchor="middle">EMQX</text>
@@ -73,6 +76,7 @@
   <text class="control-label" x="314" y="207">连接时鉴权</text>
   <path class="control" d="M910 142 V208 H880 V244" marker-end="url(#control-arrow)"/>
   <text class="control-label" x="924" y="170">/api</text>
+  <path class="control" d="M640 186 V160 H540 V144" marker-end="url(#control-arrow)"/>
   <line class="flow" x1="304" y1="465" x2="424" y2="465" marker-end="url(#arrow)"/>
   <text class="label" x="364" y="450" text-anchor="middle">消费组拉取</text>
 
@@ -82,7 +86,7 @@
   <text class="label" x="732" y="555">server 进程的数据访问</text>
   <rect class="box" x="40" y="610" width="300" height="80" rx="10"/>
   <text class="name" x="190" y="640" text-anchor="middle">PostgreSQL</text>
-  <text class="sub" x="190" y="665" text-anchor="middle">租户 · 组织 · 产品 · 设备 · 物模型</text>
+  <text class="sub" x="190" y="665" text-anchor="middle">租户 · 组织 · 设备 · 邀请 · 会话</text>
   <rect class="box" x="390" y="610" width="300" height="80" rx="10"/>
   <text class="name" x="540" y="640" text-anchor="middle">InfluxDB 3</text>
   <text class="sub" x="540" y="665" text-anchor="middle">遥测写入 · 历史查询与聚合</text>

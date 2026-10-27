@@ -23,11 +23,13 @@ import UserFormDialog from '@/components/UserFormDialog.vue'
 import ResetPasswordDialog from '@/components/ResetPasswordDialog.vue'
 import AuthorizationDialog from '@/components/AuthorizationDialog.vue'
 import RoleManagementDialog from '@/components/RoleManagementDialog.vue'
+import InvitationManagementDialog from '@/components/InvitationManagementDialog.vue'
 
 const auth = useAuthStore()
 const { isImpersonating, can } = usePermission()
 const authorizationVisible = ref(false)
 const rolesVisible = ref(false)
+const invitationsVisible = ref(false)
 const authorizing = ref('')
 
 const filters = reactive({ keyword: '', role: '' as '' | TenantRole, status: '' as '' | AccountStatus })
@@ -107,7 +109,7 @@ async function toggleStatus(row: TenantUserView) {
   if (disabling) {
     try {
       await ElMessageBox.confirm(
-        `禁用后，用户「${row.username}」将无法登录，已登录的会话最多 15 分钟后失效。确定禁用？`,
+        `禁用后，用户「${row.username}」已登录的会话会立即失效。确定禁用？`,
         '禁用用户',
         { type: 'warning' },
       )
@@ -153,9 +155,11 @@ onMounted(() => {
     <PageHeader title="用户" subtitle="维护租户账号与资源授权；项目和站点权限在「资源权限」中分配。">
       <template #actions>
         <el-button v-if="can('role.manage', true)" @click="rolesVisible = true">角色管理</el-button>
+        <el-button v-if="can('member.manage', true)" @click="invitationsVisible = true">邮件邀请</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
       </template>
     </PageHeader>
+    <InvitationManagementDialog v-model="invitationsVisible" />
 
     <div class="cd-panel">
       <FilterBar @search="search" @reset="reset">

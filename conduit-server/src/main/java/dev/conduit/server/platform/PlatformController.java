@@ -113,6 +113,6 @@ public class PlatformController {
     @PostMapping("/tenants/{code}/enter")
     public ResponseEntity<TokenResponse> enter(@AuthenticationPrincipal AuthPrincipal actor,
                                                @PathVariable String code) {
-        return sessions.issue(tenants.enter(actor, code));
+        return sessions.continueSession(actor, tenants.enter(actor, code));
     }
 }

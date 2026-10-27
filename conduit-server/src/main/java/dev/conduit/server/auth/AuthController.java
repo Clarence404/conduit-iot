@@ -80,14 +80,14 @@ public class AuthController {
             throw ApiException.unauthorized("刷新凭证无效");
         }
         if (principal.impersonating()) {
-            return refreshImpersonation(principal);
+            return refreshImpersonation(principal, refreshToken);
         }
         AppUser user = sessions.requireActive(users.selectById(principal.userId()));
-        return sessions.issue(sessions.principalOf(user));
+        return sessions.refresh(principal, sessions.principalOf(user), refreshToken);
     }
 
     /** 代入令牌的续期（规则见 {@link #refresh}）。 */
-    private ResponseEntity<TokenResponse> refreshImpersonation(AuthPrincipal principal) {
+    private ResponseEntity<TokenResponse> refreshImpersonation(AuthPrincipal principal, String refreshToken) {
         AppUser admin = users.selectById(principal.impersonatorId());
         if (admin == null || !Roles.PLATFORM_ADMIN.equals(admin.getRole())) {
             throw ApiException.unauthorized("用户不可用");
@@ -97,14 +97,23 @@ public class AuthController {
         if (tenant == null || !Tenant.ACTIVE.equals(tenant.getStatus())) {
             log.info("Platform admin {} left tenant id={} on refresh: tenant {}", admin.getUsername(),
                     principal.tenantId(), tenant == null ? "deleted" : "disabled");
-            return sessions.issue(sessions.principalOf(admin));
+            return sessions.refresh(principal, sessions.principalOf(admin), refreshToken);
         }
-        return sessions.issue(sessions.impersonation(admin, tenant));
+        return sessions.refresh(principal, sessions.impersonation(admin, tenant), refreshToken);
     }
 
-    /** 登出：仅通过 Max-Age=0 清除 refresh Cookie；令牌无服务端状态，已签发的 access token 到期前仍有效。 */
+    /** 登出：撤销服务端会话并清除 refresh Cookie；access token 下一请求即失效。 */
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout() {
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal AuthPrincipal principal,
+            @CookieValue(name = SessionService.REFRESH_COOKIE, required = false) String refreshToken) {
+        if (principal == null && refreshToken != null) {
+            try {
+                principal = jwt.parse(refreshToken, JwtService.TokenType.REFRESH);
+            } catch (JwtException | IllegalArgumentException ignored) {
+                // 无论 cookie 是否已过期，都清除浏览器端的 cookie。
+            }
+        }
+        sessions.revoke(principal);
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, sessions.clearedRefreshCookie().toString())
                 .build();
@@ -134,6 +143,6 @@ public class AuthController {
         Tenant tenant = tenants.selectById(principal.tenantId());
         log.info("Platform admin {} exited tenant {}", admin.getUsername(),
                 tenant == null ? String.valueOf(principal.tenantId()) : tenant.getCode());
-        return sessions.issue(sessions.principalOf(admin));
+        return sessions.continueSession(principal, sessions.principalOf(admin));
     }
 }

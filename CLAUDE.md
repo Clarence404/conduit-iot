@@ -6,6 +6,8 @@
 
 **维护规则**：每次升级（新子项目、架构调整、重要修复）除了写 `docs/superpowers/` 下的 spec / plan 外，还必须把其中**决定性质的约定**（技术选型、模块职责、数据格式与语义、接口约定、界面与数据约定、部署方式等）同步更新到本文件对应章节，并在第 4 节「决定记录」追加一条；与本文件冲突的旧内容直接改掉，不留过期描述。讨论中确定的后续工作与方向性判断（即使暂不实施）也要当时写进当前路线图（`docs/roadmap-saas.md`）或对应 spec，不能只记在对话或个人记忆里。
 
+**智能体交接规则（必须）**：工作跨智能体或跨任务继续且尚未完成时，按 [`handoffs/README.md`](handoffs/README.md) 在 `handoffs/` 维护同一任务的一份交接文件。写明已完成、未完成、验证证据、当前 Git/部署版本、下一步和安全取凭据方式；接手者先核对实时状态。不得把口令、令牌或私钥写进交接。完成后标记已完成并链接报告与提交；普通已完成任务不生成空交接。交接不替代 spec、roadmap、架构同步和测试报告。
+
 **架构同步规则（必须）**：一旦实施内容影响模块职责或依赖、组件拓扑、数据流、协议与接口、存储、租户隔离、可靠性或部署方式，必须在同一变更中同步更新受影响的架构文档和图，完成后才能交付或提交。至少检查 `README.md` 架构说明、`docs/images/architecture.svg`、`docs/images/module-dependencies.svg`、本文件第 1 节，以及对应 spec / plan；涉及可靠上报时检查 `docs/images/reliable-uplink.svg`，涉及后续路线时更新 `docs/roadmap-saas.md`。只修改受影响的内容，但交付说明中必须列出已更新的架构文件；若检查后无需修改，应说明原因。架构图描述实际已实现状态，规划能力须明确标注；新增或修改的图使用支持亮暗主题的 SVG，并自检文字、间距和连线，同时检查 Markdown 引用有效。
 
 **架构图源约定**：架构图统一使用支持亮暗主题的 SVG；同一架构共用一个源文件，各文档通过 Markdown 图片引用，禁止复制维护多份同义图。`README.md` 与本文件的当前系统架构统一引用 `docs/images/architecture.svg`。各文档保留必要的职责表、数据流与设计语义说明，便于检索和理解；图源变更时同步检查所有引用位置。
@@ -18,7 +20,7 @@
 
 ![Conduit 当前系统架构：设备接入、同步鉴权、异步处理与存储](docs/images/architecture.svg)
 
-设备通过 MQTT 接入 EMQX，EMQX 同步调用 `conduit-server` 鉴权；主 `conduit-transport` 将上报组装为 `RawMessage`，写入 Redis Streams `conduit:stream:up`。server 以消费组异步拉取、解码、校验并写入 InfluxDB 3 的 `property` 表及 Redis 最新值；Redis 同时保存在线状态与设备身份缓存，PostgreSQL 保存租户、用户、客户、项目、站点、资产、产品、物模型和设备。Vue 前端通过 REST 调用同一 server 进程。可靠上报的业务回执含义与重试边界见 1.2；图中展示当前已实现架构，后续规划见 `docs/roadmap-saas.md`。
+设备通过 MQTT 接入 EMQX，EMQX 同步调用 `conduit-server` 鉴权；主 `conduit-transport` 将上报组装为 `RawMessage`，写入 Redis Streams `conduit:stream:up`。server 以消费组异步拉取、解码、校验并写入 InfluxDB 3 的 `property` 表及 Redis 最新值；Redis 同时保存在线状态与设备身份缓存，PostgreSQL 保存租户、用户、组织、产品、设备、邀请和会话。Vue 前端通过 REST 调用同一 server 进程；邀请通过 `InvitationNotificationChannel` 发往 SMTP，演示环境由 Mailpit 收取。可靠上报的业务回执含义与重试边界见 1.2；图中展示当前已实现架构，后续规划见 `docs/roadmap-saas.md`。
 
 ![Conduit 租户内组织模型与设备归属](docs/images/organization-model.svg)
 
@@ -26,15 +28,17 @@
 |---|---|
 | `conduit-common` | 跨进程共享：`MessageBus` 接口与 Redis Streams 实现、协议无关的 `RawMessage` |
 | `conduit-transport` | 协议接入层（对应 ThingsBoard 的 transport）：单活多备（Redis 选主，只有主实例连接 EMQX），以固定 clientId 的磁盘持久会话普通订阅设备主题，把设备报文原样组装成 `RawMessage` 发布到总线；不做业务解析 |
-| `conduit-server` | 业务核心：EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 写时序库/最新值）、REST API、多租户与用户，以及租户内客户/项目/站点/资产和设备归属 |
+| `conduit-server` | 业务核心：EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 写时序库/最新值）、REST API、多租户与用户、邀请/会话治理，以及租户内客户/项目/站点/资产和设备归属；邮件邀请经可替换通知接口发送 |
 | `conduit-simulator` | 演示用设备模拟器与可靠上报参考实现：自动创建演示产品/设备、导入演示物模型、按间隔上报；收到平台业务回执才从内存待确认队列删除，超时原样重发、队列满后背压；配置平台管理员密码后模拟各租户的物模型产品 |
-| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架（分组可折叠侧栏、面包屑顶栏、PageHeader）、首页总览、暗色模式、按角色的菜单与写操作、平台首页、租户/用户管理、组织管理、设备组织归属与资源权限绑定 |
+| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架、首页、租户/用户管理、邮件邀请、个人会话、组织管理、设备归属与资源权限绑定 |
 | `conduit-e2e` | 端到端测试（`-Pe2e`）：Testcontainers 临时环境 + 本地 jar 进程，杀 server / 主 transport / 全部 transport、重启 EMQX 及可靠设备上报途中强杀 EMQX 五个场景不丢数据 |
-| `deploy/` | 开发环境包 `dev/`（开发用）、独立部署包 `standalone/`（extends 基础服务 + 应用，预编译产物或源码构建）、`package.sh`（打独立部署包）；项目名均为 `conduit` |
+| `deploy/` | 开发环境包 `dev/`（开发用）、独立部署包 `standalone/`（基础服务 + 应用 + 演示邮箱 Mailpit）、`package.sh`（打独立部署包）；项目名均为 `conduit` |
 
 ### 1.2 关键设计决定
 
-- **项目/站点授权（V0.3-B2）**：五个预置角色、自定义角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护，禁止故障时恢复旧管理员全权。用户页可配置资源权限与自定义角色；项目管理员可在当前项目委派权限，不能触及租户和其他项目。产品保持租户级共享。邀请、会话注册/吊销与持久化审计仍待 B3/B4。详见 `docs/authorization.md`。
+- **项目/站点授权（V0.3-B2）**：五个预置角色、自定义角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护。用户页可配置资源权限与自定义角色；项目管理员可在当前项目委派权限，不能触及租户和其他项目。产品保持租户级共享。B3 的邀请与会话见下文，持久化审计待 B4。详见 `docs/authorization.md`。
+
+- **身份治理（V0.3-B3 当前切片）**：JWT 带 `sid` 和 `av`；每次访问以 PostgreSQL `user_session` 与 `app_user.authz_version` 校验，禁用、改权、登出或主动撤销的旧 access 下一请求失效。refresh 在同一会话中按哈希比较并轮换；旧版无 `sid` 令牌在生产默认拒绝，升级后用户需重新登录。邀请只保存一次性 token 的 SHA-256 哈希，48 小时过期，可撤销、只接受一次；邮件交付经 `InvitationNotificationChannel` 扩展点，首个实现为 SMTP，独立演示包用 Mailpit。邮件失败时创建事务回滚，未配置通道时拒绝创建。账号邀请当前支持租户级管理员/只读绑定；可复现演示见 `docs/identity-governance.md`。租户可配置密码策略、密码历史/锁定和 MFA 数据预留尚未实施。
 
 ![项目与站点授权链路](docs/images/authorization-flow.svg)
 
@@ -176,4 +180,5 @@
 - 2026-10-22 V0.3 前置租户隔离加固：决定暂不实施 PostgreSQL RLS，以 MyBatis-Plus 租户拦截器为主体，补充租户组合外键、唯一的 `tenant.system` + `TenantContext.callAsSystem` 跨租户通道、一事务一租户断言与越权测试。Redis/InfluxDB 延续共享存储逻辑隔离，访问必须使用经 PostgreSQL 租户查询确认的设备身份。出现真实跨租户泄露、引入不经 MyBatis 的数据访问路径，或多人协作/业务表超过 10 张时重新评估 RLS（`2026-10-22-conduit-tenant-isolation-design.md`）。
 - 2026-10-26 V0.3-B1 组织骨架：新增租户内 `customer → project → site → asset` 业务层级；项目与站点作为后续授权范围，客户不是子租户；产品仍在租户内共享，设备必须归属一个站点并可选关联同站点资产。V6 为存量和新建租户提供受保护的默认项目/站点，组合外键强制租户与站点一致；本阶段只交付数据模型和后端接口，细粒度授权、自定义角色、邀请、会话吊销、审计与界面按 B2～B4 实施（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
 - 2026-10-26 V0.3-B2：预置角色与租户/项目/站点绑定、每请求新鲜授权和 SQL 范围过滤；兼容账号以 authz_managed 标记显式接管，撤权不能恢复旧角色。提供 shadow/enforce/read-only 开关、OWNER 保护、用户资源权限与自定义角色管理，以及项目管理员限本项目的成员委派；自定义角色停用立即失效，有绑定时不得删除，`tenant.manage` 只属于内置 OWNER。B3/B4 的邀请、会话治理与持久化审计仍待实施。业务表超过 10 张后复核 RLS，继续以可迁移的 MyBatis-Plus + 组合外键和受控系统 Mapper 为应用边界，见 docs/authorization.md。
+- 2026-10-27 V0.3-B3 身份治理切片：V9/V10 建立服务端会话、授权版本和一次性邀请；生产拒绝旧无 sid 令牌，refresh 哈希轮换；邮件经通知通道接口发送，独立演示包 Mailpit 接收。账号邀请暂支持租户级内置管理员/只读角色；密码策略扩展与 MFA 数据预留继续留在 B3 待办。详见 docs/identity-governance.md。
 - 2026-10-26 全局演示约定：新增功能必须配套可复现的演示数据、可操作入口、查看步骤和测试报告；不得只在当前 VM 手工造数或交付空页面；初始化不能覆盖人工配置与凭据。

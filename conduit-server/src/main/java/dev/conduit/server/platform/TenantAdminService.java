@@ -63,6 +63,8 @@ public class TenantAdminService {
     private final OrganizationProvisioner organizations;
     private final PasswordEncoder encoder;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private dev.conduit.server.auth.UserSessionRegistry sessionRegistry;
 
     public TenantAdminService(TenantMapper tenants, AppUserMapper users, ProductMapper products, DeviceMapper devices,
                               PlatformStatsMapper statsMapper, TenantStats stats, DeviceIdentityCache identityCache,
@@ -165,6 +167,7 @@ public class TenantAdminService {
      * @param status ACTIVE 或 DISABLED
      * @throws ApiException 404：租户不存在；409：默认租户
      */
+    @Transactional
     public TenantView setStatus(String code, String status) {
         Tenant tenant = require(code);
         if (Tenant.DEFAULT_CODE.equals(tenant.getCode())) {
@@ -174,6 +177,7 @@ public class TenantAdminService {
                 .eq(Tenant::getId, tenant.getId())
                 .set(Tenant::getStatus, status)
                 .set(Tenant::getUpdatedAt, OffsetDateTime.now(clock)));
+        if (!status.equals(tenant.getStatus())) sessionRegistry.bumpTenantUsers(tenant.getId());
         evictIdentities(tenant);
         log.info("Set status of tenant {} to {}", code, status);
         return view(require(code), stats.snapshot());
@@ -237,6 +241,8 @@ public class TenantAdminService {
                 .set(AppUser::getPasswordHash, encoder.encode(request.password()))
                 .set(AppUser::getMustChangePassword, true)
                 .set(AppUser::getUpdatedAt, OffsetDateTime.now(clock)));
+        sessionRegistry.bumpVersion(user.getId());
+        sessionRegistry.revokeAll(user.getId());
         log.info("Platform reset the password of tenant admin {} in tenant {}", username, code);
     }
 

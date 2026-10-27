@@ -18,6 +18,12 @@ export const routes: RouteRecordRaw[] = [
     meta: ROUTE_META.login,
   },
   {
+    path: '/invitations/accept',
+    name: 'accept-invitation',
+    component: () => import('@/views/AcceptInvitationView.vue'),
+    meta: ROUTE_META['accept-invitation'],
+  },
+  {
     path: '/',
     component: () => import('@/layouts/AppLayout.vue'),
     redirect: '/home',

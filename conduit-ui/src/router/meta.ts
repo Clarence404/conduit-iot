@@ -34,6 +34,7 @@ declare module 'vue-router' {
 export const ROUTE_META = {
   home: { title: '首页', menu: '/home', breadcrumb: [{ label: '概览' }, { label: '首页' }] },
   login: { public: true, title: '登录' },
+  'accept-invitation': { public: true, title: '接受邀请' },
   products: {
     title: '产品',
     menu: '/products',

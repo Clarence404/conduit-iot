@@ -31,6 +31,7 @@ public class AppUser {
     private String status;
     /** 为 true 时登录后只能修改密码（新建的用户、被重置密码的用户）。 */
     private Boolean mustChangePassword;
+    private Long authzVersion;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

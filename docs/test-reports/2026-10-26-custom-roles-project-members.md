@@ -1,6 +1,6 @@
 # B2 自定义角色与项目成员委派测试报告
 
-- 日期：2026-10-26（Asia/Shanghai）
+- 日期：2026-10-26～27（Asia/Shanghai）
 - 分支：`codex/v0.3b-custom-roles`
 - 范围：租户自定义角色创建、修改、停用、删除约束；项目管理员仅在本项目委派成员；界面与可复现演示。
 
@@ -31,7 +31,7 @@ mvn -B -o verify
 
 - 结果：`BUILD SUCCESS`，五个模块全部成功；**689 项通过，0 失败、0 错误、0 跳过**，用时 3 分 46 秒。
 - 分项（单元 + 集成）：common 9 + 17、transport 48 + 16、server 249 + 264、simulator 82 + 4。
-- 与上一基线相比，server 新增 2 项单元、18 项集成，与本次新增的角色与项目成员用例一致。
+- 本次总数为 689；各模块合计以本次 Maven 日志为准，不以旧报告推算增量。授权专项另外重跑 `AuthorizationIT` 与 `AuthorizationReadOnlyIT`，12 项通过。
 - 证据：各模块 `target/surefire-reports` 与 `target/failsafe-reports`。
 
 ### 前端全量
@@ -49,7 +49,13 @@ npm run test
 
 ## VM 验收
 
-待发布后填写访问入口、演示账号、脚本重复执行结果、页面可见性、越权 API 结果与运行限制。发布前不把脚本存在当作已验收。
+2026-10-27，发布提交 `046687c` 到演示 VM，沿用原 `enforce` 模式与已有 PostgreSQL/Redis/InfluxDB/EMQX、transport 和模拟器，仅重建 server/web。发布前 `pg_dump -Fc` 备份到 VM `/opt/conduit-backups/postgres-before-custom-roles-20261027.dump`（77060 字节、权限 600、SHA-256 `ebf749cc79b82eccfc7f537a8329dbebf35b222db75580f6a739c88505f4e771`），在 PostgreSQL 容器内用 `pg_restore --list` 校验目录。Flyway 验证 8 个迁移且无新迁移，server 健康探针 UP；发布后日志未见 ERROR/Exception。
+
+`deploy/demo/authorization-demo.py --demo --verify` 在 VM **连续运行两次均通过**。原 A/B/C 设备 Key 分别保持为 `7np1abt8cq8inhkj`、`nt16d24y3y3ry85k`、`svyrukbjnmllpcmk`，第二次没有重建；原 `rbac-demo` 账号与绑定保留。新建 `CUSTOM_INSPECTOR`（项目范围、3 个只读权限）和 `rbac-inspector`，由 `rbac-demo` 在项目 A 委派。实际接口断言：`rbac-demo` A 可写/B 只读/C 隐藏、租户用户管理拒绝；`rbac-inspector` A 可读不可写、B 不可见。两次均输出两个 PASS。演示密码由运行环境提供，未写入仓库或报告。
+
+页面检查：`http://<演示 VM>:8090`，管理员进入「系统管理 → 用户 → 角色管理」可见 `CUSTOM_INSPECTOR`/「权限演示巡检员」、项目范围、3 项权限、启用状态；「组织 → 项目 → 权限演示 A（可写）→ 成员」可见 `rbac-demo` 与 `rbac-inspector`，后者绑定显示「权限演示巡检员 / 整个项目」。三台演示设备继续在线，实际最后上报距查询约 6.8～7.0 秒，Redis 消费组 lag 约 10 条，MQTT 新会话无 Broker 丢弃或堆积；遥测由原模拟器持续生成。访问账号与密码由交付消息提供。
+
+旧 MQTT 会话积压仍未回放，沿用上一阶段已经记录的保留方案；本轮仅部署授权代码，没有改变 Broker/transport 会话或清理旧数据。可靠性 e2e 依用户要求未执行，不能计入通过结果。
 
 ## 架构同步
 

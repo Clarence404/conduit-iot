@@ -30,6 +30,10 @@ import java.util.Map;
  */
 public class RedisStreamMessageBus implements MessageBus {
 
+    /** 批大小配成「不限」时，单次认领仍取有界数量：XPENDING 的 COUNT 必须为正数。 */
+    private static final int DEFAULT_CLAIM_COUNT = 1000;
+
+
     // Lettuce's generic execute() cannot decode integer replies, so XPENDING goes through a script.
     private static final DefaultRedisScript<List> PENDING_IDLE = new DefaultRedisScript<>(
             "return redis.call('XPENDING', KEYS[1], ARGV[1], 'IDLE', ARGV[2], '-', '+', ARGV[3])", List.class);
@@ -93,7 +97,9 @@ public class RedisStreamMessageBus implements MessageBus {
     public List<Delivery> claimStale(String group, String consumer, Duration minIdle, int count) {
         // IDLE filter runs server-side so the count window only holds genuinely stale entries
         // (Spring Data Redis 3.5 XPendingOptions has no IDLE support, hence the raw command).
-        List<Object[]> stale = pendingIdle(group, minIdle, count);
+        // XPENDING 必须给正数 COUNT，没有「不限」的写法；批大小配成不限时在这里退回有界值，
+        // 调用方本来就是 while(claimOnce() > 0) 反复取，分多次认领完全等价。
+        List<Object[]> stale = pendingIdle(group, minIdle, count > 0 ? count : DEFAULT_CLAIM_COUNT);
         if (stale.isEmpty()) {
             return List.of();
         }

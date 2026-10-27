@@ -13,7 +13,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
 
-/** Persistent session registry. Refresh tokens are stored only as hashes. */
+/** 持久化的会话登记表：刷新令牌只以哈希形式存储。 */
 @Service
 public class UserSessionRegistry {
     private final JdbcTemplate jdbc;
@@ -47,7 +47,7 @@ public class UserSessionRegistry {
         return count != null && count == 1;
     }
 
-    /** Compare and swap prevents reuse of an already rotated refresh token. */
+    /** 先比较再更新，防止已轮换过的刷新令牌被重复使用。 */
     public void rotate(AuthPrincipal principal, String oldRefresh, String newRefresh, Instant expiresAt) {
         if (!valid(principal) || principal.sessionId() == null) throw ApiException.unauthorized("刷新凭证无效");
         int changed = jdbc.update("""

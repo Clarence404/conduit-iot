@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** One-time invitations. Only a token hash is persisted; delivery is a replaceable plugin. */
+/** 一次性邀请：库中只保存令牌哈希，原文只出现在投递的链接里；投递通道可替换。 */
 @Service
 public class InvitationService {
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -103,7 +103,7 @@ public class InvitationService {
                 """, java.sql.Timestamp.from(clock.instant()), id, TenantContext.require());
     }
 
-    /** Public preview contains no token or internal user id. */
+    /** 公开预览：不返回令牌，也不返回内部用户 id。 */
     public Map<String, Object> preview(String token) {
         var rows = jdbc.queryForList("""
                 select i.username,i.email,t.name as tenant_name from user_invitation i

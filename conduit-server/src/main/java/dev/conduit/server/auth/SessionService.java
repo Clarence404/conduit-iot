@@ -88,7 +88,7 @@ public class SessionService {
         return response(bound, refresh);
     }
 
-    /** Refresh an existing session, rotating the refresh token atomically. */
+    /** 续期已有会话，并原子地轮换刷新令牌。 */
     public ResponseEntity<TokenResponse> refresh(AuthPrincipal old, AuthPrincipal updated, String oldToken) {
         AuthPrincipal bound = updated.withSession(old.sessionId(), registry.version(old.userId()));
         String refresh = jwt.issue(bound, JwtService.TokenType.REFRESH);
@@ -96,7 +96,7 @@ public class SessionService {
         return response(bound, refresh);
     }
 
-    /** Change effective identity without creating a second session. */
+    /** 切换有效身份（代入/退出租户），不额外创建第二个会话。 */
     public ResponseEntity<TokenResponse> continueSession(AuthPrincipal old, AuthPrincipal updated) {
         AuthPrincipal bound = updated.withSession(old.sessionId(), registry.version(old.userId()));
         String refresh = jwt.issue(bound, JwtService.TokenType.REFRESH);

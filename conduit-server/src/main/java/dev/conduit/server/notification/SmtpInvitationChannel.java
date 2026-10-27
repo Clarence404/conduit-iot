@@ -6,7 +6,7 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
 
-/** First notification plugin: SMTP. Other transports can implement the same interface. */
+/** 第一个通知通道实现：SMTP。其他投递方式实现同一接口即可接入。 */
 @Component
 @ConditionalOnProperty(name = "spring.mail.host")
 public class SmtpInvitationChannel implements InvitationNotificationChannel {

@@ -110,7 +110,7 @@ public class AuthController {
             try {
                 principal = jwt.parse(refreshToken, JwtService.TokenType.REFRESH);
             } catch (JwtException | IllegalArgumentException ignored) {
-                // Always clear the browser cookie, even if it has expired.
+                // 无论 cookie 是否已过期，都清除浏览器端的 cookie。
             }
         }
         sessions.revoke(principal);

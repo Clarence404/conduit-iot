@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Invitation management and public one-time acceptance. */
+/** 邀请管理与公开的一次性接受接口。 */
 @RestController
 @RequestMapping("/api/v1/invitations")
 public class InvitationController {

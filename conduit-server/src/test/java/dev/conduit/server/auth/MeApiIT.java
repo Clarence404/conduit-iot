@@ -64,7 +64,7 @@ class MeApiIT extends IntegrationTestBase {
         mvc.perform(post("/api/v1/auth/logout").header(HttpHeaders.AUTHORIZATION, bearer(token)))
                 .andExpect(status().isNoContent());
 
-        // Logout revokes that session; obtain a new session before changing the password.
+        // 登出会吊销该会话；改密码前先取得新的会话。
         String replacement = login(username, TEST_PASSWORD);
 
         String body = changePassword(replacement, TEST_PASSWORD, NEW_PASSWORD)
@@ -119,7 +119,7 @@ class MeApiIT extends IntegrationTestBase {
         mvc.perform(post("/api/v1/auth/refresh").cookie(refresh)
                 .header(HttpHeaders.AUTHORIZATION, bearer(access)))
                 .andExpect(status().isUnauthorized());
-        // The old cookie is single-use. Use the cookie returned by the successful refresh.
+        // 旧 cookie 只能用一次，这里改用续期成功时返回的新 cookie。
         String withoutAccess = mvc.perform(post("/api/v1/auth/refresh")
                         .cookie(refreshed.getCookie(SessionService.REFRESH_COOKIE)))
                 .andExpect(status().isOk())

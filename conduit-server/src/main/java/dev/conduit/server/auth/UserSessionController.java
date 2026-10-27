@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Users can inspect and revoke their own sessions. */
+/** 用户查看并吊销自己的登录会话。 */
 @RestController
 @RequestMapping("/api/v1/auth/sessions")
 public class UserSessionController {

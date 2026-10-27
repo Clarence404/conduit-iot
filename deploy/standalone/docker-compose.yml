@@ -60,6 +60,8 @@ services:
         JAR_NAME: conduit-server
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-conduit}
+      POSTGRES_USER: ${POSTGRES_USER:-conduit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       REDIS_HOST: redis
       INFLUX_URL: http://influxdb:8181

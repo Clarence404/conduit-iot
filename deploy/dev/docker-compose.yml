@@ -8,15 +8,15 @@ services:
   postgres:
     image: postgres:16.8
     environment:
-      POSTGRES_DB: conduit
-      POSTGRES_USER: conduit
+      POSTGRES_DB: ${POSTGRES_DB:-conduit}
+      POSTGRES_USER: ${POSTGRES_USER:-conduit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pg-data:/var/lib/postgresql/data
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-15432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conduit -d conduit"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-conduit} -d ${POSTGRES_DB:-conduit}"]
       interval: 5s
       retries: 20
     restart: unless-stopped
@@ -105,6 +105,7 @@ services:
       CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN:?CONDUIT_INTERNAL_TOKEN is required}
       # 鉴权回调地址（必填）：开发时为开发机上 server 的地址 http://<dev-host>:8080；独立部署包固定为 http://conduit-server:8080
       CONDUIT_AUTH_URL: ${CONDUIT_AUTH_URL:?CONDUIT_AUTH_URL is required}
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME:-admin}
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD is required}
       # 磁盘持久会话（V0.2-R）：transport 离线期间的消息写入磁盘，保留 1 天（durable_sessions.message_retention_period 默认值）；
       # 单节点磁盘持久会话使用 singleton。固定节点名：默认按容器 IP 命名，IP 变化会换数据目录、丢失持久会话

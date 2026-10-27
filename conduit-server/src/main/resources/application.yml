@@ -51,11 +51,17 @@ conduit:
     token: ${INFLUX_TOKEN:}
     database: ${INFLUX_DATABASE:telemetry}
     retention: 30d
+    # 单次写入请求的行协议字节上限，必须小于 InfluxDB 的 max_http_request_size（默认 10 MiB），
+    # 超过会返回 413，而重发同样的载荷永远不会成功。默认 8 MiB 留余量
+    max-request-bytes: 8388608
   pipeline:
     enabled: true
     group: conduit-server
     consumer: ${PIPELINE_CONSUMER:server-${random.uuid}}
-    batch-size: 100
+    # 每批读取的最大消息数；-1 = 不限（取走当前可读的全部），正数为上限。吞吐上限约为「批大小 ÷ 1 秒」，
+    # 因为每批只写一次 InfluxDB，而写入要等 WAL 刷盘（默认 1 秒）。写入按 conduit.influx.max-request-bytes
+    # 自动拆分请求，所以批再大也不会 413；代价是单批驻留内存随积压增长，内存受限时改为有界值。
+    batch-size: -1
     block: 1s
     claim-min-idle: ${PIPELINE_CLAIM_MIN_IDLE:60s}
     claim-interval: 10s

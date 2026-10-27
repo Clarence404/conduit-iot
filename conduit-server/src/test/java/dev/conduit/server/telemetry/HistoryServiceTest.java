@@ -40,7 +40,7 @@ class HistoryServiceTest {
 
     InfluxClient client = mock(InfluxClient.class);
     InfluxSchema schema = mock(InfluxSchema.class);
-    InfluxProperties props = new InfluxProperties("http://influx", "apiv3_test", "telemetry", "30d");
+    InfluxProperties props = new InfluxProperties("http://influx", "apiv3_test", "telemetry", "30d", 8388608);
     HistoryService service = new HistoryService(client, schema, props);
     DeviceView device = new DeviceView("dk1", "1号楼配电室 电表01", "pk1", "ENABLED", true, null, null);
 

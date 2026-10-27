@@ -42,7 +42,7 @@ class InfluxSchemaTest {
     }
 
     InfluxClient client = mock(InfluxClient.class);
-    InfluxProperties props = new InfluxProperties("http://influx", "apiv3_test", "telemetry", "30d");
+    InfluxProperties props = new InfluxProperties("http://influx", "apiv3_test", "telemetry", "30d", 8388608);
     MutableClock clock = new MutableClock();
     InfluxSchema schema;
 

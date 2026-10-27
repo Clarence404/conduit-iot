@@ -63,13 +63,19 @@ public class RedisStreamMessageBus implements MessageBus {
         }
     }
 
+    /** count 为非正数（约定用 -1）时不设 COUNT，一次取走当前可读的全部消息，即批大小「不限」。 */
+    private static StreamReadOptions readOptions(int count, Duration block) {
+        StreamReadOptions options = StreamReadOptions.empty().block(block);
+        return count > 0 ? options.count(count) : options;
+    }
+
     /** XREADGROUP 读取组内尚未投递的新消息（lastConsumed），deliveryCount 固定为 1。 */
     @Override
     public List<Delivery> read(String group, String consumer, int count, Duration block) {
         @SuppressWarnings("unchecked")
         List<MapRecord<String, Object, Object>> records = redis.opsForStream().read(
                 Consumer.from(group, consumer),
-                StreamReadOptions.empty().count(count).block(block),
+                readOptions(count, block),
                 StreamOffset.create(props.streamKey(), ReadOffset.lastConsumed()));
         if (records == null) {
             return List.of();

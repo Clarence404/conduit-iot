@@ -51,20 +51,43 @@ public class TelemetryWriter {
         if (lines.isEmpty()) {
             return new WriteResult(rejected);
         }
-        for (InfluxClient.LineError error : send(lines)) {
-            int line = error.lineNumber() - 1;
-            if (line < 0 || line >= indexes.size()) {
-                throw new IllegalStateException("InfluxDB reported rejected line " + error.lineNumber()
-                        + " outside the batch of " + lines.size());
+        // 按字节切块：批大小可以不限，但单次请求必须小于 InfluxDB 的 max_http_request_size，
+        // 否则返回 413，而重发同样的载荷永远不会成功（实测会让流水线无限重试、彻底停摆）。
+        for (int from = 0; from < lines.size(); ) {
+            int to = chunkEnd(lines, from);
+            for (InfluxClient.LineError error : send(lines.subList(from, to))) {
+                int line = from + error.lineNumber() - 1;
+                if (line < from || line >= to) {
+                    throw new IllegalStateException("InfluxDB reported rejected line " + error.lineNumber()
+                            + " outside the chunk [" + from + ", " + to + ") of " + lines.size());
+                }
+                rejected.add(new WriteResult.Rejected(indexes.get(line), error.message()));
             }
-            rejected.add(new WriteResult.Rejected(indexes.get(line), error.message()));
+            from = to;
         }
         rejected.sort(Comparator.comparingInt(WriteResult.Rejected::index));
         return new WriteResult(rejected);
     }
 
     /**
-     * 发送并翻译异常：400（非逐行拒绝）转 IllegalStateException，其余 HTTP 错误和 IO 错误统一转 TelemetryUnavailableException。
+     * 从 from 起累加行长度（含换行），返回不超过 {@code conduit.influx.max-request-bytes} 的结束下标（不含）。
+     * 单行本身就超限时仍单独成块——让 InfluxDB 明确拒绝它，好过无声丢弃。
+     */
+    private int chunkEnd(List<String> lines, int from) {
+        long bytes = 0;
+        for (int i = from; i < lines.size(); i++) {
+            long size = lines.get(i).getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1L;
+            if (i > from && bytes + size > props.maxRequestBytes()) {
+                return i;
+            }
+            bytes += size;
+        }
+        return lines.size();
+    }
+
+    /**
+     * 发送并翻译异常：400（非逐行拒绝）与 413（请求体过大）转 IllegalStateException——两者重发同样的载荷都不会成功，
+     * 不能当作可原地重试的「下游不可用」；其余 HTTP 错误和 IO 错误统一转 TelemetryUnavailableException。
      */
     private List<InfluxClient.LineError> send(List<String> lines) {
         if (log.isTraceEnabled()) {
@@ -74,7 +97,7 @@ public class TelemetryWriter {
         try {
             return client.writeLines(props.database(), lines);
         } catch (InfluxHttpException e) {
-            if (e.status() == 400) {
+            if (e.status() == 400 || e.status() == 413) {
                 throw new IllegalStateException("InfluxDB rejected the write request itself: " + e.getMessage(), e);
             }
             throw new TelemetryUnavailableException(e);

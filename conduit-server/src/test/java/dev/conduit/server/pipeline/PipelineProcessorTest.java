@@ -466,4 +466,64 @@ class PipelineProcessorTest {
         verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 2));
         verify(bus).ack(GROUP, List.of("1-0", "3-0"));
     }
+
+    // ---- 入库端到端延迟 conduit.pipeline.ingest.latency ----
+
+    private PipelineProcessor processorWithClock(long nowMillis) {
+        PipelineProperties props = new PipelineProperties(true, GROUP, "c", 100,
+                Duration.ofSeconds(1), Duration.ofSeconds(60), Duration.ofSeconds(10), 5);
+        return new PipelineProcessor(bus, props, identities, thingModels, decoders, presenceHandler, writer,
+                latest, presence, meters, Duration.ofMillis(1), Duration.ofMillis(5), () -> nowMillis);
+    }
+
+    private io.micrometer.core.instrument.Timer ingestLatency() {
+        return meters.find("conduit.pipeline.ingest.latency").timer();
+    }
+
+    @Test
+    void recordsOneLatencySamplePerIngestedMessage() {
+        when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
+        PipelineProcessor p = processorWithClock(10_000);
+
+        p.process(List.of(deliveryAt("1-0", "d1", 9_000), deliveryAt("2-0", "d1", 9_500)));
+
+        var t = ingestLatency();
+        assertThat(t.count()).isEqualTo(2);
+        assertThat(t.totalTime(java.util.concurrent.TimeUnit.MILLISECONDS)).isEqualTo(1_500.0);
+    }
+
+    @Test
+    void deadLetteredMessagesDoNotRecordLatency() {
+        when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
+        when(identities.find("ghost")).thenReturn(Optional.empty());
+        PipelineProcessor p = processorWithClock(10_000);
+
+        p.process(List.of(deliveryAt("1-0", "d1", 9_000), deliveryAt("2-0", "ghost", 9_000)));
+
+        assertThat(ingestLatency().count()).isEqualTo(1);
+    }
+
+    @Test
+    void clockDriftNeverProducesNegativeSample() {
+        when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
+        PipelineProcessor p = processorWithClock(10_000);
+
+        p.process(List.of(deliveryAt("1-0", "d1", 12_000)));
+
+        var t = ingestLatency();
+        assertThat(t.count()).isEqualTo(1);
+        assertThat(t.totalTime(java.util.concurrent.TimeUnit.MILLISECONDS)).isZero();
+        assertThat(t.max(java.util.concurrent.TimeUnit.MILLISECONDS)).isZero();
+    }
+
+    @Test
+    void replayPathDoesNotTouchLatencyMetric() {
+        when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
+        processorWithClock(10_000);
+        TelemetryIngestor ingestor = new TelemetryIngestor(identities, thingModels, decoders, writer, latest, meters);
+
+        ingestor.prepare("1-0", deliveryAt("1-0", "d1", 1_000).message(), IngestSource.REPLAY);
+
+        assertThat(ingestLatency().count()).isZero();
+    }
 }

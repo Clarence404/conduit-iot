@@ -17,7 +17,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "1. 各跳速率对比：哪一跳先掉下来",
+      "title": "1. 各跳速率对比：哪一跳先掉下来（① 接入 QPS / ④ 入库 TPS）",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -30,8 +30,8 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "链路各跳速率（条/秒）",
-      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库来自 conduit-server 的 /internal/metrics；Redis 侧的 XADD 与消费组已读保留作交叉验证，两者应大致吻合。 「EMQX 会话已发送」来自 transport 会话监控（累计值取 rate），反映 EMQX 实际往本会话发出的速率。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
+      "title": "链路各跳速率（条/秒）：① 接入 QPS → ④ 入库 TPS",
+      "description": "按链路顺序编号：① 接入 QPS 是 EMQX 接收并向设备 PUBACK 的速率，④ 入库 TPS 是真正写进 InfluxDB 的速率。\n**对外承诺能力只能用入库 TPS，不能用接入 QPS。** 过载时 EMQX 会先 PUBACK 再丢弃，不带消息 id 的设备拿到确认却丢了数据（2026-10-28 实测一轮丢弃 51,671 条）。\n① 与 ④ 的差值即当前被堆积或丢弃的量；若差值持续扩大，说明已超出稳态容量。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -76,7 +76,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(emqx_messages_received[1m])",
-          "legendFormat": "EMQX 接收"
+          "legendFormat": "① 接入 QPS：EMQX 接收并确认"
         },
         {
           "refId": "B",
@@ -94,7 +94,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(redis_commands_total{cmd=\"xadd\"}[1m])",
-          "legendFormat": "Redis 流写入（XADD/秒）"
+          "legendFormat": "③ 写入总线：XADD"
         },
         {
           "refId": "D",
@@ -103,7 +103,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
-          "legendFormat": "流水线入库（server 指标）"
+          "legendFormat": "④ 入库 TPS：写进 InfluxDB"
         },
         {
           "refId": "E",
@@ -121,7 +121,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(conduit_transport_session_sent[1m])",
-          "legendFormat": "EMQX 会话已发送（transport 监控）"
+          "legendFormat": "② 投递：EMQX → transport"
         }
       ]
     },
@@ -709,10 +709,10 @@
       "panels": []
     },
     {
-      "id": 13,
+      "id": 129,
       "type": "timeseries",
-      "title": "服务 CPU（核）",
-      "description": "各服务自身上报的 CPU 占用（核）。JVM 服务用 Micrometer 的 process_cpu_usage，Redis 用 redis_cpu_*。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
+      "title": "CPU 合计（宿主机，含全部容器）",
+      "description": "宿主机整机 CPU 占用（核）。这是真正的总量——包含 EMQX、PostgreSQL、InfluxDB 等没有 exporter、因而不出现在「分项」图里的容器。分项图只覆盖 JVM 服务与 Redis，两者之差即未覆盖部分。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -722,6 +722,119 @@
         "w": 12,
         "x": 0,
         "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "已用（核）",
+          "refId": "A"
+        },
+        {
+          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "总核数",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 130,
+      "type": "timeseries",
+      "title": "内存合计（宿主机已用）",
+      "description": "宿主机整机内存。这是真正的总量——包含没有 exporter 的容器。swap 已用大于 0 说明物理内存已经吃紧（2026-10-28 曾因 Java 服务无容器内存上限而把 swap 占满）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "已用",
+          "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "总量",
+          "refId": "B"
+        },
+        {
+          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+          "legendFormat": "swap 已用",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "服务 CPU 分项（核）",
+      "description": "各服务自身上报的 CPU 占用（核）。JVM 服务用 Micrometer 的 process_cpu_usage，Redis 用 redis_cpu_*。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -765,7 +878,7 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "服务内存（JVM 堆+非堆 / Redis）",
+      "title": "服务内存 分项",
       "description": "JVM 服务用 jvm_memory_used_bytes（堆 + 非堆之和，不含堆外与 JVM 自身开销，因此小于容器 RSS）；Redis 用 redis_memory_used_bytes。\n容器内存上限见 .env 的 SERVER_MEM_LIMIT / TRANSPORT_MEM_LIMIT 等，JVM 堆上限按该值的 75% 自动计算（MaxRAMPercentage=75）。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
       "datasource": {
         "type": "prometheus",
@@ -775,7 +888,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 53
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -829,7 +942,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -878,7 +991,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 69
+        "y": 85
       },
       "panels": []
     },
@@ -895,7 +1008,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 70
+        "y": 86
       },
       "fieldConfig": {
         "defaults": {
@@ -948,7 +1061,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 70
+        "y": 86
       },
       "fieldConfig": {
         "defaults": {
@@ -1001,7 +1114,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 70
+        "y": 86
       },
       "fieldConfig": {
         "defaults": {
@@ -1068,7 +1181,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 78
+        "y": 94
       },
       "panels": []
     },
@@ -1085,7 +1198,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 79
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1147,7 +1260,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 79
+        "y": 95
       },
       "fieldConfig": {
         "defaults": {
@@ -1196,7 +1309,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 87
+        "y": 103
       },
       "panels": []
     },
@@ -1213,7 +1326,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 88
+        "y": 104
       },
       "fieldConfig": {
         "defaults": {
@@ -1275,7 +1388,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 88
+        "y": 104
       },
       "fieldConfig": {
         "defaults": {

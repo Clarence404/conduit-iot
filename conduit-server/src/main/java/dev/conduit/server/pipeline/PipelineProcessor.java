@@ -22,6 +22,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import io.micrometer.core.instrument.Timer;
+import java.util.function.LongSupplier;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -53,18 +56,29 @@ public class PipelineProcessor {
     private final PresenceStore presence;
     private final MeterRegistry meters;
     private final Backoff backoff;
+    /** 入库端到端延迟 Timer，构造时解析一次并复用，避免每条消息查注册表。 */
+    private final Timer ingestLatency;
+    /** 当前时间（毫秒）来源，生产为系统时钟，测试可替换以构造时钟漂移。 */
+    private final LongSupplier clock;
 
     @Autowired
     public PipelineProcessor(MessageBus bus, PipelineProperties props, TelemetryIngestor ingestor,
                              PresenceHandler presenceHandler, PresenceStore presence, MeterRegistry meters) {
         this(bus, props, ingestor, presenceHandler, presence, meters,
-                Backoff.unlimited(Duration.ofSeconds(1), Duration.ofSeconds(30)));
+                Backoff.unlimited(Duration.ofSeconds(1), Duration.ofSeconds(30)), System::currentTimeMillis);
     }
 
     /** 可指定退避策略的构造器（供另外两个构造器委托）。 */
     PipelineProcessor(MessageBus bus, PipelineProperties props, TelemetryIngestor ingestor,
                       PresenceHandler presenceHandler, PresenceStore presence, MeterRegistry meters,
-                      Backoff backoff) {
+                      Backoff backoff, LongSupplier clock) {
+        this.clock = clock;
+        this.ingestLatency = Timer.builder("conduit.pipeline.ingest.latency")
+                .description("属性消息从 transport 收到到写入时序库并更新最新值的耗时（仅实时消费，不含重放）")
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(1))
+                .maximumExpectedValue(Duration.ofSeconds(60))
+                .register(meters);
         this.bus = bus;
         this.props = props;
         this.ingestor = ingestor;
@@ -83,7 +97,16 @@ public class PipelineProcessor {
                       TelemetryWriter writer, LatestValueStore latest, PresenceStore presence,
                       MeterRegistry meters, Duration initialBackoff, Duration maxBackoff) {
         this(bus, props, new TelemetryIngestor(identities, thingModels, decoders, writer, latest, meters),
-                presenceHandler, presence, meters, Backoff.unlimited(initialBackoff, maxBackoff));
+                presenceHandler, presence, meters, Backoff.unlimited(initialBackoff, maxBackoff), System::currentTimeMillis);
+    }
+
+    /** 测试构造器：额外指定时钟，用于构造 transport 与 server 时钟漂移的场景。 */
+    PipelineProcessor(MessageBus bus, PipelineProperties props, DeviceIdentityLookup identities,
+                      ThingModelCache thingModels, DecoderRegistry decoders, PresenceHandler presenceHandler,
+                      TelemetryWriter writer, LatestValueStore latest, PresenceStore presence,
+                      MeterRegistry meters, Duration initialBackoff, Duration maxBackoff, LongSupplier clock) {
+        this(bus, props, new TelemetryIngestor(identities, thingModels, decoders, writer, latest, meters),
+                presenceHandler, presence, meters, Backoff.unlimited(initialBackoff, maxBackoff), clock);
     }
 
     /**
@@ -244,7 +267,9 @@ public class PipelineProcessor {
                     });
                 }
                 acks.add(item.delivery().id());
-                reportedAt.merge(p.deviceKey(), item.delivery().message().receivedAt(), Math::max);
+                long receivedAt = item.delivery().message().receivedAt();
+                recordIngestLatency(receivedAt);
+                reportedAt.merge(p.deviceKey(), receivedAt, Math::max);
             } catch (ProcessingAbortedException e) {
                 throw e;
             } catch (RuntimeException e) {
@@ -255,6 +280,22 @@ public class PipelineProcessor {
         ack(acks);
         markOnline(reportedAt);
         meters.counter("conduit.pipeline.processed", "type", "property").increment(acks.size());
+    }
+
+    /**
+     * 记录一条消息的入库端到端延迟：当前时间减 transport 的接收时间 receivedAt。
+     * <p>只在此处（实时消费、写库与最新值均已成功、即将 ACK）记录，因此：失败进死信的消息没有「入库延迟」，不计入；
+     * 遥测重放走 {@link TelemetryIngestor} 而不经过本类，处理的是旧数据，now - receivedAt 会是数小时乃至数天，
+     * 混入会彻底污染百分位，所以重放天然不记录，指标也就不需要 source 标签，默认聚合查询无需过滤。
+     * <p>时钟来源：receivedAt 取自 <b>transport 进程</b>的时钟，而此处计时用 <b>server 进程</b>的时钟。
+     * 目前编排中两者在同一台宿主机上、时钟一致；若将来分机部署，时钟漂移会直接体现为延迟偏差，
+     * 甚至出现负值。负值按 0 记录（样本数仍等于成功条数），避免图上出现看不懂的负延迟；
+     * 正向偏差无法识别，使用方需知道分机部署时该指标含时钟差。
+     * 本方法只做内存操作，不访问 Redis 或数据库。
+     */
+    private void recordIngestLatency(long receivedAtMillis) {
+        long elapsed = Math.max(0L, clock.getAsLong() - receivedAtMillis);
+        ingestLatency.record(elapsed, TimeUnit.MILLISECONDS);
     }
 
     /**

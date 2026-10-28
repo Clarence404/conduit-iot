@@ -71,7 +71,7 @@ class MqttProtocolAdapterIT {
 
     private MqttProtocolAdapter newAdapter() {
         var props = new MqttTransportProperties(TestBroker.emqxHost(), TestBroker.emqxPort(), clientId,
-                null, null, 86400, "conduit-");
+                null, null, 86400, "conduit-", 1, Duration.ofMillis(5));
         MqttProtocolAdapter a = new MqttProtocolAdapter(props, bus,
                 Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));
         adapters.add(a);

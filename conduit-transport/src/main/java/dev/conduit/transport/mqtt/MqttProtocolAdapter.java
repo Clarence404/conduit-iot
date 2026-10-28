@@ -17,6 +17,7 @@ import com.hivemq.client.mqtt.mqtt5.message.subscribe.Mqtt5RetainHandling;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAckReasonCode;
 import dev.conduit.common.bus.MessageBus;
+import dev.conduit.common.bus.PublishResult;
 import dev.conduit.common.message.MessageType;
 import dev.conduit.common.message.RawMessage;
 import dev.conduit.transport.adapter.ProtocolAdapter;
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,6 +35,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,7 +44,7 @@ import java.util.function.BooleanSupplier;
 
 /**
  * MQTT 协议适配器：以固定 clientId、cleanStart=false 的会话普通订阅设备上行 topic 与 EMQX 的 $SYS 上下线 topic，
- * XADD 成功后才回 PUBACK（手动 ACK），保证至少一次投递；属性报文带 id 时还向设备发送“平台已持久接收”的业务回执。
+ * 攒批 XADD 成功后才回 PUBACK（手动 ACK），保证至少一次投递；属性报文带 id 时还向设备发送“平台已持久接收”的业务回执。
  * EMQX 开启磁盘持久会话，transport 离线期间的消息保存在会话中，下次 start（本实例或接管的新主实例）时补发。
  *
  * <p>每次 start 打开一个独立的 {@link Session}（客户端、投递线程、状态标志），stop 关闭它，可反复调用。
@@ -67,12 +70,17 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     private final Duration initialBackoff;
     private final AtomicReference<Session> current = new AtomicReference<>();
     private final ConcurrentHashMap<String, Long> missingTimestampWarnings = new ConcurrentHashMap<>();
+    /** 延迟提交的触发器：只负责把 flush 投回会话的投递线程，自身不做业务。 */
+    private final ScheduledExecutorService flushTimer = Executors.newSingleThreadScheduledExecutor(
+            Thread.ofPlatform().name("mqtt-flush-timer").daemon().factory());
 
     /** 一次 start 到 stop 之间的连接及其资源；停止后即作废，不再复用。 */
     final class Session {
         // 单线程串行处理：保序，且阻塞重试不会卡住 Netty 事件循环
         final ExecutorService deliveryExecutor = Executors.newSingleThreadExecutor(
                 Thread.ofPlatform().name("mqtt-delivery").daemon().factory());
+        /** 本批待提交的条目，只在 deliveryExecutor 这一条线程上读写，无需加锁（停止后由关闭方在线程终止后清理）。 */
+        final List<Pending> pending = new ArrayList<>();
         volatile Mqtt5AsyncClient client;
         volatile boolean stopping;
         volatile boolean needsRestart;
@@ -88,6 +96,10 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
             Mqtt5AsyncClient c = client;
             return ready && c != null && c.getState().isConnected();
         }
+    }
+
+    /** 一条已解析、等待随批提交到总线的消息；提交成功后才 ACK 并发业务回执。 */
+    private record Pending(Mqtt5Publish publish, ParsedTopic topic, RawMessage message) {
     }
 
     public MqttProtocolAdapter(MqttTransportProperties props, MessageBus bus, Clock clock) {
@@ -299,6 +311,8 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        // 未提交的条目一律不 ACK：broker 会重投，重复由流水线按 ts 幂等吸收
+        s.pending.clear();
     }
 
     /**
@@ -357,7 +371,8 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     /**
      * 处理一条收到的 MQTT 消息（在会话的单线程投递线程上串行执行，保序）。
      * 无法路由的 topic 与平台自身客户端（ownClientPrefix）的上下线事件直接 ACK 丢弃；
-     * 其余组装为 RawMessage 并阻塞重试发布到总线，发布成功后才 ACK；会话停止时放弃且不 ACK。
+     * 其余组装为 RawMessage 入队攒批：满 batchSize 立即提交，否则最迟 batchDelay 后提交；
+     * 批写入总线成功后才逐条 ACK（并发业务回执），失败或会话停止时不 ACK。
      */
     void onPublish(Session s, Mqtt5Publish publish) {
         String topic = publish.getTopic().toString();
@@ -385,12 +400,88 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         if (log.isTraceEnabled()) {
             log.trace("MQTT payload of {}: {}", t.deviceKey(), preview(message.payload()));
         }
-        if (publishWithRetry(s, message)) {
-            if (t.type() == MessageType.PROPERTY) {
-                sendReliableAck(s, t, message);
-            }
-            acknowledge(publish);
+        // 入队攒批：满 batchSize 立即提交，否则由延迟提交兜底，避免低速时消息干等
+        s.pending.add(new Pending(publish, t, message));
+        if (s.pending.size() >= props.batchSize()) {
+            flush(s);
+        } else if (s.pending.size() == 1) {
+            scheduleFlush(s);
         }
+    }
+
+    /**
+     * 安排一次延迟提交：批未攒满时，最多等 batchDelay 也要把队列发出去。
+     * 提交统一回到 deliveryExecutor 执行，保证与 onPublish 串行、不需要加锁；
+     * 会话已停止（含执行器已关闭）时直接放弃。
+     */
+    private void scheduleFlush(Session s) {
+        flushTimer.schedule(() -> {
+            if (!s.stopping) {
+                try {
+                    s.deliveryExecutor.execute(() -> flush(s));
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    log.debug("Delayed flush skipped, session already closed");
+                }
+            }
+        }, props.batchDelay().toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 提交当前批：一次总线调用，逐条按结果处理。
+     * 成功的条目先发业务回执再 ACK；失败的条目不 ACK，由 broker 重投（至少一次）。
+     * 整批调用抛异常时走阻塞退避重试；会话停止时放弃且不 ACK。
+     */
+    private void flush(Session s) {
+        if (s.pending.isEmpty() || s.stopping) {
+            return;
+        }
+        List<Pending> batch = List.copyOf(s.pending);
+        s.pending.clear();
+        List<PublishResult> results = publishBatchWithRetry(s, batch);
+        if (results == null) {
+            return; // 会话停止，一条都不 ACK
+        }
+        for (int i = 0; i < batch.size(); i++) {
+            Pending p = batch.get(i);
+            PublishResult r = results.get(i);
+            if (!r.succeeded()) {
+                log.warn("Bus publish failed for device {}, leaving it unacknowledged: {}",
+                        p.message().deviceKey(), r.failure().getMessage());
+                continue;
+            }
+            log.debug("Published to bus: id={} deviceKey={} type={}",
+                    r.id(), p.message().deviceKey(), p.message().type());
+            if (p.topic().type() == MessageType.PROPERTY) {
+                sendReliableAck(s, p.topic(), p.message());
+            }
+            acknowledge(p.publish());
+        }
+    }
+
+    /**
+     * 整批提交并在**整体失败**时退避重试（下游不可用）。逐条失败不在这里重试——
+     * 那些条目不 ACK、由 broker 重投，避免把已成功的条目重复写入总线。
+     *
+     * @return 与入参等长同序的结果；会话停止或线程被中断时返回 null
+     */
+    private List<PublishResult> publishBatchWithRetry(Session s, List<Pending> batch) {
+        List<RawMessage> messages = batch.stream().map(Pending::message).toList();
+        for (int attempt = 0; !s.stopping; attempt++) {
+            try {
+                return bus.publish(messages);
+            } catch (RuntimeException e) {
+                Duration delay = backoff(attempt);
+                log.warn("Bus batch publish of {} messages failed (attempt {}), retrying in {} ms: {}",
+                        messages.size(), attempt + 1, delay.toMillis(), e.getMessage());
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -452,28 +543,6 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     private static String preview(byte[] payload) {
         String text = new String(payload, StandardCharsets.UTF_8);
         return text.length() <= 256 ? text : text.substring(0, 256) + "...(truncated)";
-    }
-
-    /** 内联重试直到成功；会话停止或线程被中断时放弃（不 ACK，由 broker 经持久会话重投）。 */
-    private boolean publishWithRetry(Session s, RawMessage message) {
-        for (int attempt = 0; !s.stopping; attempt++) {
-            try {
-                String id = bus.publish(message);
-                log.debug("Published to bus: id={} deviceKey={} type={}", id, message.deviceKey(), message.type());
-                return true;
-            } catch (RuntimeException e) {
-                Duration delay = backoff(attempt);
-                log.warn("Bus publish failed for device {} (attempt {}), retrying in {} ms: {}",
-                        message.deviceKey(), attempt + 1, delay.toMillis(), e.getMessage());
-                try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-            }
-        }
-        return false;
     }
 
     /** 指数退避：initialBackoff * 2^attempt（指数封顶 5），上限 30 秒。 */

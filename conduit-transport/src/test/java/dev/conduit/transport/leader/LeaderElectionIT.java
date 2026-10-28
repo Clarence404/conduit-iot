@@ -76,7 +76,7 @@ class LeaderElectionIT {
 
     private LeaderElection instance(String name) {
         var props = new MqttTransportProperties(TestBroker.emqxHost(), TestBroker.emqxPort(), clientId,
-                null, null, 86400, "conduit-");
+                null, null, 86400, "conduit-", 1, Duration.ofMillis(5));
         MqttProtocolAdapter adapter = new MqttProtocolAdapter(props, bus, Clock.systemUTC());
         LeaderElection election = new LeaderElection(new RedisLeaderLock(redis, key, TTL, name), List.of(adapter),
                 new LeaderProperties(key, TTL, RENEW, ACQUIRE));

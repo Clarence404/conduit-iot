@@ -16,10 +16,15 @@ conduit:
     mqtt:
       host: ${EMQX_HOST:localhost}
       port: ${EMQX_PORT:1883}
-      # 所有 transport 实例共用同一 clientId：EMQX 磁盘持久会话按 clientId 保存积压，新主实例接管同一会话
+      # 所有 transport 实例共用同一 clientId：EMQX 按 clientId 为离线的订阅端排队，新主实例接管同一会话
       client-id: ${TRANSPORT_CLIENT_ID:conduit-transport}
       # 与 EMQX 持久会话消息保留期（durable_sessions.message_retention_period，默认 1 天）一致
       session-expiry-seconds: 86400
+      # 微批写入总线：单线程投递下，每条一次 XADD 的持续上限实测约 1230 条/秒，
+      # 低于接入速率时 EMQX 的 mqueue 会溢出丢弃。攒批把每条一次往返变为每批一次。
+      # batch-delay 是 PUBACK 的最坏额外延迟；batch-size 设为 1 即退回逐条提交。
+      batch-size: ${TRANSPORT_BUS_BATCH_SIZE:64}
+      batch-delay: ${TRANSPORT_BUS_BATCH_DELAY:5ms}
       username: ${TRANSPORT_MQTT_USERNAME:}
       password: ${TRANSPORT_MQTT_PASSWORD:}
     # 单活多备选主（Redis 锁）：只有主实例连接 EMQX，主实例故障后备实例最长 ttl 后接管

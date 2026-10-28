@@ -15,6 +15,355 @@
   "editable": true,
   "panels": [
     {
+      "id": 131,
+      "type": "row",
+      "title": "0. 总览：现在怎么样",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 132,
+      "type": "stat",
+      "title": "入库 TPS（当前）",
+      "description": "最近 1 分钟平均的入库速率。\n\n**口径**：入库 TPS 指真正写进 InfluxDB 的条数，不是接入量。过载时 EMQX 会先向设备 PUBACK 再丢弃，**对外承诺能力只能用入库 TPS**。",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 133,
+      "type": "stat",
+      "title": "入库 TPS（5 分钟峰值）",
+      "description": "最近 5 分钟内的最高入库速率。峰值只说明瞬时能力，**可持续容量请以容量测试结论为准**。\n\n**口径**：入库 TPS 指真正写进 InfluxDB 的条数，不是接入量。过载时 EMQX 会先向设备 PUBACK 再丢弃，**对外承诺能力只能用入库 TPS**。",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max_over_time((sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m])))[5m:15s])",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 134,
+      "type": "stat",
+      "title": "接入 QPS（当前）",
+      "description": "EMQX 接收并向设备 PUBACK 的速率。**它大于入库 TPS 的部分正在被堆积或丢弃**，不能当作平台能力。",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(emqx_messages_received[1m])",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 135,
+      "type": "stat",
+      "title": "端到端延迟 P50 / P99",
+      "description": "从 transport 收到消息到写入时序库并更新最新值的耗时，即「数据多久能查到」。\n只统计实时消费，不含遥测重放（重放处理旧数据会污染百分位）。\n**时钟来源**：receivedAt 取自 transport 进程时钟，计时在 server 进程；当前两者同宿主机，分机部署后该值会带上时钟差。",
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 136,
+      "type": "stat",
+      "title": "当前积压（队列 + 消费组）",
+      "description": "入口与出口的积压。两者都平说明在容量以内；任一持续单调上涨说明已超容量。",
+      "gridPos": {
+        "h": 5,
+        "w": 3,
+        "x": 17,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "conduit_transport_session_mqueue_len",
+          "legendFormat": "EMQX 队列",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        },
+        {
+          "expr": "sum(redis_stream_group_lag)",
+          "legendFormat": "消费组 lag",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 137,
+      "type": "stat",
+      "title": "累计入库 / 累计丢弃",
+      "description": "自服务启动以来的累计值。**丢弃不为零即发生过真实数据丢失**（队列满时 EMQX 丢弃，设备若不带消息 id 则无从得知）。",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(conduit_pipeline_processed_total{type=\"property\"})",
+          "legendFormat": "累计入库",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        },
+        {
+          "expr": "conduit_transport_session_mqueue_dropped",
+          "legendFormat": "累计丢弃",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
       "id": 1,
       "type": "row",
       "title": "1. 各跳速率对比：哪一跳先掉下来（① 接入 QPS / ④ 入库 TPS）",
@@ -23,7 +372,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 7
       },
       "panels": []
     },
@@ -40,7 +389,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 1
+        "y": 8
       },
       "fieldConfig": {
         "defaults": {
@@ -134,7 +483,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 16
       },
       "panels": []
     },
@@ -151,7 +500,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -230,7 +579,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -301,7 +650,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -359,7 +708,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 33
       },
       "panels": []
     },
@@ -376,7 +725,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -447,7 +796,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -518,7 +867,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -567,7 +916,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 50
       },
       "panels": []
     },
@@ -584,7 +933,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -655,7 +1004,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -704,7 +1053,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 59
       },
       "panels": []
     },
@@ -721,7 +1070,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 53
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -775,7 +1124,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 53
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -834,7 +1183,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -888,7 +1237,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -942,7 +1291,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 77
+        "y": 84
       },
       "fieldConfig": {
         "defaults": {
@@ -991,7 +1340,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 92
       },
       "panels": []
     },
@@ -1008,7 +1357,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 86
+        "y": 93
       },
       "fieldConfig": {
         "defaults": {
@@ -1061,7 +1410,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 86
+        "y": 93
       },
       "fieldConfig": {
         "defaults": {
@@ -1114,7 +1463,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 86
+        "y": 93
       },
       "fieldConfig": {
         "defaults": {
@@ -1181,7 +1530,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 101
       },
       "panels": []
     },
@@ -1198,7 +1547,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 95
+        "y": 102
       },
       "fieldConfig": {
         "defaults": {
@@ -1260,7 +1609,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 95
+        "y": 102
       },
       "fieldConfig": {
         "defaults": {
@@ -1309,7 +1658,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 110
       },
       "panels": []
     },
@@ -1326,7 +1675,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 111
       },
       "fieldConfig": {
         "defaults": {
@@ -1388,7 +1737,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 111
       },
       "fieldConfig": {
         "defaults": {

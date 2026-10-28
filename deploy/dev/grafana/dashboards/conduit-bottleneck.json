@@ -17,7 +17,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "1. 各跳速率对比：哪一跳先掉下来",
+      "title": "1. 各跳速率对比：哪一跳先掉下来（① 接入 QPS / ④ 入库 TPS）",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -30,8 +30,8 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "链路各跳速率（条/秒）",
-      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库来自 conduit-server 的 /internal/metrics；Redis 侧的 XADD 与消费组已读保留作交叉验证，两者应大致吻合。 「EMQX 会话已发送」来自 transport 会话监控（累计值取 rate），反映 EMQX 实际往本会话发出的速率。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
+      "title": "链路各跳速率（条/秒）：① 接入 QPS → ④ 入库 TPS",
+      "description": "按链路顺序编号：① 接入 QPS 是 EMQX 接收并向设备 PUBACK 的速率，④ 入库 TPS 是真正写进 InfluxDB 的速率。\n**对外承诺能力只能用入库 TPS，不能用接入 QPS。** 过载时 EMQX 会先 PUBACK 再丢弃，不带消息 id 的设备拿到确认却丢了数据（2026-10-28 实测一轮丢弃 51,671 条）。\n① 与 ④ 的差值即当前被堆积或丢弃的量；若差值持续扩大，说明已超出稳态容量。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -76,7 +76,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(emqx_messages_received[1m])",
-          "legendFormat": "EMQX 接收"
+          "legendFormat": "① 接入 QPS：EMQX 接收并确认"
         },
         {
           "refId": "B",
@@ -94,7 +94,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(redis_commands_total{cmd=\"xadd\"}[1m])",
-          "legendFormat": "Redis 流写入（XADD/秒）"
+          "legendFormat": "③ 写入总线：XADD"
         },
         {
           "refId": "D",
@@ -103,7 +103,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
-          "legendFormat": "流水线入库（server 指标）"
+          "legendFormat": "④ 入库 TPS：写进 InfluxDB"
         },
         {
           "refId": "E",
@@ -121,7 +121,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(conduit_transport_session_sent[1m])",
-          "legendFormat": "EMQX 会话已发送（transport 监控）"
+          "legendFormat": "② 投递：EMQX → transport"
         }
       ]
     },

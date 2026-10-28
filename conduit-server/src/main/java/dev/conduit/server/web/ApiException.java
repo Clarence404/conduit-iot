@@ -49,4 +49,9 @@ public class ApiException extends RuntimeException {
     public static ApiException conflict(String detail) {
         return new ApiException(HttpStatus.CONFLICT, detail);
     }
+
+    /** 依赖的组件当前不可用；调用方稍后重试可能成功。 */
+    public static ApiException unavailable(String detail) {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, detail);
+    }
 }

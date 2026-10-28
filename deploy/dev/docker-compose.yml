@@ -161,12 +161,15 @@ services:
         esc() { printf '%s' "$$1" | sed 's/[&|\\]/\\&/g'; };
         sed -e "s|__EMQX_API_KEY__|$$(esc "$${CONDUIT_EMQX_API_KEY}")|"
         -e "s|__EMQX_API_SECRET__|$$(esc "$${CONDUIT_EMQX_API_SECRET}")|"
+        -e "s|__CONDUIT_INTERNAL_TOKEN__|$$(esc "$${CONDUIT_INTERNAL_TOKEN}")|"
         /conduit/prometheus.yml.tpl > /tmp/prometheus.yml
         && exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus
         --storage.tsdb.retention.time=$${PROMETHEUS_RETENTION} --storage.tsdb.retention.size=$${PROMETHEUS_RETENTION_SIZE}
     environment:
       CONDUIT_EMQX_API_KEY: ${CONDUIT_EMQX_API_KEY:-}
       CONDUIT_EMQX_API_SECRET: ${CONDUIT_EMQX_API_SECRET:-}
+      # 抓取 conduit-server 的 /internal/metrics 用，与 EMQX 鉴权回调同一个内部令牌
+      CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN:-}
       # 保留期与磁盘上限取先到者：压测机磁盘只有 16 GB
       PROMETHEUS_RETENTION: ${PROMETHEUS_RETENTION:-7d}
       PROMETHEUS_RETENTION_SIZE: ${PROMETHEUS_RETENTION_SIZE:-2GB}

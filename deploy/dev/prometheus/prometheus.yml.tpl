@@ -1,19 +1,22 @@
 # Prometheus 抓取配置模板（只读挂载到容器内，启动时由 docker-compose 中 prometheus 的启动命令渲染）。
-# 占位符 __EMQX_API_KEY__ / __EMQX_API_SECRET__ 渲染为 .env 中的只读 API key，渲染结果只存在于容器内 /tmp。
+# 占位符 __EMQX_API_KEY__ / __EMQX_API_SECRET__ / __CONDUIT_INTERNAL_TOKEN__ 渲染为 .env 中的只读 API key 与内部令牌，渲染结果只存在于容器内 /tmp。
 # 容器名即主机名（同一 compose 网络）。开发环境包（deploy/dev）里应用跑在 IDE 中，conduit-transport 等目标会显示 DOWN，属正常。
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
 
 scrape_configs:
-  # conduit-server：/actuator/** 除 health 外仅平台管理员可访问（JWT，15 分钟过期，依赖数据库会话），
-  # Prometheus 无法干净地带凭据抓取，也不得为此放开权限，所以本任务保持关闭，待所有者决定方案。
-  # 关闭期间「入库/秒」「死信」「流水线拒绝」「server JVM」面板没有数据（入库速率另有 Redis 消费组侧的近似序列）。
-  # 方案确定后取消注释并补上鉴权方式：
-  # - job_name: conduit-server
-  #   metrics_path: /actuator/prometheus
-  #   static_configs:
-  #     - targets: ["conduit-server:8080"]
+  # conduit-server：/actuator/** 除 health 外仅平台管理员可访问（JWT 会过期），不能为抓取放开，
+  # 所以改抓专用端点 /internal/metrics：由控制器自行校验与 EMQX 鉴权回调相同的内部令牌（请求头 X-Conduit-Internal-Token）。
+  # __CONDUIT_INTERNAL_TOKEN__ 在启动时渲染，渲染结果只存在于容器内 /tmp。
+  # http_headers 需要 Prometheus 2.55+ / 3.x 才支持，本镜像（v3.5.0）支持与否未能实际验证。
+  - job_name: conduit-server
+    metrics_path: /internal/metrics
+    http_headers:
+      X-Conduit-Internal-Token:
+        values: ["__CONDUIT_INTERNAL_TOKEN__"]
+    static_configs:
+      - targets: ["conduit-server:8080"]
 
   # transport 没有引入 Spring Security，/actuator 端点本就匿名（与既有 health 一致），且端口只在 compose 网络内，不映射到宿主机。
   - job_name: conduit-transport

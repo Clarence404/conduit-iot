@@ -85,7 +85,7 @@ public class MqttAuthService {
     }
 
     /** 常量时间字符串比较，防止通过响应耗时推测 token / 密码。 */
-    static boolean constantEquals(String a, String b) {
+    public static boolean constantEquals(String a, String b) {
         return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
     }
 

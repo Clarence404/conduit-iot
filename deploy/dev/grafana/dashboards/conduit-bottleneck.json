@@ -31,7 +31,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "链路各跳速率（条/秒）",
-      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库依赖 conduit-server 指标，当前抓取配置默认关闭（鉴权方案待定）。",
+      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库来自 conduit-server 的 /internal/metrics；Redis 侧的 XADD 与消费组已读保留作交叉验证，两者应大致吻合。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -103,7 +103,7 @@
             "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
-          "legendFormat": "流水线入库（需 server 指标）"
+          "legendFormat": "流水线入库（server 指标）"
         },
         {
           "refId": "E",
@@ -112,7 +112,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(redis_stream_group_entries_read[1m])",
-          "legendFormat": "消费组已读（Redis 侧近似入库）"
+          "legendFormat": "消费组已读（Redis 侧，交叉验证）"
         }
       ]
     },
@@ -332,7 +332,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "死信与拒绝",
-      "description": "后两项依赖 conduit-server 指标（抓取默认关闭）。",
+      "description": "后两项来自 conduit-server 的 /internal/metrics。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -862,7 +862,7 @@
       "id": 20,
       "type": "timeseries",
       "title": "堆占用",
-      "description": "server 的序列依赖其指标（抓取默认关闭）。",
+      "description": "server 的序列来自 /internal/metrics。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

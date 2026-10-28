@@ -39,6 +39,33 @@ services:
       # 独立部署包中鉴权回调固定指向容器内的 conduit-server（.env 中的同名变量只用于满足 dev 文件的必填检查）
       CONDUIT_AUTH_URL: http://conduit-server:8080
 
+  # 性能观测栈（profile: metrics，默认不启动；定义见 dev 文件，extends 会带入 profiles 与 mem_limit）
+  # 启用：docker compose --profile metrics up -d
+  prometheus:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: prometheus
+
+  grafana:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: grafana
+
+  node-exporter:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: node-exporter
+
+  cadvisor:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: cadvisor
+
+  redis-exporter:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: redis-exporter
+
   # Demo mailbox: invitation emails are delivered here; replace SMTP config for production.
   mailpit:
     image: axllent/mailpit:v1.27.4
@@ -218,3 +245,5 @@ volumes:
   emqx-data:
   conduit-logs:
   mailpit-data:
+  prometheus-data:
+  grafana-data:

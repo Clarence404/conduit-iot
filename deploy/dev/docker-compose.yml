@@ -1,7 +1,8 @@
 # 开发环境包（deploy/dev）：PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX。
 # 应用（server、transport、模拟器、前端）在开发机的 IDE 中运行，EMQX 的鉴权回调打到开发机上的 server。
 # 用法：把本目录放到 Linux 宿主机上，cp .env.example .env 并修改口令与 CONDUIT_AUTH_URL，然后 docker compose up -d。
-# 独立部署包 deploy/standalone 用 extends 引用这里的 5 个服务：修改本文件会同时影响独立部署包，两者项目名与数据卷相同。
+# 独立部署包 deploy/standalone 用 extends 引用这里的 5 个基础服务与 metrics 监控栈：修改本文件会同时影响独立部署包，两者项目名与数据卷相同。
+# 监控栈（Prometheus + Grafana 等 5 个服务）全部在 compose profile「metrics」下：不加 --profile metrics 时一个容器都不启动。
 name: conduit
 
 services:
@@ -146,9 +147,106 @@ services:
       retries: 30
     restart: unless-stopped
 
+  # ───────────── 性能观测栈（profile: metrics，默认不启动）─────────────
+  # 启用：docker compose --profile metrics up -d；停用：docker compose --profile metrics stop <服务> 或 down。
+  # 全部设 mem_limit：压测机可用内存很紧，监控栈只在需要观测时才开，且不得失控吃内存。
+
+  prometheus:
+    profiles: ["metrics"]
+    image: prom/prometheus:v3.5.0
+    # 抓取配置里含 EMQX API key，所以像 emqx 一样启动时由模板渲染到容器内 /tmp，不把凭据写进挂载的文件
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        esc() { printf '%s' "$$1" | sed 's/[&|\\]/\\&/g'; };
+        sed -e "s|__EMQX_API_KEY__|$$(esc "$${CONDUIT_EMQX_API_KEY}")|"
+        -e "s|__EMQX_API_SECRET__|$$(esc "$${CONDUIT_EMQX_API_SECRET}")|"
+        /conduit/prometheus.yml.tpl > /tmp/prometheus.yml
+        && exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=$${PROMETHEUS_RETENTION} --storage.tsdb.retention.size=$${PROMETHEUS_RETENTION_SIZE}
+    environment:
+      CONDUIT_EMQX_API_KEY: ${CONDUIT_EMQX_API_KEY:-}
+      CONDUIT_EMQX_API_SECRET: ${CONDUIT_EMQX_API_SECRET:-}
+      # 保留期与磁盘上限取先到者：压测机磁盘只有 16 GB
+      PROMETHEUS_RETENTION: ${PROMETHEUS_RETENTION:-7d}
+      PROMETHEUS_RETENTION_SIZE: ${PROMETHEUS_RETENTION_SIZE:-2GB}
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus/prometheus.yml.tpl:/conduit/prometheus.yml.tpl:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["metrics"]
+    image: grafana/grafana:11.6.1
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # 不用 :? 必填检查：compose 会对未启用 profile 的服务也做插值，必填会让没开监控栈的人也起不来。
+      # 留空时 Grafana 会回落到默认口令 admin，启用监控栈前务必在 .env 里设置
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    mem_limit: ${GRAFANA_MEM_LIMIT:-256m}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  node-exporter:
+    # 宿主机 CPU / 内存 / 磁盘 I/O。只在 compose 网络内被抓取，不对外开端口
+    profiles: ["metrics"]
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host", "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"]
+    pid: host
+    mem_limit: ${NODE_EXPORTER_MEM_LIMIT:-64m}
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
+  cadvisor:
+    # 每容器 CPU / 内存。需要只读挂载宿主机的 cgroup 与 docker 目录
+    profiles: ["metrics"]
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    command: ["--docker_only=true", "--housekeeping_interval=15s", "--store_container_labels=false",
+              "--whitelisted_container_labels=com.docker.compose.service"]
+    mem_limit: ${CADVISOR_MEM_LIMIT:-192m}
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+
+  redis-exporter:
+    # Redis ops、AOF、内存，以及上行流与死信流的长度 / 消费组积压
+    profiles: ["metrics"]
+    image: oliver006/redis_exporter:v1.74.0
+    command:
+      - --redis.addr=redis://redis:6379
+      - --check-single-streams=conduit:stream:up,conduit:stream:dead
+    mem_limit: ${REDIS_EXPORTER_MEM_LIMIT:-64m}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pg-data:
   redis-data:
   influx3-data:
   influx-explorer-data:
   emqx-data:
+  prometheus-data:
+  grafana-data:

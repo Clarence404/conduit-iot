@@ -1,0 +1,10 @@
+# Grafana 面板预置：从挂载目录加载 JSON 面板。
+apiVersion: 1
+providers:
+  - name: conduit
+    folder: Conduit
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

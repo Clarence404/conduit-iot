@@ -155,6 +155,19 @@ EMQX 已关闭磁盘持久会话、改用内存持久会话（见「transport �
 
 已有部署升级注意：演示产品的默认名称已从「Demo Meter」改为「三相电表（演示）」，升级前请先在界面上把旧产品改名为「三相电表（演示）」，否则模拟器会新建一个产品、旧产品及其设备会遗留下来；改名后模拟器会复用该产品，并把其下设备原地改成新名称。
 
+### 性能观测（可选）
+
+两个部署包都带一套 Prometheus + Grafana 观测栈，放在 compose profile `metrics` 下，**默认不启动**：
+
+```bash
+docker compose --profile metrics up -d      # 启用
+docker compose --profile metrics stop prometheus grafana node-exporter cadvisor redis-exporter   # 停用
+```
+
+在 `.env` 中先设置 `GRAFANA_ADMIN_PASSWORD`（变量见 `.env.example` 的「性能观测栈」一组）。访问 `http://<host>:3000`（`GRAFANA_PORT`），预置面板「Conduit 性能瓶颈观测」把设备到 InfluxDB 各跳的速率放在同一张图里，并配有积压、丢弃、延迟、容器资源、宿主机、JVM、Redis 面板；Prometheus 在 `:9090`。五个容器合计内存上限约 1 GB，Prometheus 数据保留 7 天且限 2 GB。
+
+已知限制：`/actuator/prometheus` 与其他 actuator 端点一样除 health 外仅平台管理员可访问，Prometheus 无法带有效凭据抓取 conduit-server，所以抓取配置里 server 目标暂时关闭（transport 不受影响），入库速率、死信、server JVM 的面板暂无数据，方案见 `CLAUDE.md` 第 4 节。开发环境包里应用跑在 IDE 中，应用目标显示 DOWN 属正常。宿主机无外网时需预先导入这 5 个镜像。
+
 ### 模拟器：演示产品与各租户的产品
 
 模拟器始终维护默认租户的演示电表产品（见上）。配置平台管理员密码后，它在启动时用平台管理员登录，列出启用中的租户（按 `SIM_TENANTS` 过滤），逐个进入租户，取物模型非空的产品及其启用设备（每产品最多 `SIM_MAX_DEVICES_PER_PRODUCT` 台），重置这些设备的密钥后连接，并按产品解码器（`standard-json` / `flat-json`）上报；任一租户或产品失败只记 WARN，不影响其他。独立部署默认把 `CONDUIT_PLATFORM_ADMIN_PASSWORD` 传给模拟器，因此 Flyway 预置的全部演示产品会自动产生数据；本地 IDE 模式仍需在不入库的 `simulator-local.properties` 中配置 `SIM_PLATFORM_PASSWORD`。退出租户失败时模拟器用平台管理员重新登录，重新登录也失败则发现到此为止，保留已发现的部分；某台设备重置密钥失败只跳过该设备。

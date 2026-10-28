@@ -60,7 +60,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,metrics
+        include: health,metrics,prometheus
 
 # 日志写入文件：目录由 CONDUIT_LOG_DIR 指定（默认工作目录下 logs），按天 + 按大小滚动，控制台输出保持不变
 logging:

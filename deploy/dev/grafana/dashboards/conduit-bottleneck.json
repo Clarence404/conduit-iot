@@ -565,7 +565,7 @@
     {
       "id": 12,
       "type": "row",
-      "title": "5. 容器资源",
+      "title": "5. 容器资源（需启用 cadvisor）",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -578,8 +578,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "容器 CPU（核）",
-      "description": "1 = 占满一个核。 依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。",
+      "title": "容器 CPU（核）（需启用 cadvisor）",
+      "description": "1 = 占满一个核。 依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。\n\n本图依赖 cadvisor。其镜像托管在 gcr.io，部分网络环境不可达，因此它单独放在 metrics-cadvisor profile 下，默认不启动。启用方式：docker compose --profile metrics --profile metrics-cadvisor up -d，并取消 prometheus.yml.tpl 中 cadvisor 抓取任务的注释。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -631,8 +631,8 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "容器内存（工作集）",
-      "description": "依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。",
+      "title": "容器内存（工作集）（需启用 cadvisor）",
+      "description": "依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。\n\n本图依赖 cadvisor。其镜像托管在 gcr.io，部分网络环境不可达，因此它单独放在 metrics-cadvisor profile 下，默认不启动。启用方式：docker compose --profile metrics --profile metrics-cadvisor up -d，并取消 prometheus.yml.tpl 中 cadvisor 抓取任务的注释。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

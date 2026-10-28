@@ -2,7 +2,9 @@ package dev.conduit.server.pipeline;
 
 import dev.conduit.common.bus.Delivery;
 import dev.conduit.common.bus.MessageBus;
+import dev.conduit.common.message.MessageType;
 import dev.conduit.common.message.RawMessage;
+import dev.conduit.server.device.DeviceIdentity;
 import dev.conduit.server.device.DeviceIdentityLookup;
 import dev.conduit.server.pipeline.TelemetryIngestor.Prepared;
 import dev.conduit.server.pipeline.codec.DecoderRegistry;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +98,7 @@ public class PipelineProcessor {
         log.debug("Processing batch of {} deliveries", batch.size());
         List<String> presenceAcks = new ArrayList<>();
         List<PendingProperty> properties = new ArrayList<>();
+        Map<String, DeviceIdentity> known = prefetchIdentities(batch);
 
         for (Delivery delivery : batch) {
             if (delivery.deliveryCount() > props.maxDeliveries()) {
@@ -111,7 +115,7 @@ public class PipelineProcessor {
             try {
                 switch (message.type()) {
                     case PROPERTY -> properties.add(new PendingProperty(delivery,
-                            backoff.run("lookup", () -> ingestor.prepare(delivery.id(), message, IngestSource.LIVE))));
+                            backoff.run("lookup", () -> prepareProperty(delivery, message, known))));
                     case PRESENCE_CONNECTED, PRESENCE_DISCONNECTED -> {
                         log.debug("Presence message {}: deviceKey={} type={}", delivery.id(), message.deviceKey(),
                                 message.type());
@@ -142,7 +146,56 @@ public class PipelineProcessor {
     }
 
     /**
-     * 批量写 InfluxDB，再逐条更新最新值、补写 FIELD_REJECTED 记录并 ACK。
+     * 先扫一遍本批，把需要查身份的 PROPERTY 消息的 deviceKey 去重后一次批量查出（一次 MGET，未命中的才回源数据库），
+     * 把每条消息一次 Redis GET 降为每批一次往返。超限、信封损坏等稍后会被死信的投递不参与。
+     * 可恢复错误原地退避重试；不可恢复的错误（如某设备的数据库查询永久失败）不能拖垮整批，
+     * 此时返回 null，由 {@link #prepareProperty} 退回逐条查询，使失败只影响出错的那一条。
+     */
+    private Map<String, DeviceIdentity> prefetchIdentities(List<Delivery> batch) {
+        Set<String> deviceKeys = new LinkedHashSet<>();
+        for (Delivery delivery : batch) {
+            if (delivery.deliveryCount() > props.maxDeliveries()) {
+                continue;
+            }
+            try {
+                RawMessage message = delivery.message();
+                if (message.type() == MessageType.PROPERTY) {
+                    deviceKeys.add(message.deviceKey());
+                }
+            } catch (IllegalArgumentException e) {
+                // 信封损坏，主循环会进 MALFORMED_ENVELOPE
+            }
+        }
+        if (deviceKeys.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            return backoff.run("lookup", () -> ingestor.findIdentities(deviceKeys));
+        } catch (ProcessingAbortedException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.warn("Batch identity lookup failed, falling back to per-message lookup: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * 解码并校验一条属性消息：批量取得的身份里没有该设备即 UNKNOWN_DEVICE（与逐条查不到时一致）；
+     * known 为 null（批量查询失败）时退回逐条查询。
+     */
+    private Prepared prepareProperty(Delivery delivery, RawMessage message, Map<String, DeviceIdentity> known) {
+        if (known == null) {
+            return ingestor.prepare(delivery.id(), message, IngestSource.LIVE);
+        }
+        DeviceIdentity identity = known.get(message.deviceKey());
+        if (identity == null) {
+            throw new DecodeException(DeadReason.UNKNOWN_DEVICE, message.deviceKey());
+        }
+        return ingestor.prepare(delivery.id(), message, IngestSource.LIVE, identity);
+    }
+
+    /**
+     * 批量写 InfluxDB，再一次提交最新值、补写 FIELD_REJECTED 记录并 ACK。、补写 FIELD_REJECTED 记录并 ACK。
      * InfluxDB 拒绝的数据点（字段类型冲突）对应的投递进 FIELD_TYPE_CONFLICT；
      * 单条收尾阶段的意外错误只让该条进 PROCESSING_ERROR。其余投递在写库成功后才一次性 ACK（至少一次投递）。
      */
@@ -155,20 +208,31 @@ public class PipelineProcessor {
         Set<Integer> rejected = result.rejected().stream()
                 .map(WriteResult.Rejected::index).collect(Collectors.toSet());
 
-        List<String> acks = new ArrayList<>();
-        Map<String, Long> reportedAt = new LinkedHashMap<>();
+        // 阶段一：剔除字段类型冲突的；逐条校验最新值参数，不合格的只死信该条，不进批
+        List<PendingProperty> candidates = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             PendingProperty item = items.get(i);
             if (rejected.contains(i)) {
                 dead(item.delivery(), DeadReason.FIELD_TYPE_CONFLICT);
                 continue;
             }
+            try {
+                LatestValueStore.validate(item.prepared().point().fields());
+                candidates.add(item);
+            } catch (RuntimeException e) {
+                log.error("Unexpected failure finishing delivery {}", item.delivery().id(), e);
+                dead(item.delivery(), DeadReason.PROCESSING_ERROR);
+            }
+        }
+
+        // 阶段二：最新值一次 pipeline 提交；批量失败（不可恢复）时退回逐条，使失败只影响出错的那一条
+        List<PendingProperty> updated = updateLatest(candidates);
+
+        List<String> acks = new ArrayList<>();
+        Map<String, Long> reportedAt = new LinkedHashMap<>();
+        for (PendingProperty item : updated) {
             TelemetryPoint p = item.prepared().point();
             try {
-                backoff.run("latest update", () -> {
-                    ingestor.updateLatest(p);
-                    return null;
-                });
                 log.debug("Latest values updated: deviceKey={} fields={} ts={}", p.deviceKey(), p.fields().size(),
                         p.ts());
                 if (!item.prepared().rejected().isEmpty()) {
@@ -191,6 +255,49 @@ public class PipelineProcessor {
         ack(acks);
         markOnline(reportedAt);
         meters.counter("conduit.pipeline.processed", "type", "property").increment(acks.size());
+    }
+
+    /**
+     * 把一批已校验的属性消息的最新值一次提交（pipeline，可恢复错误原地退避重试）。
+     * 若批量提交遇到不可恢复的错误（例如某个 key 类型被污染），退回逐条更新，只让出错的那条进 PROCESSING_ERROR；
+     * 脚本按时间戳比较、幂等，批量已执行的部分在逐条重做时不会改变结果。
+     *
+     * @return 最新值已更新成功的条目（保持原顺序）
+     */
+    private List<PendingProperty> updateLatest(List<PendingProperty> candidates) {
+        if (candidates.isEmpty()) {
+            return candidates;
+        }
+        List<TelemetryPoint> points = candidates.stream().map(i -> i.prepared().point()).toList();
+        try {
+            backoff.run("latest update batch", () -> {
+                ingestor.updateLatestBatch(points);
+                return null;
+            });
+            return candidates;
+        } catch (ProcessingAbortedException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.warn("Batch latest update failed ({} items), falling back to per-item update: {}",
+                    candidates.size(), e.toString());
+        }
+        List<PendingProperty> ok = new ArrayList<>();
+        for (PendingProperty item : candidates) {
+            TelemetryPoint p = item.prepared().point();
+            try {
+                backoff.run("latest update", () -> {
+                    ingestor.updateLatest(p);
+                    return null;
+                });
+                ok.add(item);
+            } catch (ProcessingAbortedException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                log.error("Unexpected failure finishing delivery {}", item.delivery().id(), e);
+                dead(item.delivery(), DeadReason.PROCESSING_ERROR);
+            }
+        }
+        return ok;
     }
 
     /**

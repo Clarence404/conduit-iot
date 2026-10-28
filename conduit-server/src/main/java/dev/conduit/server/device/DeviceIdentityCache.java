@@ -10,6 +10,10 @@ import org.springframework.stereotype.Component;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -53,6 +57,36 @@ public class DeviceIdentityCache {
             evict(deviceKey);
             return Optional.empty();
         }
+    }
+
+    /**
+     * 批量读取设备身份缓存，一次 MGET（流水线按批查身份，避免每条消息一次往返）。入参去重；入参为空不访问 Redis。
+     * 只返回命中的部分，未命中的 deviceKey 不出现在结果中；内容损坏的条目与 {@link #get} 一样记录告警、删除并按未命中处理。
+     * Redis 异常（DataAccessException）原样抛出。
+     */
+    public Map<String, DeviceIdentity> getAll(Collection<String> deviceKeys) {
+        if (deviceKeys.isEmpty()) {
+            return Map.of();
+        }
+        List<String> unique = List.copyOf(new LinkedHashSet<>(deviceKeys));
+        List<String> values = redis.opsForValue().multiGet(unique.stream().map(DeviceIdentityCache::key).toList());
+        Map<String, DeviceIdentity> result = new HashMap<>();
+        if (values == null) {
+            return result;
+        }
+        for (int i = 0; i < unique.size(); i++) {
+            String json = values.get(i);
+            if (json == null) {
+                continue;
+            }
+            try {
+                result.put(unique.get(i), objectMapper.readValue(json, DeviceIdentity.class));
+            } catch (JsonProcessingException e) {
+                log.warn("Corrupt identity cache entry for {}, evicting: {}", unique.get(i), e.getOriginalMessage());
+                evict(unique.get(i));
+            }
+        }
+        return result;
     }
 
     /**

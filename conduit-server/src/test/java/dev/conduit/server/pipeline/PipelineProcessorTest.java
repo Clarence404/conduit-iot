@@ -82,6 +82,14 @@ class PipelineProcessorTest {
         when(decoders.find("standard-json")).thenReturn(Optional.of(decoder));
         when(decoder.decode(any(), any())).thenReturn(new DecodedPayload(1L, Map.of("Ua", 1.0)));
         when(writer.write(anyList())).thenReturn(WriteResult.ok());
+        // 批量查身份默认委托给逐条 find 的桩，使各用例仍可用 identities.find 描述设备
+        when(identities.findAll(any())).thenAnswer(inv -> {
+            Map<String, DeviceIdentity> found = new java.util.HashMap<>();
+            for (String dk : inv.<java.util.Collection<String>>getArgument(0)) {
+                identities.find(dk).ifPresent(i -> found.put(dk, i));
+            }
+            return found;
+        });
     }
 
     private void useModel(PropertySpec... specs) {
@@ -188,11 +196,11 @@ class PipelineProcessorTest {
     @Test
     void retriesLatestUpdateOnRedisFailure() {
         when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
-        doThrow(new RedisConnectionFailureException("down")).doNothing().when(latest).update(eq("d1"), anyLong(), any());
+        doThrow(new RedisConnectionFailureException("down")).doNothing().when(latest).updateBatch(anyList());
 
         processor.process(List.of(delivery("1-0", "d1")));
 
-        verify(latest, times(2)).update(eq("d1"), anyLong(), any());
+        verify(latest, times(2)).updateBatch(anyList());
         verify(writer, times(1)).write(anyList());
         verify(bus, times(1)).ack(GROUP, List.of("1-0"));
         verify(bus, never()).recordDead(any(), anyString(), anyMap());
@@ -240,7 +248,8 @@ class PipelineProcessorTest {
 
         processor.process(List.of(delivery("1-0", "good"), bad, delivery("3-0", "good")));
 
-        verify(identities, times(1)).find("bad");
+        // 批量预取时失败一次，退回逐条查询时再失败一次；均不重试（不可恢复）
+        verify(identities, times(2)).find("bad");
         verifyDeadLettered(bad, "PROCESSING_ERROR");
         verify(bus, times(1)).recordDead(any(), anyString(), anyMap());
         verify(bus).ack(GROUP, List.of("1-0", "3-0"));
@@ -249,6 +258,9 @@ class PipelineProcessorTest {
     @Test
     void permanentRedisFailureInLatestUpdateDeadLettersOnlyThatItem() {
         when(identities.find(anyString())).thenAnswer(i -> Optional.of(identity(i.getArgument(0))));
+        // 批量提交整体失败（不可恢复）后退回逐条，只有 bad 那条失败
+        doThrow(new RedisSystemException("WRONGTYPE", new RuntimeException("WRONGTYPE")))
+                .when(latest).updateBatch(anyList());
         doThrow(new RedisSystemException("WRONGTYPE", new RuntimeException("WRONGTYPE")))
                 .when(latest).update(eq("bad"), anyLong(), any());
         Delivery bad = delivery("2-0", "bad");
@@ -340,7 +352,8 @@ class PipelineProcessorTest {
 
         verify(writer).write(argThat(points -> points.getFirst().fields().equals(Map.of("Ua", 1.0))));
         InOrder order = inOrder(latest, bus);
-        order.verify(latest).update(eq("d1"), anyLong(), eq(Map.of("Ua", 1.0)));
+        order.verify(latest).updateBatch(argThat(l -> l.size() == 1 && l.getFirst().deviceKey().equals("d1")
+                && l.getFirst().params().equals(Map.of("Ua", 1.0))));
         order.verify(bus).recordDead(eq(d), eq("FIELD_REJECTED"),
                 argThat(m -> m.get("rejected").contains("\"field\":\"Zz\"") && m.get("rejected").contains("UNDEFINED")));
         order.verify(bus).ack(GROUP, List.of("1-0"));
@@ -405,5 +418,52 @@ class PipelineProcessorTest {
 
         verify(bus, times(1)).recordDead(d, "UNKNOWN_DEVICE", Map.of());
         verify(bus, times(2)).ack(GROUP, List.of("1-0"));
+    }
+
+    @Test
+    void identitiesAreLookedUpOncePerBatchAndLatestUpdatedOncePerBatch() {
+        when(identities.find(anyString())).thenAnswer(i -> Optional.of(identity(i.getArgument(0))));
+
+        processor.process(List.of(delivery("1-0", "d1"), delivery("2-0", "d2"), delivery("3-0", "d1")));
+
+        verify(identities, times(1)).findAll(argThat(c -> c.stream().distinct().count() == 2 && c.size() == 2));
+        // 逐条的 find 只在 findAll 的桩内部被调用（每个去重设备一次），处理循环本身不再逐条查身份
+        verify(identities, times(1)).find("d1");
+        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 3));
+        verify(latest, never()).update(anyString(), anyLong(), any());
+        verify(bus).ack(GROUP, List.of("1-0", "2-0", "3-0"));
+    }
+
+    @Test
+    void badLatestParametersDeadLetterOnlyThatMessageAndTheRestAreBatched() {
+        when(identities.find(anyString())).thenAnswer(i -> Optional.of(identity(i.getArgument(0))));
+        when(decoder.decode(any(), any()))
+                .thenReturn(new DecodedPayload(1L, Map.of("Ua", 1.0)))
+                .thenReturn(new DecodedPayload(1L, Map.of("__last", 1.0)))
+                .thenReturn(new DecodedPayload(1L, Map.of("Ua", 2.0)));
+        Delivery good1 = delivery("1-0", "d1");
+        Delivery reserved = delivery("2-0", "d2");
+        Delivery good2 = delivery("3-0", "d3");
+
+        processor.process(List.of(good1, reserved, good2));
+
+        verifyDeadLettered(reserved, "PROCESSING_ERROR");
+        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 2
+                && l.get(0).deviceKey().equals("d1") && l.get(1).deviceKey().equals("d3")));
+        verify(bus).ack(GROUP, List.of("1-0", "3-0"));
+        verify(bus, times(1)).recordDead(any(), anyString(), anyMap());
+    }
+
+    @Test
+    void unknownDeviceInBatchIsDeadLetteredWithoutAffectingOthers() {
+        when(identities.find("d1")).thenReturn(Optional.of(identity("d1")));
+        when(identities.find("ghost")).thenReturn(Optional.empty());
+        Delivery ghost = delivery("2-0", "ghost");
+
+        processor.process(List.of(delivery("1-0", "d1"), ghost, delivery("3-0", "d1")));
+
+        verifyDeadLettered(ghost, "UNKNOWN_DEVICE");
+        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 2));
+        verify(bus).ack(GROUP, List.of("1-0", "3-0"));
     }
 }

@@ -137,6 +137,10 @@
 
 按时间追加，每条一行：日期、版本、决定、对应 spec / 提交。
 
+- 2026-10-28 流水线入库路径批量化（`docs/test-reports/2026-10-28-pipeline-redis-roundtrips.md`）：实测入库上限约 3,000 条/秒由**每条消息 2 次串行 Redis 网络往返**决定——`DeviceIdentityLookup.find()` 的 GET 与 `LatestValueStore.update()` 的 EVALSHA 在逐条循环内（InfluxDB 写入、ack、markOnline 本就每批一次）。已排除 InfluxDB（每批只写一次、CPU 0.16%）、JVM 内存上限（堆占用 12.6%、GC 0.8%）与 Redis 刷盘策略。改为：身份一次 `MGET` 预取（未命中仍逐个回源并回填），最新值一次 pipeline 提交——**`latest-update.lua` 原样复用、不重写**，只是放进 pipeline，按测点比较时间戳的语义（旧数据不覆盖新值）完全不变。**确立一条可复用的容错模式：批量操作遇不可恢复错误时退回逐条，只让出错那条进死信**；脚本幂等且回退保持原批次顺序，重做安全。入批前逐条校验（保留测点名 `__`、null 值），**一条坏数据不拖垮整批**。吞吐收益待压测复测，报告中 22,000 条/秒为外推值。
+- 2026-10-28 排查方法教训：Redis 的 `commandstats` **把 Lua 脚本内部调用的命令一并计数**。据此曾误判为「每条消息 6 次往返」并预测约 1,100 条/秒，与实测峰值 2,943 不符；正是这个对不上促使回头核对 `latest-update.lua`，才发现那 4 次 HGET/HSET 在服务端执行、无网络开销。**模型与实测不符时，先怀疑模型。**
+
+
 - 2026-10-28 `max_inflight` 由 1024 降为 **512**（同日自我更正）：按吞吐对照选定的 1024 在 6000 条/秒复压中**必然触发 `mailbox_overflow` 强杀**——EMQX 把最多 `max_inflight` 条未确认消息推给连接进程，这些消息堆在该进程的Erlang 信箱里，而 `force_shutdown.max_mailbox_size` 默认 **1000**，1024 > 1000 必然越界（实测两次强杀，信箱 1335 与 2896 条，且**先于队列溢出与堆超限发生**）。按既有原则「不为塞下更大缓冲去调高保护阈值」，降 `max_inflight` 而非调大信箱上限。**新增约束：`batch-size ≤ max_inflight ≪ max_mailbox_size`。**A/B 实验只跑 90 秒且只看吞吐未查失效日志，因此漏掉——**容量参数必须同时核对吞吐与失效日志**。同步更新两个 `.env.example`、dev compose、e2e 的 `E2eEnvironment` 与 transport 的 `TestBroker`。
 
 

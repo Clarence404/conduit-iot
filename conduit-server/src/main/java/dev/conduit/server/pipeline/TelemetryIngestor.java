@@ -70,6 +70,15 @@ public class TelemetryIngestor {
     public Prepared prepare(String traceId, RawMessage message, IngestSource source) {
         DeviceIdentity identity = identities.find(message.deviceKey())
                 .orElseThrow(() -> new DecodeException(DeadReason.UNKNOWN_DEVICE, message.deviceKey()));
+        return prepare(traceId, message, source, identity);
+    }
+
+    /**
+     * 与三参版本相同，但身份由调用方提供（流水线按批一次取得，避免每条消息一次 Redis 往返）。
+     *
+     * @param identity 该消息 deviceKey 对应的设备身份，不能为 null（查不到时调用方应自行按 UNKNOWN_DEVICE 处理）
+     */
+    public Prepared prepare(String traceId, RawMessage message, IngestSource source, DeviceIdentity identity) {
         if (!identity.tenantActive()) {
             throw new DecodeException(DeadReason.TENANT_DISABLED, message.deviceKey());
         }
@@ -103,6 +112,11 @@ public class TelemetryIngestor {
         return new Prepared(point, validation.rejected());
     }
 
+    /** 批量查设备身份（一次 MGET，未命中回源），供流水线整批预取；查不到的设备不在结果中。 */
+    public Map<String, DeviceIdentity> findIdentities(java.util.Collection<String> deviceKeys) {
+        return identities.findAll(deviceKeys);
+    }
+
     /**
      * 批量写入时序库。
      *
@@ -116,6 +130,15 @@ public class TelemetryIngestor {
     /** 更新该设备的最新值；Lua 脚本逐测点比较时间戳，重放的旧值不会覆盖更新的值。 */
     public void updateLatest(TelemetryPoint point) {
         latest.update(point.deviceKey(), point.ts(), point.fields());
+    }
+
+    /**
+     * 批量更新最新值（流水线用）：同一个 Lua 脚本放进一次 pipeline，语义与逐条 {@link #updateLatest} 一致。
+     * 调用方须先用 {@link LatestValueStore#validate} 剔除不合格条目。
+     */
+    public void updateLatestBatch(List<TelemetryPoint> points) {
+        latest.updateBatch(points.stream()
+                .map(p -> new LatestValueStore.LatestUpdate(p.deviceKey(), p.ts(), p.fields())).toList());
     }
 
     /**

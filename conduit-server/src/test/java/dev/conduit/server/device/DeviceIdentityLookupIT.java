@@ -8,6 +8,9 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(OutputCaptureExtension.class)
@@ -21,6 +24,9 @@ class DeviceIdentityLookupIT extends IntegrationTestBase {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    dev.conduit.server.tenant.system.DeviceIdentityMapper identityMapper;
 
     @Test
     void loadsFromDatabaseAndFillsCache() {
@@ -90,5 +96,63 @@ class DeviceIdentityLookupIT extends IntegrationTestBase {
         // 没有走损坏条目的修复路径：不记告警、缓存里仍是原样的旧条目
         assertThat(output).doesNotContain("Corrupt identity cache entry");
         assertThat(redis.opsForValue().get(DeviceIdentityCache.key(dk))).isEqualTo(legacy);
+    }
+
+    @Test
+    void cacheGetAllHandlesFullPartialNoneAndEmpty() {
+        DeviceIdentity a = new DeviceIdentity(unique("dk"), 1, "ENABLED", "h", "s", "pk", "ACTIVE");
+        DeviceIdentity b = new DeviceIdentity(unique("dk"), 1, "ENABLED", "h", "s", "pk", "ACTIVE");
+        String missing = unique("dk");
+        cache.put(a);
+        cache.put(b);
+
+        assertThat(cache.getAll(List.of(a.deviceKey(), b.deviceKey())))
+                .containsOnlyKeys(a.deviceKey(), b.deviceKey()).containsEntry(a.deviceKey(), a);
+        assertThat(cache.getAll(List.of(a.deviceKey(), missing, a.deviceKey())))
+                .containsOnlyKeys(a.deviceKey());
+        assertThat(cache.getAll(List.of(missing))).isEmpty();
+        assertThat(cache.getAll(List.of())).isEmpty();
+    }
+
+    @Test
+    void cacheGetAllTreatsCorruptEntryAsMissAndEvictsIt() {
+        String dk = unique("dk");
+        redis.opsForValue().set(DeviceIdentityCache.key(dk), "{not json");
+
+        assertThat(cache.getAll(List.of(dk))).isEmpty();
+        assertThat(redis.hasKey(DeviceIdentityCache.key(dk))).isFalse();
+    }
+
+    @Test
+    void findAllServesCachedFromCacheAndLoadsOnlyMissesFromDatabaseThenFillsCache() {
+        // 缓存里放一个与数据库无关的身份（租户 99）：能原样取回说明命中缓存、没有回源
+        TestDevice fromDb = createDevice(defaultTenantId(), "ENABLED");
+        DeviceIdentity cached = new DeviceIdentity(unique("dk"), 99, "ENABLED", "h", "s", "pk", "ACTIVE");
+        cache.put(cached);
+        String unknown = unique("dk");
+
+        Map<String, DeviceIdentity> found = lookup.findAll(List.of(cached.deviceKey(), fromDb.deviceKey(), unknown));
+
+        assertThat(found).containsOnlyKeys(cached.deviceKey(), fromDb.deviceKey());
+        assertThat(found.get(cached.deviceKey())).isEqualTo(cached);
+        assertThat(found.get(fromDb.deviceKey()).tenantId()).isEqualTo(fromDb.tenantId());
+        assertThat(cache.get(fromDb.deviceKey())).contains(found.get(fromDb.deviceKey()));
+        assertThat(cache.get(unknown)).isEmpty();
+    }
+
+    @Test
+    void findAllFallsBackToDatabaseWhenCacheBatchReadFails() {
+        TestDevice device = createDevice(defaultTenantId(), "ENABLED");
+        DeviceIdentityCache failing = org.mockito.Mockito.mock(DeviceIdentityCache.class);
+        org.mockito.Mockito.when(failing.getAll(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new org.springframework.data.redis.RedisConnectionFailureException("down"));
+        DeviceIdentityLookup degraded = new DeviceIdentityLookup(failing, identityMapper);
+
+        Map<String, DeviceIdentity> found = degraded.findAll(List.of(device.deviceKey()));
+
+        assertThat(found).containsOnlyKeys(device.deviceKey());
+        // 缓存不可用时不应再逐条尝试回填
+        org.mockito.Mockito.verify(failing, org.mockito.Mockito.never())
+                .put(org.mockito.ArgumentMatchers.any());
     }
 }

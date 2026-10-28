@@ -163,6 +163,8 @@ final class E2eEnvironment implements AutoCloseable {
             transportEnv.put("EMQX_PORT", String.valueOf(emqxPort));
             transportEnv.put("TRANSPORT_MQTT_USERNAME", "conduit-transport");
             transportEnv.put("TRANSPORT_MQTT_PASSWORD", transportPassword);
+            // e2e 验证接入可靠性，不验证会话监控（需 EMQX API key）；名字必须是 TRANSPORT_*，CONDUIT_* 会被 AppProcess 清掉
+            transportEnv.put("TRANSPORT_MONITOR_ENABLED", "false");
             transportEnv.put("CONDUIT_LOG_DIR", logDir.resolve(name + "/logs").toString());
             AppProcess transport = new AppProcess(name, transportJar, transportEnv, freePort(), logDir.resolve(name));
             transports.add(transport);

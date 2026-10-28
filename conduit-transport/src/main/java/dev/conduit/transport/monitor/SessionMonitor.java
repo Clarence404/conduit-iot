@@ -71,10 +71,11 @@ public class SessionMonitor {
             now = source.get();
         } catch (RuntimeException e) {
             consecutiveFailures++;
-            Map<String, Object> failed = new LinkedHashMap<>(verdict.details());
+            // 只保留与失败相关的字段：旧的 mqueueLen / sendMsg 等是陈旧值，混在一起会被误当成当前值
+            Map<String, Object> failed = new LinkedHashMap<>();
             failed.put("pollFailed", true);
             failed.put("consecutiveFailures", consecutiveFailures);
-            failed.put("lastSuccessAt", lastSuccessMillis == 0 ? "never" : String.valueOf(lastSuccessMillis));
+            failed.put("lastSuccessAt", lastSuccessText());
             if (consecutiveFailures >= stallSamples) {
                 String reason = "会话监控连续 " + consecutiveFailures + " 次采样失败，无法判断会话健康";
                 verdict = new Verdict(false, reason, Map.copyOf(failed));
@@ -92,7 +93,7 @@ public class SessionMonitor {
 
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("consecutiveFailures", 0);
-        details.put("lastSuccessAt", lastSuccessMillis);
+        details.put("lastSuccessAt", lastSuccessText());
         details.put("mqueueLen", now.mqueueLen());
         details.put("sendMsg", now.sendMsg());
 
@@ -146,6 +147,11 @@ public class SessionMonitor {
         } else {
             verdict = new Verdict(true, "ok", Map.copyOf(details));
         }
+    }
+
+    /** 最后一次成功采样的时刻（ISO-8601 字符串）；从未成功为 "never"。成功与失败路径统一为字符串。 */
+    private String lastSuccessText() {
+        return lastSuccessMillis == 0 ? "never" : java.time.Instant.ofEpochMilli(lastSuccessMillis).toString();
     }
 
     /**

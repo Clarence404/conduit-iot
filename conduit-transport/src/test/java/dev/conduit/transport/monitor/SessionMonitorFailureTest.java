@@ -40,6 +40,13 @@ class SessionMonitorFailureTest {
 
         assertThat(m.verdict().healthy()).isTrue();
         assertThat(m.verdict().details()).containsEntry("consecutiveFailures", 0).containsKey("lastSuccessAt");
+        assertThat(m.verdict().details().get("lastSuccessAt")).isInstanceOf(String.class).isNotEqualTo("never");
+
+        // 再失败一次：若成功时没把内部计数清零，这里会累加到 2 而置 DOWN
+        fail[0] = true;
+        m.sample();
+        assertThat(m.verdict().healthy()).isTrue();
+        assertThat(m.verdict().details()).containsEntry("consecutiveFailures", 1);
     }
 
     @Test
@@ -55,5 +62,19 @@ class SessionMonitorFailureTest {
         m.sample();
 
         assertThat(m.verdict().details()).containsEntry("unchangedSendSamples", 1);
+    }
+
+    @Test
+    void failureDetailsDoNotCarryStaleSnapshotValues() {
+        boolean[] fail = {false};
+        SessionMonitor m = new SessionMonitor(() -> {
+            if (fail[0]) throw new IllegalStateException("down");
+            return OK;
+        }, 3, 1L << 28, 32);
+        m.sample();
+        fail[0] = true;
+        m.sample();
+
+        assertThat(m.verdict().details()).doesNotContainKeys("mqueueLen", "sendMsg").containsEntry("pollFailed", true);
     }
 }

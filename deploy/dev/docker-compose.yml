@@ -125,7 +125,10 @@ services:
       # 在途窗口：EMQX 最多允许多少条已投递未确认的消息。transport 的待提交批就被它硬限，
       # 规则是 conduit.transport.mqtt.batch-size <= 本值，且本值应为批的若干倍：相等时是停等协议
       # （发 N 条、等全部确认、再发 N 条），窗口远大于批才能流水线化。实测 1024/64 约 4000 条/秒，32/32 约 2600。
-      EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-1024}
+      # 在途窗口。必须显著小于 force_shutdown.max_mailbox_size（默认 1000）：
+      # 在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 mailbox_overflow 强杀
+      # （2026-10-28 实测：配 1024 时负载下必然被杀，且先于队列溢出与堆超限发生）
+      EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-512}
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录
       EMQX_NODE__NAME: emqx@127.0.0.1

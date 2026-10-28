@@ -167,7 +167,7 @@ services:
       TRANSPORT_MQTT_PASSWORD: ${TRANSPORT_MQTT_PASSWORD}
       CONDUIT_LOG_DIR: /var/log/conduit
       # 会话监控：经 EMQX REST API（只读 API key）观察自己的会话
-      # 攒批写入总线：batch-size 不得大于 EMQX 的 EMQX_MAX_INFLIGHT，且窗口应为批的若干倍（默认 1024/64）
+      # 攒批写入总线：batch-size 不得大于 EMQX 的 EMQX_MAX_INFLIGHT，且窗口应为批的若干倍（默认 512/64）
       TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-64}
       TRANSPORT_BUS_BATCH_DELAY: ${TRANSPORT_BUS_BATCH_DELAY:-5ms}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083

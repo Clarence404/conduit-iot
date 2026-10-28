@@ -195,7 +195,7 @@ final class E2eEnvironment implements AutoCloseable {
                     // max_inflight 须不小于 transport 的 batch-size（默认 64），且宜为其若干倍：与部署默认 1024/64 一致
                     .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "false")
                     .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
-                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "1024")
+                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "512")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")

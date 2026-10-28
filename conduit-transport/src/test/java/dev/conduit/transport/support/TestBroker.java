@@ -44,7 +44,7 @@ public final class TestBroker {
                         .withEnv("EMQX_SYS_TOPICS__SYS_EVENT_MESSAGES__CLIENT_CONNECTED", "true")
                         .withEnv("EMQX_SYS_TOPICS__SYS_EVENT_MESSAGES__CLIENT_DISCONNECTED", "true")
                         .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "false")
-                        .withEnv("EMQX_MQTT__MAX_INFLIGHT", "1024")
+                        .withEnv("EMQX_MQTT__MAX_INFLIGHT", "512")
                         .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
                         .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                         .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")

@@ -698,7 +698,7 @@
     {
       "id": 12,
       "type": "row",
-      "title": "5. 容器资源（需启用 cadvisor）",
+      "title": "5. 服务资源",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -711,8 +711,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "容器 CPU（核）（需启用 cadvisor）",
-      "description": "1 = 占满一个核。 依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。\n\n本图依赖 cadvisor。其镜像托管在 gcr.io，部分网络环境不可达，因此它单独放在 metrics-cadvisor profile 下，默认不启动。启用方式：docker compose --profile metrics --profile metrics-cadvisor up -d，并取消 prometheus.yml.tpl 中 cadvisor 抓取任务的注释。",
+      "title": "服务 CPU（核）",
+      "description": "各服务自身上报的 CPU 占用（核）。JVM 服务用 Micrometer 的 process_cpu_usage，Redis 用 redis_cpu_*。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -751,21 +751,22 @@
       },
       "targets": [
         {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"conduit-server|conduit-transport|conduit-transport-2|emqx|redis|influxdb|postgres\"}[1m]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
+          "expr": "process_cpu_usage{job=~\"conduit-server|conduit-transport\"}",
+          "legendFormat": "{{job}} {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
+          "legendFormat": "redis",
+          "refId": "B"
         }
       ]
     },
     {
       "id": 14,
       "type": "timeseries",
-      "title": "容器内存（工作集）（需启用 cadvisor）",
-      "description": "依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。\n\n本图依赖 cadvisor。其镜像托管在 gcr.io，部分网络环境不可达，因此它单独放在 metrics-cadvisor profile 下，默认不启动。启用方式：docker compose --profile metrics --profile metrics-cadvisor up -d，并取消 prometheus.yml.tpl 中 cadvisor 抓取任务的注释。",
+      "title": "服务内存（JVM 堆+非堆 / Redis）",
+      "description": "JVM 服务用 jvm_memory_used_bytes（堆 + 非堆之和，不含堆外与 JVM 自身开销，因此小于容器 RSS）；Redis 用 redis_memory_used_bytes。\n容器内存上限见 .env 的 SERVER_MEM_LIMIT / TRANSPORT_MEM_LIMIT 等，JVM 堆上限按该值的 75% 自动计算（MaxRAMPercentage=75）。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -804,13 +805,14 @@
       },
       "targets": [
         {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service=~\"conduit-server|conduit-transport|conduit-transport-2|emqx|redis|influxdb|postgres\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
+          "expr": "sum(jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"}) by (job, instance)",
+          "legendFormat": "{{job}} {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "redis",
+          "refId": "B"
         }
       ]
     },

@@ -77,6 +77,11 @@ final class ReliableDeviceFleet {
         devices.forEach(ReliableE2eDevice::close);
     }
 
+    /** 全部设备累计重发次数：用来判断故障是否真的迫使设备重发过（仅观测，不作断言）。 */
+    int retransmissions() {
+        return devices.stream().mapToInt(ReliableE2eDevice::retransmissions).sum();
+    }
+
     int acknowledged() {
         return acknowledged.get();
     }

@@ -146,6 +146,7 @@ class ReliabilityE2EIT {
 
                 fault.inject();
                 sending.get(5, TimeUnit.MINUTES);
+                log.info("Scenario {}: device-side retransmissions = {}", n, fleet.retransmissions());
 
                 await().atMost(Duration.ofMinutes(3)).pollInterval(Duration.ofSeconds(3))
                         .untilAsserted(() -> assertThat(env.influxCount(productKey)).isEqualTo(fleet.total()));

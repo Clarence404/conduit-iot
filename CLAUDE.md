@@ -112,7 +112,7 @@
 
 - Java 21、Spring Boot 3.5、MyBatis-Plus、Flyway；包名 `dev.conduit.<模块>`；按业务分包（`device`、`product`、`thingmodel`、`telemetry`、`pipeline` …）。
 - 测试：先写失败测试（TDD）；集成测试用 Testcontainers；前端用 Vitest + `@vue/test-utils`。
-- 测试报告：每次实际执行测试后，必须在 `docs/test-reports/` 新建或更新 `YYYY-MM-DD-<主题>.md`。报告至少记录被测范围与代码状态、环境、实际命令、用例数/结果/耗时、跳过或阻塞项、非阻塞警告及日志位置；失败和无效尝试也要如实记录。没有执行的测试不得写成“通过”。最终交付时必须给出本次报告链接。
+- 测试报告：每次实际执行测试后，必须在 `docs/test-reports/` 新建或更新 `YYYY-MM-DD-<主题>.md`。**压测类报告必须记录接入 QPS（EMQX 接收并确认）与入库 TPS（真正写进 InfluxDB）两个数，并写明测试类型**：容量测试（找积压不增长的最大稳态速率）、压力测试（刻意过载，刻画失效模式，**必须同时核对失效日志**）、回归对比（固定在容量以下的同一速率）。**对外承诺能力只能用入库 TPS**——过载时 EMQX 会先 PUBACK 再丢弃，接入 QPS 包含了随后被丢掉的消息。报告至少记录被测范围与代码状态、环境、实际命令、用例数/结果/耗时、跳过或阻塞项、非阻塞警告及日志位置；失败和无效尝试也要如实记录。没有执行的测试不得写成“通过”。最终交付时必须给出本次报告链接。
 - 界面：中文文案；所有分页表格默认每页 10 条（可选 10/20/50/100），分页、请求序号与越界页码修正统一用 `useTable`；功能入口要显眼（列表有「操作」列按钮、全局面包屑、产品与设备互相可跳转）；详情页的标签页与路由 query `tab` 同步（`router.replace`）。页面顶部用 `PageHeader`，列表筛选用 `FilterBar`，在线状态用 `OnlineDot`，启用/禁用用 `el-tag`，时间用 `RelativeTime`；空状态为 `el-empty` + 引导按钮，首次加载显示骨架屏。样式只用 CSS 变量（`--el-*` 或 `src/styles/tokens.css` 的 `--cd-*`），不写死颜色，深色主题下必须可读。新增页面在 `router/meta.ts` 的 `ROUTE_META` 中登记页面名称、面包屑与菜单归属。写操作按钮（新建、编辑、删除、导入、启用/禁用、重置密钥/密码）按 `usePermission().can(permission, tenant)` 与响应行级 permissions 显示；shadow 兼容旧 canWrite，只读身份隐藏而非禁用；新页面在 `ROUTE_META` 标注 `scope` 与 `requires`。
 - 演示与测试数据：用有意义的中文名称（如「三相电表（演示）」「1号楼配电室 电表01」），测试结束清理自己创建的数据。
 - 日志：SLF4J 参数化；消息链路上 DEBUG 每条消息/每批一行（transport 收发、流水线解码/校验/写库/ACK、鉴权放行、在线状态、历史与总览、REST 访问行），逐字段细节放 TRACE；构造字符串或集合的日志用 `isDebugEnabled()`/`isTraceEnabled()` 保护；绝不记录设备密钥、口令、JWT、内部 token、Authorization；payload 值只在 TRACE 且截断 256 字符。；管理操作（租户与用户的增删改、重置密码、进入/退出租户、代入期间的写请求）各记一行 INFO，不记请求体与口令。

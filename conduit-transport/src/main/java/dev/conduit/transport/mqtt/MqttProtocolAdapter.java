@@ -79,7 +79,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         // 单线程串行处理：保序，且阻塞重试不会卡住 Netty 事件循环
         final ExecutorService deliveryExecutor = Executors.newSingleThreadExecutor(
                 Thread.ofPlatform().name("mqtt-delivery").daemon().factory());
-        /** 本批待提交的条目，只在 deliveryExecutor 这一条线程上读写，无需加锁（停止后由关闭方在线程终止后清理）。 */
+        /** 本批待提交的条目，只在 deliveryExecutor 这一条线程上读写，无需加锁；会话作废后随对象一起回收。 */
         final List<Pending> pending = new ArrayList<>();
         volatile Mqtt5AsyncClient client;
         volatile boolean stopping;
@@ -311,8 +311,6 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        // 未提交的条目一律不 ACK：broker 会重投，重复由流水线按 ts 幂等吸收
-        s.pending.clear();
     }
 
     /**
@@ -427,9 +425,12 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     }
 
     /**
-     * 提交当前批：一次总线调用，逐条按结果处理。
-     * 成功的条目先发业务回执再 ACK；失败的条目不 ACK，由 broker 重投（至少一次）。
-     * 整批调用抛异常时走阻塞退避重试；会话停止时放弃且不 ACK。
+     * 提交当前批：反复提交尚未成功的条目直到全部写入总线，然后按到达顺序逐条发业务回执并 ACK。
+     *
+     * <p>绝不能留下未 ACK 的条目而继续处理后面的：EMQX 的 mqtt.retry_interval 默认为 infinity，
+     * 已发出未 ACK 的在途消息不会重传，只在客户端重连时才重投；而 max_inflight 默认 32。
+     * 一条失败后放着不管就永久占住一个 inflight 槽位，攒满 32 条后 EMQX 不再投递，整条接入链路停摆。
+     * 所以逐条失败也在此阻塞重试（与旧的逐条 publishWithRetry 语义一致）；会话停止时放弃且整批不 ACK。
      */
     private void flush(Session s) {
         if (s.pending.isEmpty() || s.stopping) {
@@ -437,20 +438,16 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         }
         List<Pending> batch = List.copyOf(s.pending);
         s.pending.clear();
-        List<PublishResult> results = publishBatchWithRetry(s, batch);
+        List<PublishResult> results = publishAllWithRetry(s, batch);
         if (results == null) {
             return; // 会话停止，一条都不 ACK
         }
         for (int i = 0; i < batch.size(); i++) {
             Pending p = batch.get(i);
             PublishResult r = results.get(i);
-            if (!r.succeeded()) {
-                log.warn("Bus publish failed for device {}, leaving it unacknowledged: {}",
-                        p.message().deviceKey(), r.failure().getMessage());
-                continue;
-            }
             log.debug("Published to bus: id={} deviceKey={} type={}",
                     r.id(), p.message().deviceKey(), p.message().type());
+            // 回执必须在总线写入成功之后发，且先于 ACK；顺序与到达顺序一致，PUBACK 没有空洞
             if (p.topic().type() == MessageType.PROPERTY) {
                 sendReliableAck(s, p.topic(), p.message());
             }
@@ -459,26 +456,51 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     }
 
     /**
-     * 整批提交并在**整体失败**时退避重试（下游不可用）。逐条失败不在这里重试——
-     * 那些条目不 ACK、由 broker 重投，避免把已成功的条目重复写入总线。
+     * 把整批写入总线并重试到全部成功：整体抛异常（下游不可用）与逐条失败都按退避重试，
+     * 每轮只重新提交「尚未成功」的条目，已成功的不会重复写入。
      *
-     * @return 与入参等长同序的结果；会话停止或线程被中断时返回 null
+     * @return 与入参等长同序的成功结果；会话停止或线程被中断时返回 null
      */
-    private List<PublishResult> publishBatchWithRetry(Session s, List<Pending> batch) {
-        List<RawMessage> messages = batch.stream().map(Pending::message).toList();
+    private List<PublishResult> publishAllWithRetry(Session s, List<Pending> batch) {
+        PublishResult[] done = new PublishResult[batch.size()];
+        List<Integer> remaining = new ArrayList<>();
+        for (int i = 0; i < batch.size(); i++) {
+            remaining.add(i);
+        }
         for (int attempt = 0; !s.stopping; attempt++) {
+            List<Integer> current = remaining;
+            List<RawMessage> messages = current.stream().map(i -> batch.get(i).message()).toList();
+            String failure;
             try {
-                return bus.publish(messages);
-            } catch (RuntimeException e) {
-                Duration delay = backoff(attempt);
-                log.warn("Bus batch publish of {} messages failed (attempt {}), retrying in {} ms: {}",
-                        messages.size(), attempt + 1, delay.toMillis(), e.getMessage());
-                try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return null;
+                List<PublishResult> results = bus.publish(messages);
+                List<Integer> stillFailing = new ArrayList<>();
+                String lastError = null;
+                for (int k = 0; k < current.size(); k++) {
+                    PublishResult r = results.get(k);
+                    if (r.succeeded()) {
+                        done[current.get(k)] = r;
+                    } else {
+                        stillFailing.add(current.get(k));
+                        lastError = r.failure().getMessage();
+                    }
                 }
+                remaining = stillFailing;
+                if (remaining.isEmpty()) {
+                    return List.of(done);
+                }
+                failure = lastError;
+            } catch (RuntimeException e) {
+                failure = e.getMessage();
+            }
+            Duration delay = backoff(attempt);
+            // 不能因失败而跳过 ACK（见 flush 注释：retry_interval=infinity + max_inflight=32 会耗尽窗口）
+            log.warn("Bus publish of {} of {} messages failed (attempt {}), retrying in {} ms: {}",
+                    remaining.size(), batch.size(), attempt + 1, delay.toMillis(), failure);
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
             }
         }
         return null;

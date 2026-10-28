@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -454,22 +455,117 @@ class MqttProtocolAdapterTest {
     }
 
     @Test
-    void doesNotAcknowledgeTheFailedEntriesOfAPartiallySuccessfulBatch() {
-        // 管道部分成功：成功的 ACK，失败的不 ACK，由 broker 重投
+    void retriesOnlyTheFailedEntriesOfAPartiallySuccessfulBatchBeforeAcking() {
+        // 逐条失败不能留下未 ACK 的空洞（EMQX retry_interval=infinity 会耗尽 inflight 窗口）：只重试失败条目
         MqttProtocolAdapter a = adapterWithBatch(2, Duration.ofSeconds(30));
         MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList())).thenReturn(List.of(
-                PublishResult.ok("1-0"),
-                PublishResult.failed(new IllegalStateException("boom"))));
+        when(bus.publish(anyList()))
+                .thenReturn(List.of(PublishResult.ok("1-0"),
+                        PublishResult.failed(new IllegalStateException("boom"))))
+                .thenAnswer(inv -> okResults(inv.getArgument(0)));
 
         Mqtt5Publish good = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
         Mqtt5Publish bad = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
         a.onPublish(s, good);
         a.onPublish(s, bad);
 
-        verify(good, timeout(2000)).acknowledge();
-        verify(bad, never()).acknowledge();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<RawMessage>> batches = ArgumentCaptor.forClass(List.class);
+        verify(bus, times(2)).publish(batches.capture());
+        assertThat(batches.getAllValues().get(0)).extracting(RawMessage::deviceKey)
+                .containsExactly("dev-1", "dev-2");
+        assertThat(batches.getAllValues().get(1)).extracting(RawMessage::deviceKey)
+                .containsExactly("dev-2");
+        InOrder order = inOrder(good, bad);
+        order.verify(good).acknowledge();
+        order.verify(bad).acknowledge();
         a.stop();
+    }
+
+    @Test
+    void retriesAfterWholeBatchExceptionWithoutDuplicatingOrDroppingAcks() {
+        MqttProtocolAdapter a = adapterWithBatch(3, Duration.ofSeconds(30));
+        MqttProtocolAdapter.Session s = a.openSession();
+        when(bus.publish(anyList()))
+                .thenThrow(new IllegalStateException("redis down"))
+                .thenReturn(List.of(PublishResult.ok("1-0"), PublishResult.failed(new IllegalStateException("x")),
+                        PublishResult.ok("3-0")))
+                .thenAnswer(inv -> okResults(inv.getArgument(0)));
+
+        Mqtt5Publish p1 = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
+        Mqtt5Publish p2 = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
+        Mqtt5Publish p3 = publishOf("conduit/pk/dev-3/up/property", "{\"ts\":3}");
+        a.onPublish(s, p1);
+        a.onPublish(s, p2);
+        a.onPublish(s, p3);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<RawMessage>> batches = ArgumentCaptor.forClass(List.class);
+        verify(bus, times(3)).publish(batches.capture());
+        assertThat(batches.getAllValues().get(0)).hasSize(3);
+        assertThat(batches.getAllValues().get(1)).hasSize(3);
+        assertThat(batches.getAllValues().get(2)).extracting(RawMessage::deviceKey).containsExactly("dev-2");
+        InOrder order = inOrder(p1, p2, p3);
+        order.verify(p1).acknowledge();
+        order.verify(p2).acknowledge();
+        order.verify(p3).acknowledge();
+        verify(p1, times(1)).acknowledge();
+        verify(p2, times(1)).acknowledge();
+        verify(p3, times(1)).acknowledge();
+        a.stop();
+    }
+
+    @Test
+    void sendsReliableAckOnlyAfterBusPublishAndBeforeAcknowledgeInABatch() {
+        List<String> events = new ArrayList<>();
+        BatchAckAdapter a = new BatchAckAdapter(bus, 3, events);
+        MqttProtocolAdapter.Session s = a.openSession();
+        when(bus.publish(anyList())).thenAnswer(inv -> {
+            events.add("bus");
+            return okResults(inv.getArgument(0));
+        });
+        Mqtt5Publish reliable1 = publishOf("conduit/pk/dev-1/up/property", "{\"id\":\"a-1\",\"ts\":1}");
+        Mqtt5Publish plain = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
+        Mqtt5Publish reliable2 = publishOf("conduit/pk/dev-3/up/property", "{\"id\":\"c-3\",\"ts\":3}");
+        recordAck(events, reliable1, "ack1");
+        recordAck(events, plain, "ack2");
+        recordAck(events, reliable2, "ack3");
+
+        a.onPublish(s, reliable1);
+        a.onPublish(s, plain);
+        assertThat(events).isEmpty(); // 批未提交前既无回执也无 ACK
+        a.onPublish(s, reliable2);
+
+        // 总线写入在前；带 id 的先回执再 ACK；不带 id 的只 ACK；顺序与到达顺序一致
+        assertThat(events).containsExactly("bus", "receipt:a-1", "ack1", "ack2", "receipt:c-3", "ack3");
+        a.stop();
+    }
+
+    /** 把 acknowledge 调用按名字记入共享事件列表。 */
+    private static void recordAck(List<String> events, Mqtt5Publish p, String name) {
+        doAnswer(inv -> {
+            events.add(name);
+            return null;
+        }).when(p).acknowledge();
+    }
+
+    /** 把业务回执按发送顺序记入共享事件列表，用于断言回执与总线写入、ACK 的先后。 */
+    private static final class BatchAckAdapter extends MqttProtocolAdapter {
+        private final List<String> events;
+
+        BatchAckAdapter(MessageBus bus, int batchSize, List<String> events) {
+            super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
+                    "conduit-", batchSize, Duration.ofSeconds(30)), bus,
+                    Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
+            this.events = events;
+        }
+
+        @Override
+        CompletableFuture<?> publishReliableAck(Session session, String topic, byte[] payload) {
+            String text = new String(payload, StandardCharsets.UTF_8);
+            events.add("receipt:" + text.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+            return CompletableFuture.completedFuture(null);
+        }
     }
 
     @Test

@@ -24,7 +24,7 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * V0.2-R 可靠性端到端测试（spec 第 4 节）：在独立临时环境中，10 台设备 × 50 条 QoS1 上报的发送中途分别
- * ①强制结束 server 数秒后重启；②强制结束主 transport；③两个 transport 都结束、设备继续上报约 20 秒后重启；④重启 EMQX 容器；
+ * ①强制结束 server 数秒后重启；②强制结束主 transport；③两个 transport 都结束、设备继续上报约 20 秒后重启；④重启 EMQX 容器（带 id 的可靠设备，靠设备重发不丢）；
  * ⑤可靠上报期间强杀 EMQX 后原地启动。
  * 每个场景断言：InfluxDB 中该产品恰好 500 条、死信流中没有该产品、消费组 conduit-server 没有待确认消息；结束时删除所建产品与设备。
  */
@@ -86,10 +86,10 @@ class ReliabilityE2EIT {
         });
     }
 
-    /** 场景 3：两个 transport 都被结束约 20 秒，由 EMQX 持久会话缓存消息，重启后补齐。 */
+    /** 场景 3：两个 transport 都被结束约 20 秒，由 EMQX 内存持久会话的 mqueue 缓存消息，重启后补齐。 */
     @Test
     @Order(3)
-    void killingEveryTransportIsCoveredByTheDurableSession() throws Exception {
+    void killingEveryTransportIsCoveredByTheSessionQueue() throws Exception {
         runScenario(3, () -> {
             env.killTransports();
             Thread.sleep(20_000);
@@ -98,27 +98,42 @@ class ReliabilityE2EIT {
         });
     }
 
-    /** 场景 4：重启 EMQX 容器，持久会话与积压消息保留，设备重连重发后数据不丢。 */
+    /**
+     * 场景 4：重启 EMQX 容器。内存持久会话不保留未投递消息，所以本场景用带 id 的可靠上报设备——
+     * 不丢由设备侧重发保证，而不是由 broker 的持久化保证（磁盘持久会话已于 2026-10-28 关闭）。
+     * 不带 id 的设备在本场景下会丢消息，这是设备接入契约中明确声明的缺口。
+     */
     @Test
     @Order(4)
-    void restartingEmqxKeepsTheSessionAndTheBacklog() throws Exception {
-        runScenario(4, () -> {
+    void restartingEmqxIsCoveredByReliableDeviceRetransmission() throws Exception {
+        runReliableScenario(4, () -> {
             env.restartEmqx();
             env.awaitLeaderConnected(Duration.ofMinutes(2));
         });
     }
 
-    /** 场景 5：强杀 broker 会丢失其内存尾部，但设备未收到业务回执时原样重发，最终仍恰好入库 500 条。 */
+    /** 场景 5：强杀 broker 会丢失其内存消息，但设备未收到业务回执时原样重发，最终仍恰好入库 500 条。 */
     @Test
     @Order(5)
     void reliableDevicesCoverAnEmqxProcessKill() throws Exception {
+        runReliableScenario(5, () -> {
+            env.killEmqxAndRestart();
+            env.awaitLeaderConnected(Duration.ofMinutes(2));
+        });
+    }
+
+    /**
+     * 可靠上报场景：建产品「e2e 场景 N 电表」与 10 台带 id 的设备，确认 100 条平台回执后注入故障，
+     * 等全部消息获得平台回执，再断言入库恰好、无死信、无待确认；无论成败都清理本场景数据。
+     */
+    private void runReliableScenario(int n, Fault fault) throws Exception {
         try (ConduitApiClient api = env.api()) {
             ReliableDeviceFleet started = null;
-            String productKey = api.findOrCreateProduct("e2e 场景 5 电表", "standard-json");
+            String productKey = api.findOrCreateProduct("e2e 场景 " + n + " 电表", "standard-json");
             try {
                 List<DeviceCredentials> devices = new ArrayList<>();
                 for (int i = 1; i <= DEVICES; i++) {
-                    devices.add(api.createDevice(productKey, "e2e 场景5 电表%02d".formatted(i)));
+                    devices.add(api.createDevice(productKey, "e2e 场景%d 电表%02d".formatted(n, i)));
                 }
                 ReliableDeviceFleet fleet = new ReliableDeviceFleet(env.mqttHost(), env.mqttPort(), devices,
                         MESSAGES_PER_DEVICE, INTERVAL);
@@ -126,10 +141,10 @@ class ReliabilityE2EIT {
                 CompletableFuture<Void> sending = fleet.start();
                 fleet.awaitAcknowledged(100, Duration.ofSeconds(60));
                 assertThat(sending.isDone()).as("the fault must land mid-stream").isFalse();
-                log.info("Scenario 5: killing EMQX after {} platform acknowledgements", fleet.acknowledged());
+                log.info("Scenario {}: injecting the fault after {} platform acknowledgements", n,
+                        fleet.acknowledged());
 
-                env.killEmqxAndRestart();
-                env.awaitLeaderConnected(Duration.ofMinutes(2));
+                fault.inject();
                 sending.get(5, TimeUnit.MINUTES);
 
                 await().atMost(Duration.ofMinutes(3)).pollInterval(Duration.ofSeconds(3))

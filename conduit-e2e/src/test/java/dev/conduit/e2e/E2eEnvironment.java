@@ -191,7 +191,11 @@ final class E2eEnvironment implements AutoCloseable {
                     .withCopyToContainer(Transferable.of(hocon.getBytes(StandardCharsets.UTF_8)),
                             "/opt/emqx/etc/base.hocon")
                     .withCopyToContainer(Transferable.of(acl), "/opt/emqx/etc/conduit-acl.conf")
-                    .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "true")
+                    // 与部署编排一致：关闭磁盘持久会话（积压下会静默楔死），改用内存持久会话；
+                    // max_inflight 必须等于 transport 的 batch-size（32）
+                    .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "false")
+                    .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
+                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "32")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")
@@ -202,7 +206,7 @@ final class E2eEnvironment implements AutoCloseable {
                 c.start();
                 emqxPort = hostPort;
                 containers.add(c);
-                log.info("EMQX is running on {}:{} with durable sessions", c.getHost(), hostPort);
+                log.info("EMQX is running on {}:{} with in-memory persistent sessions", c.getHost(), hostPort);
                 return c;
             } catch (RuntimeException e) {
                 last = e;

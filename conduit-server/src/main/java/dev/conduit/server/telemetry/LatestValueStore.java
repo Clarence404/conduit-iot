@@ -28,6 +28,8 @@ public class LatestValueStore {
     static final String LAST_FIELD = "__last";
     private static final RedisScript<Long> UPDATE =
             RedisScript.of(new ClassPathResource("redis/latest-update.lua"), Long.class);
+    /** 脚本文本缓存：ResourceScriptSource 每次取用都会重读 classpath 资源，而这是入库热路径。 */
+    private static final byte[] SCRIPT_TEXT = UPDATE.getScriptAsString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
@@ -94,13 +96,15 @@ public class LatestValueStore {
             commands.add(keysAndArgs);
         }
         // pipeline 内无法按 NOSCRIPT 回退到 EVAL，所以先加载一次脚本（幂等、每批一次）
-        redis.execute((RedisCallback<String>) c -> c.scriptingCommands().scriptLoad(utf8(UPDATE.getScriptAsString())));
+        redis.execute((RedisCallback<String>) c -> c.scriptingCommands().scriptLoad(SCRIPT_TEXT));
         List<Object> results = redis.executePipelined((RedisCallback<Object>) connection -> {
             for (byte[][] keysAndArgs : commands) {
                 connection.scriptingCommands().evalSha(UPDATE.getSha1(), ReturnType.INTEGER, 1, keysAndArgs);
             }
             return null;
         });
+        // 防御：Spring Data Redis 在任一命令出错时抛 RedisPipelineException（Lettuce / Jedis 皆然），
+        // 正常不会把异常放进结果里；但驱动行为不在本项目控制内，万一以结果形式返回也必须失败而不是静默通过
         for (Object r : results) {
             if (r instanceof Throwable t) {
                 throw new IllegalStateException("Latest value pipeline command failed", t);

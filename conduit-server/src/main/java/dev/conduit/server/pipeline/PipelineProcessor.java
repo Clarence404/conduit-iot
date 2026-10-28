@@ -195,7 +195,7 @@ public class PipelineProcessor {
     }
 
     /**
-     * 批量写 InfluxDB，再一次提交最新值、补写 FIELD_REJECTED 记录并 ACK。、补写 FIELD_REJECTED 记录并 ACK。
+     * 批量写 InfluxDB，再一次提交最新值、补写 FIELD_REJECTED 记录并 ACK。
      * InfluxDB 拒绝的数据点（字段类型冲突）对应的投递进 FIELD_TYPE_CONFLICT；
      * 单条收尾阶段的意外错误只让该条进 PROCESSING_ERROR。其余投递在写库成功后才一次性 ACK（至少一次投递）。
      */

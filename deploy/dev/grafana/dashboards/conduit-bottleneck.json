@@ -133,7 +133,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "EMQX 会话队列",
-      "description": "EMQX 为 transport 会话排队的消息数，容量 10 万；指标名未经验证，transport 的会话监控日志是权威来源。",
+      "description": "transport 会话监控经 EMQX REST API 采样并导出的队列深度（EMQX 自带 Prometheus 端点不提供）。队列水位=len/max，逼近 100% 将发生溢出丢弃；仅主实例有数据，备实例或采样失败时为空（NaN）。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -154,7 +154,24 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "队列水位 %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -177,8 +194,17 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "emqx_messages_queued",
-          "legendFormat": "mqueue 长度（指标名未验证）"
+          "expr": "conduit_transport_session_mqueue_len",
+          "legendFormat": "队列深度"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "conduit_transport_session_mqueue_len / conduit_transport_session_mqueue_max * 100",
+          "legendFormat": "队列水位 %"
         }
       ]
     },
@@ -553,7 +579,7 @@
       "id": 13,
       "type": "timeseries",
       "title": "容器 CPU（核）",
-      "description": "1 = 占满一个核。",
+      "description": "1 = 占满一个核。 依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -606,7 +632,7 @@
       "id": 14,
       "type": "timeseries",
       "title": "容器内存（工作集）",
-      "description": "",
+      "description": "依赖 cadvisor：需启用 metrics-cadvisor profile 并取消 prometheus.yml.tpl 中抓取任务的注释。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

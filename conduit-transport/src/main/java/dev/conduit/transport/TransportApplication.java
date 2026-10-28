@@ -69,9 +69,10 @@ public class TransportApplication {
     /** 会话监控；关闭时不注册，健康检查退回只看选主与连接状态。 */
     @Bean
     @ConditionalOnProperty(prefix = "conduit.transport.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
-    SessionMonitor sessionMonitor(SessionMonitorProperties props, MqttTransportProperties mqtt) {
+    SessionMonitor sessionMonitor(SessionMonitorProperties props, MqttTransportProperties mqtt,
+                                  io.micrometer.core.instrument.MeterRegistry registry) {
         return new SessionMonitor(new EmqxSessionClient(props, mqtt.clientId()),
-                props.stallSamples(), props.heapLimit().toBytes(), mqtt.batchSize());
+                props.stallSamples(), props.heapLimit().toBytes(), mqtt.batchSize(), registry);
     }
 
     /**

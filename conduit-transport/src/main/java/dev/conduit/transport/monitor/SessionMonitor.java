@@ -1,10 +1,14 @@
 package dev.conduit.transport.monitor;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -18,6 +22,10 @@ import java.util.function.Supplier;
  * <p>只有投递停滞会置为不健康（系统停摆）；其余各项只告警，避免健康检查变得没人信。
  * 采样偶发失败不改变健康结论，只标记 pollFailed——监控本身的抖动不应制造故障；但连续失败达到
  * stallSamples 次（key 配错、EMQX 不可达或接口挂起）则置为不健康：无法采样的监控不能继续报「健康」。
+ *
+ * <p>同时把每次成功采样的值发布为 Micrometer 仪表（{@code conduit.transport.session.*}），因为 EMQX 自带的
+ * Prometheus 端点不提供单会话队列深度。仪表只反映「最近一次成功采样」：采样失败、或本实例不再是主实例
+ * （{@link #reset()}）时一律置为 NaN，绝不停留在旧值上，否则一条陈旧平线会被误读为系统正常。
  */
 public class SessionMonitor {
 
@@ -41,18 +49,51 @@ public class SessionMonitor {
     private long lastSuccessMillis;
     private volatile Verdict verdict = new Verdict(true, "not sampled yet", Map.of());
 
+    /** 仪表当前值；初值与「无数据」均为 NaN。键为仪表名。 */
+    private final Map<String, AtomicReference<Double>> gaugeValues = new LinkedHashMap<>();
+
+    /**
+     * 不发布仪表的便捷构造（仪表注册到一个丢弃型注册表）。
+     */
+    public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
+                          long heapLimitBytes, int batchSize) {
+        this(source, stallSamples, heapLimitBytes, batchSize, new SimpleMeterRegistry());
+    }
+
     /**
      * @param source         采样来源（生产环境为 EMQX REST 客户端）
      * @param stallSamples   投递总数连续多少次采样不变才判定停滞
      * @param heapLimitBytes 配置的单连接堆上限字节数，用于计算内存预警阈值
      * @param batchSize      transport 攒批提交的批大小，不得大于 EMQX 的 inflight 窗口；窗口应为批的若干倍
+     * @param registry       仪表注册表；会话仪表注册其中
      */
     public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
-                          long heapLimitBytes, int batchSize) {
+                          long heapLimitBytes, int batchSize, MeterRegistry registry) {
         this.source = source;
         this.stallSamples = stallSamples;
         this.heapLimitBytes = heapLimitBytes;
         this.batchSize = batchSize;
+        for (String name : GAUGE_NAMES) {
+            AtomicReference<Double> ref = new AtomicReference<>(Double.NaN);
+            gaugeValues.put(name, ref);
+            Gauge.builder(name, ref, AtomicReference::get).register(registry);
+        }
+    }
+
+    /** 全部会话仪表名（点号风格，Prometheus 端自动转下划线）。 */
+    static final java.util.List<String> GAUGE_NAMES = java.util.List.of(
+            "conduit.transport.session.mqueue.len", "conduit.transport.session.mqueue.max",
+            "conduit.transport.session.mqueue.dropped", "conduit.transport.session.inflight",
+            "conduit.transport.session.inflight.max", "conduit.transport.session.sent",
+            "conduit.transport.session.heap.bytes", "conduit.transport.session.poll.failures");
+
+    private void setGauge(String name, double value) {
+        gaugeValues.get(name).set(value);
+    }
+
+    /** 把所有仪表置为 NaN（无数据）。 */
+    private void clearGauges() {
+        gaugeValues.values().forEach(r -> r.set(Double.NaN));
     }
 
     /** 当前结论；从未采样过时为健康（偶发失败不翻转，连续失败达阈值才翻转）。 */
@@ -71,6 +112,9 @@ public class SessionMonitor {
             now = source.get();
         } catch (RuntimeException e) {
             consecutiveFailures++;
+            // 失败后不保留旧值：数据类仪表置 NaN，只有失败计数有意义
+            clearGauges();
+            setGauge("conduit.transport.session.poll.failures", consecutiveFailures);
             // 只保留与失败相关的字段：旧的 mqueueLen / sendMsg 等是陈旧值，混在一起会被误当成当前值
             Map<String, Object> failed = new LinkedHashMap<>();
             failed.put("pollFailed", true);
@@ -90,6 +134,14 @@ public class SessionMonitor {
         }
         consecutiveFailures = 0;
         lastSuccessMillis = System.currentTimeMillis();
+        setGauge("conduit.transport.session.mqueue.len", now.mqueueLen());
+        setGauge("conduit.transport.session.mqueue.max", now.mqueueMax());
+        setGauge("conduit.transport.session.mqueue.dropped", now.mqueueDropped());
+        setGauge("conduit.transport.session.inflight", now.inflightCnt());
+        setGauge("conduit.transport.session.inflight.max", now.inflightMax());
+        setGauge("conduit.transport.session.sent", now.sendMsg());
+        setGauge("conduit.transport.session.heap.bytes", (double) now.heapWords() * BYTES_PER_WORD);
+        setGauge("conduit.transport.session.poll.failures", 0);
 
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("consecutiveFailures", 0);
@@ -170,6 +222,7 @@ public class SessionMonitor {
         unchangedSendSamples = 0;
         consecutiveFailures = 0;
         lastSuccessMillis = 0;
+        clearGauges();
         verdict = new Verdict(true, "not sampled yet", Map.of());
     }
 

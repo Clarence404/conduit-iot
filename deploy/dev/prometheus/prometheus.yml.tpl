@@ -40,9 +40,11 @@ scrape_configs:
     static_configs:
       - targets: ["node-exporter:9100"]
 
-  - job_name: cadvisor
-    static_configs:
-      - targets: ["cadvisor:8080"]
+  # cadvisor 默认不启动（镜像在 gcr.io，部分网络不可达），目标永久 down 会让人习惯性忽略告警，故默认注释。
+  # 启用 metrics-cadvisor profile 时必须同时取消下面三行的注释。
+  # - job_name: cadvisor
+  #   static_configs:
+  #     - targets: ["cadvisor:8080"]
 
   - job_name: redis
     static_configs:

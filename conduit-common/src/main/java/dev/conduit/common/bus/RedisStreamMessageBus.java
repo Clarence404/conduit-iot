@@ -19,6 +19,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,40 @@ public class RedisStreamMessageBus implements MessageBus {
     @Override
     public String publish(RawMessage message) {
         return xadd(props.streamKey(), RawMessageCodec.toFields(message), props.maxLen());
+    }
+
+    /**
+     * 管道提交整批 XADD：一次网络往返，吞吐不再受「每条消息一次往返」的限制。
+     * 管道中某条失败不影响其他条，所以逐条映射结果；返回值与入参等长同序。
+     */
+    @Override
+    public List<PublishResult> publish(List<RawMessage> messages) {
+        if (messages.isEmpty()) {
+            return List.of();
+        }
+        List<Object> raw = redis.executePipelined((RedisCallback<Object>) c -> {
+            for (RawMessage message : messages) {
+                Map<byte[], byte[]> fields = new LinkedHashMap<>();
+                RawMessageCodec.toFields(message).forEach((k, v) -> fields.put(bytes(k), bytes(v)));
+                c.streamCommands().xAdd(
+                        StreamRecords.rawBytes(fields).withStreamKey(bytes(props.streamKey())),
+                        XAddOptions.maxlen(props.maxLen()).approximateTrimming(true));
+            }
+            return null;
+        });
+        List<PublishResult> results = new ArrayList<>(messages.size());
+        for (int i = 0; i < messages.size(); i++) {
+            Object value = i < raw.size() ? raw.get(i) : null;
+            if (value instanceof RecordId id) {
+                results.add(PublishResult.ok(id.getValue()));
+            } else if (value instanceof Exception e) {
+                results.add(PublishResult.failed(new IllegalStateException("XADD failed", e)));
+            } else {
+                results.add(PublishResult.failed(
+                        new IllegalStateException("XADD returned no id for " + props.streamKey())));
+            }
+        }
+        return results;
     }
 
     /** XGROUP CREATE（从 0-0 起、MKSTREAM），忽略 BUSYGROUP（组已存在），其他错误原样抛出。 */

@@ -64,6 +64,31 @@ class RedisStreamMessageBusIT {
     }
 
     @Test
+    void publishesBatchInOrderAndReturnsOneResultPerMessage() {
+        List<RawMessage> messages = List.of(
+                new RawMessage("pk", "dev-1", MessageType.PROPERTY, "{\"a\":1}".getBytes(StandardCharsets.UTF_8),
+                        1_000L, Map.of("topic", "t1")),
+                new RawMessage("pk", "dev-2", MessageType.PROPERTY, "{\"a\":2}".getBytes(StandardCharsets.UTF_8),
+                        2_000L, Map.of("topic", "t2")));
+
+        List<PublishResult> results = bus.publish(messages);
+
+        assertThat(results).hasSize(2);
+        assertThat(results).allMatch(PublishResult::succeeded);
+        // 条目 id 单调递增，确认写入顺序与入参一致
+        assertThat(results.get(0).id()).isLessThan(results.get(1).id());
+
+        bus.ensureGroup("g-batch");
+        List<Delivery> read = bus.read("g-batch", "c1", 10, Duration.ofSeconds(1));
+        assertThat(read).extracting(d -> d.message().deviceKey()).containsExactly("dev-1", "dev-2");
+    }
+
+    @Test
+    void emptyBatchPublishesNothing() {
+        assertThat(bus.publish(List.of())).isEmpty();
+    }
+
+    @Test
     void ensureGroupIsIdempotent() {
         bus.ensureGroup(GROUP);
         bus.ensureGroup(GROUP);

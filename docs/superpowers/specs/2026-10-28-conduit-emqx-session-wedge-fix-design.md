@@ -67,7 +67,7 @@ List<PublishResult> publish(List<RawMessage> messages);
 
 `MqttProtocolAdapter` 的投递线程改为攒批：
 
-- 收到消息后入本地队列，满足**条数达到 `conduit.transport.bus.batch-size`（默认 64）** 或 **等待达到 `conduit.transport.bus.batch-delay`（默认 5ms）** 两者之一即提交
+- 收到消息后入本地队列，满足**条数达到 `conduit.transport.mqtt.batch-size`（默认 64）** 或 **等待达到 `conduit.transport.mqtt.batch-delay`（默认 5ms）** 两者之一即提交
 - 提交成功的条目各自 `acknowledge()`，属性上报再按原规则发业务回执
 - 提交失败的条目**不 ACK**，按现有 `publishWithRetry` 的退避规则整批重试；会话停止时放弃且不 ACK
 
@@ -97,6 +97,7 @@ transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（�
 | 会话进程内存逼近上限 | `heap_size × 8` ≥ 堆限的 70%（见 3.1） | WARN |
 | 投递停滞 | `inflight_cnt == inflight_max` 且 `mqueue_len > 0` 且 **`send_msg`** 连续 `conduit.transport.monitor.stall-samples`（默认 6，约 3 分钟）不变 | **健康检查 DOWN** + ERROR |
 | 配置漂移 | `durable` 不为 `false` | WARN（持久会话被意外启用） |
+| 批大小超过窗口 | `batch-size > inflight_max` | WARN（批永远攒不满、每批白等满 batch-delay）。**更正：** 原判据为「不相等即告警」、规则为「必须相等」，已被 2026-10-28 实测否定（见 `docs/test-reports/2026-10-28-throughput-ab.md`）；正确规则是 `batch-size ≤ max_inflight` 且窗口为批的若干倍（默认 1024/64），不相等是正确配置。明细同时给出 `inflightToBatchRatio`（窗口/批，即流水线深度） |
 
 投递总数的字段是 **`send_msg`**（不是 CLI 里的 `delivered_msgs`），队列上限是 `mqueue_max`，两者都由 API 直接给出，容量阈值无需另行配置。
 

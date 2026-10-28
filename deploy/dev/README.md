@@ -1,6 +1,6 @@
 # Conduit 开发环境包（deploy/dev）
 
-PostgreSQL 16.8、Redis 7.4.2、InfluxDB 3.12.0-core、InfluxDB 3 Explorer 1.11.0、EMQX 5.10.5（磁盘持久会话）。应用在开发机的 IDE 中运行（见仓库 README「开发」）。
+PostgreSQL 16.8、Redis 7.4.2、InfluxDB 3.12.0-core、InfluxDB 3 Explorer 1.11.0、EMQX 5.10.5（内存持久会话）。应用在开发机的 IDE 中运行（见仓库 README「开发」）。
 
 Redis 使用 AOF 和 `appendfsync always`，并显式保持 `no-appendfsync-on-rewrite no`，写命令回复前执行刷盘。默认 Broker 镜像是 5.10.5；其持久化仍有异步缓冲，不能据此承诺 Broker 崩溃不丢已确认消息。故障验证与性能记录见 [`docs/durability-validation.md`](../../docs/durability-validation.md)。
 

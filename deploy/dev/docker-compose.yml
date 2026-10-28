@@ -1,7 +1,8 @@
 # 开发环境包（deploy/dev）：PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX。
 # 应用（server、transport、模拟器、前端）在开发机的 IDE 中运行，EMQX 的鉴权回调打到开发机上的 server。
 # 用法：把本目录放到 Linux 宿主机上，cp .env.example .env 并修改口令与 CONDUIT_AUTH_URL，然后 docker compose up -d。
-# 独立部署包 deploy/standalone 用 extends 引用这里的 5 个服务：修改本文件会同时影响独立部署包，两者项目名与数据卷相同。
+# 独立部署包 deploy/standalone 用 extends 引用这里的 5 个基础服务与 metrics 监控栈：修改本文件会同时影响独立部署包，两者项目名与数据卷相同。
+# 监控栈（Prometheus + Grafana 等 5 个服务）全部在 compose profile「metrics」下：不加 --profile metrics 时一个容器都不启动。
 name: conduit
 
 services:
@@ -57,7 +58,7 @@ services:
       # 真正的解法是分段查询，排在 V0.3-E。
       INFLUXDB3_QUERY_FILE_LIMIT: ${INFLUX_QUERY_FILE_LIMIT:-5000}
     # 内存上限：长范围查询的内存随扫描文件数增长，不限制时一次失控查询会拖垮整台宿主机上的其他服务
-    mem_limit: ${INFLUX_MEM_LIMIT:-3g}
+    mem_limit: ${INFLUX_MEM_LIMIT:-2g}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${INFLUX_PORT:-8096}:8181"
     volumes:
@@ -100,24 +101,45 @@ services:
         sed -e "s|__CONDUIT_INTERNAL_TOKEN__|$$(esc "$${CONDUIT_INTERNAL_TOKEN}")|"
         -e "s|__CONDUIT_AUTH_URL__|$$(esc "$${CONDUIT_AUTH_URL}")|"
         /conduit/base.hocon.tpl > /opt/emqx/etc/base.hocon
+        && sed -e "s|__EMQX_API_KEY__|$$(esc "$${CONDUIT_EMQX_API_KEY}")|"
+        -e "s|__EMQX_API_SECRET__|$$(esc "$${CONDUIT_EMQX_API_SECRET}")|"
+        /conduit/api-key.bootstrap.tpl > /opt/emqx/data/api-key.bootstrap
         && exec /usr/bin/docker-entrypoint.sh /opt/emqx/bin/emqx foreground
     environment:
       CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN:?CONDUIT_INTERNAL_TOKEN is required}
       # 鉴权回调地址（必填）：开发时为开发机上 server 的地址 http://<dev-host>:8080；独立部署包固定为 http://conduit-server:8080
       CONDUIT_AUTH_URL: ${CONDUIT_AUTH_URL:?CONDUIT_AUTH_URL is required}
+      # transport 读取会话指标用的只读 API key（EMQX 5 的 REST API 不接受控制台账号密码），经 bootstrap 文件下发
+      EMQX_API_KEY__BOOTSTRAP_FILE: /opt/emqx/data/api-key.bootstrap
+      CONDUIT_EMQX_API_KEY: ${CONDUIT_EMQX_API_KEY:?CONDUIT_EMQX_API_KEY is required}
+      CONDUIT_EMQX_API_SECRET: ${CONDUIT_EMQX_API_SECRET:?CONDUIT_EMQX_API_SECRET is required}
       EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME:-admin}
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD is required}
-      # 磁盘持久会话（V0.2-R）：transport 离线期间的消息写入磁盘，保留 1 天（durable_sessions.message_retention_period 默认值）；
-      # 单节点磁盘持久会话使用 singleton。固定节点名：默认按容器 IP 命名，IP 变化会换数据目录、丢失持久会话
-      EMQX_DURABLE_SESSIONS__ENABLE: "true"
+      # 内存持久会话（2026-10-28）：磁盘持久会话在积压下会静默楔死且只能丢弃会话恢复，已关闭。
+      # transport 离线期间的消息进内存队列 mqueue，重连后补发；EMQX 重启则不保留——
+      # 端到端不丢由设备侧的消息 id + 业务回执负责，见 docs/device-integration.md。
+      EMQX_DURABLE_SESSIONS__ENABLE: "false"
+      # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
+      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警
+      EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-100000}
+      # 在途窗口：EMQX 最多允许多少条已投递未确认的消息。transport 的待提交批就被它硬限，
+      # 规则是 conduit.transport.mqtt.batch-size <= 本值，且本值应为批的若干倍：相等时是停等协议
+      # （发 N 条、等全部确认、再发 N 条），窗口远大于批才能流水线化。实测 1024/64 约 4000 条/秒，32/32 约 2600。
+      # 在途窗口。必须显著小于 force_shutdown.max_mailbox_size（默认 1000）：
+      # 在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 mailbox_overflow 强杀
+      # （2026-10-28 实测：配 1024 时负载下必然被杀，且先于队列溢出与堆超限发生）
+      EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-512}
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
+      # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录
       EMQX_NODE__NAME: emqx@127.0.0.1
-      # 持久会话积压恢复可超过默认 32MB；仍保留单连接内存保护。
+      # 单连接进程堆上限（实际按 1.5 倍触发，即 384MB）。mqueue 驻留在会话进程堆内，
+      # 与本项共享同一上限：调大 MAX_MQUEUE_LEN 前必须确认 heap_size 余量，不得反过来上调本项
       EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}
     volumes:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读
       - ./emqx/base.hocon.tpl:/conduit/base.hocon.tpl:ro
+      - ./emqx/api-key.bootstrap.tpl:/conduit/api-key.bootstrap.tpl:ro
       - ./emqx/acl.conf:/opt/emqx/etc/conduit-acl.conf:ro
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${MQTT_PORT:-1883}:1883"
@@ -129,9 +151,117 @@ services:
       retries: 30
     restart: unless-stopped
 
+  # ───────────── 性能观测栈（profile: metrics，默认不启动）─────────────
+  # 启用：docker compose --profile metrics up -d；停用：docker compose --profile metrics stop <服务> 或 down。
+  # 全部设 mem_limit：压测机可用内存很紧，监控栈只在需要观测时才开，且不得失控吃内存。
+
+  prometheus:
+    profiles: ["metrics"]
+    image: prom/prometheus:v3.5.0
+    # 抓取配置里含 EMQX API key，所以像 emqx 一样启动时由模板渲染到容器内 /tmp，不把凭据写进挂载的文件
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        esc() { printf '%s' "$$1" | sed 's/[&|\\]/\\&/g'; };
+        sed -e "s|__EMQX_API_KEY__|$$(esc "$${CONDUIT_EMQX_API_KEY}")|"
+        -e "s|__EMQX_API_SECRET__|$$(esc "$${CONDUIT_EMQX_API_SECRET}")|"
+        -e "s|__CONDUIT_INTERNAL_TOKEN__|$$(esc "$${CONDUIT_INTERNAL_TOKEN}")|"
+        /conduit/prometheus.yml.tpl > /tmp/prometheus.yml
+        && exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=$${PROMETHEUS_RETENTION} --storage.tsdb.retention.size=$${PROMETHEUS_RETENTION_SIZE}
+    environment:
+      CONDUIT_EMQX_API_KEY: ${CONDUIT_EMQX_API_KEY:-}
+      CONDUIT_EMQX_API_SECRET: ${CONDUIT_EMQX_API_SECRET:-}
+      # 抓取 conduit-server 的 /internal/metrics 用，与 EMQX 鉴权回调同一个内部令牌
+      CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN:-}
+      # 保留期与磁盘上限取先到者：压测机磁盘只有 16 GB
+      PROMETHEUS_RETENTION: ${PROMETHEUS_RETENTION:-7d}
+      PROMETHEUS_RETENTION_SIZE: ${PROMETHEUS_RETENTION_SIZE:-2GB}
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus/prometheus.yml.tpl:/conduit/prometheus.yml.tpl:ro
+    # Prometheus 没有登录页：默认只绑本机，不跟随 BIND_ADDR；看面板走 Grafana
+    ports:
+      - "${PROMETHEUS_BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["metrics"]
+    image: grafana/grafana:11.6.1
+    # 口令为空时拒绝启动：Grafana 空口令会回落到默认口令 admin，而端口可能对内网开放
+    entrypoint: ["/bin/sh", "-c", '[ -n "$$GF_SECURITY_ADMIN_PASSWORD" ] || { echo "GRAFANA_ADMIN_PASSWORD 未设置，拒绝以默认口令启动" >&2; exit 1; }; exec /run.sh']
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # 不用 :? 必填检查：compose 会对未启用 profile 的服务也做插值，必填会让没开监控栈的人也起不来。
+      # 改由上面的 entrypoint 在容器启动时检查，留空则启动失败
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    mem_limit: ${GRAFANA_MEM_LIMIT:-256m}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  node-exporter:
+    # 宿主机 CPU / 内存 / 磁盘 I/O。只在 compose 网络内被抓取，不对外开端口
+    profiles: ["metrics"]
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host", "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"]
+    pid: host
+    mem_limit: ${NODE_EXPORTER_MEM_LIMIT:-64m}
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
+  cadvisor:
+    # 每容器 CPU / 内存。需要只读挂载宿主机的 cgroup 与 docker 目录。
+    # 单独放在 metrics-cadvisor profile 下：镜像托管在 gcr.io，部分网络环境不可达
+    # （压测机实测 connection refused），而 profile 内任一镜像拉取失败会让整组都起不来。
+    # 能访问 gcr.io 时用 --profile metrics --profile metrics-cadvisor 一并启动；
+    # 不能访问时只用 --profile metrics，代价是没有非 JVM 容器（EMQX/Redis/PG/InfluxDB）的
+    # CPU 与内存曲线，宿主机级指标仍由 node-exporter 提供。
+    profiles: ["metrics-cadvisor"]
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    command: ["--docker_only=true", "--housekeeping_interval=15s", "--store_container_labels=false",
+              "--whitelisted_container_labels=com.docker.compose.service"]
+    mem_limit: ${CADVISOR_MEM_LIMIT:-192m}
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+
+  redis-exporter:
+    # Redis ops、AOF、内存，以及上行流与死信流的长度 / 消费组积压
+    profiles: ["metrics"]
+    image: oliver006/redis_exporter:v1.74.0
+    command:
+      - --redis.addr=redis://redis:6379
+      - --check-single-streams=conduit:stream:up,conduit:stream:dead
+    mem_limit: ${REDIS_EXPORTER_MEM_LIMIT:-64m}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pg-data:
   redis-data:
   influx3-data:
   influx-explorer-data:
   emqx-data:
+  prometheus-data:
+  grafana-data:

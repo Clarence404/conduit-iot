@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.awaitility.Awaitility.await;
 
 /**
- * e2e 的独立临时环境：Testcontainers 在 Docker 宿主机上起 PostgreSQL / Redis / InfluxDB / EMQX（磁盘持久会话、单节点，
+ * e2e 的独立临时环境：Testcontainers 在 Docker 宿主机上起 PostgreSQL / Redis / InfluxDB / EMQX（内存持久会话、单节点，
  * 鉴权回调指向 E2E_DEV_HOST 上的 server），测试机本地以 jar 启动 1 个 server 与 2 个 transport 连接它们。
  * 提供故障注入（强制结束进程、重启 EMQX 容器）与检查（InfluxDB 计数、死信、待确认数）。
  * 口令与 token 每次运行随机生成，只存在于内存与子进程环境变量中；结束时进程与容器全部清理。
@@ -163,6 +163,8 @@ final class E2eEnvironment implements AutoCloseable {
             transportEnv.put("EMQX_PORT", String.valueOf(emqxPort));
             transportEnv.put("TRANSPORT_MQTT_USERNAME", "conduit-transport");
             transportEnv.put("TRANSPORT_MQTT_PASSWORD", transportPassword);
+            // e2e 验证接入可靠性，不验证会话监控（需 EMQX API key）；名字必须是 TRANSPORT_*，CONDUIT_* 会被 AppProcess 清掉
+            transportEnv.put("TRANSPORT_MONITOR_ENABLED", "false");
             transportEnv.put("CONDUIT_LOG_DIR", logDir.resolve(name + "/logs").toString());
             AppProcess transport = new AppProcess(name, transportJar, transportEnv, freePort(), logDir.resolve(name));
             transports.add(transport);
@@ -172,7 +174,7 @@ final class E2eEnvironment implements AutoCloseable {
     }
 
     /**
-     * 启动 EMQX：配置由部署模板渲染，持久会话与固定节点名同 compose；宿主机端口在 20000～29999 中随机固定
+     * 启动 EMQX：配置由部署模板渲染，内存持久会话（关闭磁盘持久会话）与固定节点名同 compose；宿主机端口在 20000～29999 中随机固定
      * （docker restart 后端口不变），被占用时换端口重试，最多 5 次。
      */
     private GenericContainer<?> startEmqx() throws IOException {
@@ -189,7 +191,11 @@ final class E2eEnvironment implements AutoCloseable {
                     .withCopyToContainer(Transferable.of(hocon.getBytes(StandardCharsets.UTF_8)),
                             "/opt/emqx/etc/base.hocon")
                     .withCopyToContainer(Transferable.of(acl), "/opt/emqx/etc/conduit-acl.conf")
-                    .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "true")
+                    // 与部署编排一致：关闭磁盘持久会话（积压下会静默楔死），改用内存持久会话；
+                    // max_inflight 须不小于 transport 的 batch-size（默认 64），且宜为其若干倍：与部署默认 1024/64 一致
+                    .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "false")
+                    .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
+                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "512")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")
@@ -200,7 +206,7 @@ final class E2eEnvironment implements AutoCloseable {
                 c.start();
                 emqxPort = hostPort;
                 containers.add(c);
-                log.info("EMQX is running on {}:{} with durable sessions", c.getHost(), hostPort);
+                log.info("EMQX is running on {}:{} with in-memory persistent sessions", c.getHost(), hostPort);
                 return c;
             } catch (RuntimeException e) {
                 last = e;

@@ -19,6 +19,9 @@
 - 先写失败测试（TDD）：每个任务都是「写测试 → 跑测试确认失败 → 实现 → 跑测试确认通过 → 提交」。
 - 提交用 Conventional Commits，**不加任何 AI 署名行**。
 - 不把 IP、本机路径、用户名、口令、token 写进受版本控制的文件；`.env.example` 只给占位值。
+- **`conduit.transport.mqtt.batch-size ≤ EMQX 的 `mqtt.max_inflight`，且窗口应为批的若干倍**（默认 1024 / 64）。
+  - **更正（2026-10-28 实测）：** 本计划最初写的是「必须相等，均取 32」，该规则**已被吞吐对照实验推翻**（`docs/test-reports/2026-10-28-throughput-ab.md` 第 2 节）：相等的 32/32（2,605 条/秒）与 256/256（3,309）都不是最优，1024/64 达 4,000 条/秒。相等时是停等协议（EMQX 发 N 条、等全部确认、再发 N 条），窗口远大于批才能流水线化。
+  - 只有「批大于窗口则批永远攒不满、每批白等满 `batch-delay`」这半边成立。两处配置的注释都要写明这条耦合。
 - 批大小「不限」的既有约定不变：`conduit.pipeline.batch-size` 为 `-1` 时表示不限，但 `XPENDING` 的 COUNT 必须为正数（`RedisStreamMessageBus.DEFAULT_CLAIM_COUNT = 1000`）。本计划不改动该路径。
 - 遥测语义不变：null/缺省表示未上报，0 是有效值；禁止缺测补零。
 - 构建命令：`mvn -B -o verify`。只跑单模块时必须先 `mvn -pl conduit-common install`，否则会用到本地仓库里的旧 jar。
@@ -872,6 +875,79 @@ Expected: PASS，8 项全通过。
 git add conduit-transport/src/main/java/dev/conduit/transport/monitor/ conduit-transport/src/test/java/dev/conduit/transport/monitor/SessionMonitorTest.java
 git commit -m "feat(transport): 新增 EMQX 会话健康判定"
 ```
+
+---
+
+#### 追加要求
+### 追加第 6 条判据：批大小大于 inflight 窗口才告警
+
+> **更正（2026-10-28）：** 本节最初的判据是「`batchSize != inflightMax` 就告警」，已被实测否定——不相等恰恰是正确配置，该判据会把 1024/64 报成异常。现改为只在「批大于窗口」时告警，并把比值写入明细。下文已按新规则重写。
+
+**背景：** transport 攒批提交到消息总线，而「待提交条目数」恰好等于「EMQX 侧未确认的在途消息数」，后者被 `max_inflight` 硬限。所以：
+
+- `batch-size > inflight_max` → 批**永远攒不满**，每一批都要白等满 `batch-delay`（5ms），吞吐被无谓拉低
+- `batch-size == inflight_max` → 停等协议，流水线深度为 1（可用，但不是最优）
+- `batch-size << inflight_max` → 提交当前批时下一批已在途，深度为 `inflight_max / batch-size`（实测最优）
+
+正确规则是 `batch-size ≤ inflight_max`，窗口应为批的若干倍。这个耦合关系写在两处配置的注释里，但很容易被人只改一边，所以用监控把「批大于窗口」钉死，并用 `inflightToBatchRatio` 让流水线深度可观测。
+
+**改动：**
+
+1. `SessionMonitor` 的构造器**增加第 4 个参数** `int batchSize`：
+
+```java
+    /**
+     * @param source         采样来源（生产环境为 EMQX REST 客户端）
+     * @param stallSamples   投递总数连续多少次采样不变才判定停滞
+     * @param heapLimitBytes 配置的单连接堆上限字节数，用于计算内存预警阈值
+     * @param batchSize      transport 攒批提交的批大小，不得大于 EMQX 的 inflight 窗口，窗口宜为批的若干倍（见下）
+     */
+    public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
+                          long heapLimitBytes, int batchSize) {
+```
+
+2. 在 `sample()` 的告警部分增加一条（放在 `durable` 那条之后）：
+
+```java
+        // 规则是 batchSize <= inflightMax，窗口宜为批的若干倍：只有批大于窗口才告警（批永远攒不满），
+        // 不相等本身是正确配置。比值写入明细，使流水线深度可观测。
+        if (now.inflightMax() > 0) {
+            details.put("inflightToBatchRatio", (double) now.inflightMax() / batchSize);
+            if (batchSize > now.inflightMax()) {
+                details.put("batchSizeExceedsInflight", now.inflightMax());
+                log.warn("transport batch size {} exceeds the EMQX inflight window {}: "
+                        + "batches never fill; keep batch-size <= max_inflight",
+                        batchSize, now.inflightMax());
+            }
+        }
+```
+
+3. 本条**只告警，不影响健康状态**——与丢弃、队列水位、内存、配置漂移同级；只有「投递停滞」才置 DOWN。
+
+4. 在 `SessionMonitorTest` 中增加两个用例：
+
+```java
+    @Test
+    void warnsOnlyWhenBatchSizeExceedsTheInflightWindow() {
+        // 批大小 64、窗口 32：批永远攒不满，每批白等满 batch-delay
+        SessionMonitor m = new SessionMonitor(
+                () -> snapshot(0, 0, 100_000, 0, 32, 1_000, 1_000, false), 6, 256L * 1024 * 1024, 64);
+        m.sample();
+        assertThat(m.verdict().details()).containsEntry("batchSizeExceedsInflight", 32L);
+        assertThat(m.verdict().healthy()).isTrue();
+    }
+
+    @Test
+    void doesNotWarnWhenWindowIsSeveralTimesTheBatch() {
+        SessionMonitor m = new SessionMonitor(
+                () -> snapshot(0, 0, 100_000, 0, 1024, 1_000, 1_000, false), 6, 256L * 1024 * 1024, 64);
+        m.sample();
+        assertThat(m.verdict().details()).doesNotContainKey("batchSizeExceedsInflight");
+        assertThat(m.verdict().details()).containsEntry("inflightToBatchRatio", 16.0);
+    }
+```
+
+5. 上文 brief 中原有的 `monitorOf(...)` 辅助方法要相应增加 `batchSize` 参数（原有用例一律传 `32`，不大于快照里的 `inflightMax=32`，**避免原有用例因这条新判据而出现非预期的告警项**）。
 
 ---
 

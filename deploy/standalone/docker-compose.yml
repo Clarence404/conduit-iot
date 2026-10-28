@@ -39,6 +39,33 @@ services:
       # 独立部署包中鉴权回调固定指向容器内的 conduit-server（.env 中的同名变量只用于满足 dev 文件的必填检查）
       CONDUIT_AUTH_URL: http://conduit-server:8080
 
+  # 性能观测栈（profile: metrics，默认不启动；定义见 dev 文件，extends 会带入 profiles 与 mem_limit）
+  # 启用：docker compose --profile metrics up -d
+  prometheus:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: prometheus
+
+  grafana:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: grafana
+
+  node-exporter:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: node-exporter
+
+  cadvisor:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: cadvisor
+
+  redis-exporter:
+    extends:
+      file: ../dev/docker-compose.yml
+      service: redis-exporter
+
   # Demo mailbox: invitation emails are delivered here; replace SMTP config for production.
   mailpit:
     image: axllent/mailpit:v1.27.4
@@ -58,6 +85,9 @@ services:
         BUILD_FROM: ${BUILD_FROM:-prebuilt}
         MODULE: conduit-server
         JAR_NAME: conduit-server
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${SERVER_MEM_LIMIT:-1500m}
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-conduit}
@@ -115,7 +145,7 @@ services:
     restart: unless-stopped
 
   # transport 单活多备（V0.2-R）：两个实例经 Redis 锁 conduit:transport:leader 选主，只有主实例连接 EMQX；
-  # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个磁盘持久会话
+  # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个内存持久会话
   conduit-transport: &transport
     build:
       context: ../..
@@ -126,6 +156,9 @@ services:
         JAR_NAME: conduit-transport
     # 给主实例留时间断开 MQTT 并释放选主锁（Compose 默认 10 秒），备实例才能立即接管
     stop_grace_period: 20s
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${TRANSPORT_MEM_LIMIT:-512m}
     environment: &transport-env
       REDIS_HOST: redis
       EMQX_HOST: emqx
@@ -133,6 +166,15 @@ services:
       TRANSPORT_MQTT_USERNAME: ${TRANSPORT_MQTT_USERNAME:-conduit-transport}
       TRANSPORT_MQTT_PASSWORD: ${TRANSPORT_MQTT_PASSWORD}
       CONDUIT_LOG_DIR: /var/log/conduit
+      # 会话监控：经 EMQX REST API（只读 API key）观察自己的会话
+      # 攒批写入总线：batch-size 不得大于 EMQX 的 EMQX_MAX_INFLIGHT，且窗口应为批的若干倍（默认 512/64）
+      TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-64}
+      TRANSPORT_BUS_BATCH_DELAY: ${TRANSPORT_BUS_BATCH_DELAY:-5ms}
+      CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083
+      # 监控的堆限阈值与 EMQX 的连接进程堆限取同一个 .env 变量，调整时两者天然一致
+      CONDUIT_TRANSPORT_MONITOR_HEAP_LIMIT: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}
+      CONDUIT_TRANSPORT_MONITOR_API_KEY: ${CONDUIT_EMQX_API_KEY:?CONDUIT_EMQX_API_KEY is required}
+      CONDUIT_TRANSPORT_MONITOR_API_SECRET: ${CONDUIT_EMQX_API_SECRET:?CONDUIT_EMQX_API_SECRET is required}
     volumes:
       - conduit-logs:/var/log/conduit
     depends_on:
@@ -175,6 +217,9 @@ services:
         BUILD_FROM: ${BUILD_FROM:-prebuilt}
         MODULE: conduit-simulator
         JAR_NAME: conduit-simulator-exec
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${SIMULATOR_MEM_LIMIT:-384m}
     environment:
       CONDUIT_API_URL: http://conduit-server:8080
       CONDUIT_ADMIN_USERNAME: ${CONDUIT_ADMIN_USERNAME:-admin}
@@ -214,3 +259,5 @@ volumes:
   emqx-data:
   conduit-logs:
   mailpit-data:
+  prometheus-data:
+  grafana-data:

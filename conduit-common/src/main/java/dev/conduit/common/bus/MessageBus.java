@@ -26,6 +26,17 @@ public interface MessageBus {
     /** 发布一条原始消息到上行流（传输层调用）。返回总线分配的消息 id。 */
     String publish(RawMessage message);
 
+    /**
+     * 批量发布到上行流，返回与入参**等长、同序**的结果列表。
+     *
+     * <p>实现以一次往返提交整批（Redis 为管道），但**不保证原子**：允许部分成功，
+     * 因此逐条返回成败而不是整批抛异常。调用方应当只确认成功的那些消息，
+     * 对失败的不确认、由上游重投——整批重发会重复写入已成功的条目。
+     *
+     * <p>空列表返回空列表，不产生任何命令。
+     */
+    List<PublishResult> publish(List<RawMessage> messages);
+
     /** 确保消费组存在（幂等；组已存在时静默返回）。流不存在时会一并创建。 */
     void ensureGroup(String group);
 

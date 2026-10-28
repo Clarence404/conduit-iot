@@ -44,7 +44,7 @@
 
   <rect class="box" x="40" y="190" width="260" height="68" rx="10"/>
   <text class="name" x="170" y="218" text-anchor="middle">EMQX</text>
-  <text class="sub" x="170" y="240" text-anchor="middle">MQTT 接入 · 磁盘持久会话</text>
+  <text class="sub" x="170" y="240" text-anchor="middle">MQTT 接入 · 内存持久会话</text>
   <rect class="box" x="40" y="310" width="260" height="68" rx="10"/>
   <text class="name" x="170" y="338" text-anchor="middle">conduit-transport × 2</text>
   <text class="sub" x="170" y="360" text-anchor="middle">Redis 选主 · 单活多备</text>

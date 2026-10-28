@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -30,6 +31,8 @@ final class ReliableE2eDevice implements AutoCloseable {
     private final String host;
     private final int port;
     private final DeviceCredentials credentials;
+    /** 本设备累计重发次数（同一条消息第一次之外的发送）。 */
+    private final AtomicInteger retransmissions = new AtomicInteger();
     private final ConcurrentHashMap<String, CompletableFuture<Void>> waiting = new ConcurrentHashMap<>();
     private Mqtt5AsyncClient client;
 
@@ -47,12 +50,18 @@ final class ReliableE2eDevice implements AutoCloseable {
         return credentials.productKey();
     }
 
+    /** 本设备累计重发次数。 */
+    int retransmissions() {
+        return retransmissions.get();
+    }
+
     /** 重发同一载荷直到收到匹配业务回执；PUBACK 只表示本次发送完成，不会从本地待确认表删除。 */
     void publishUntilPlatformAcked(String topic, String id, byte[] payload, BooleanSupplier stopped)
             throws InterruptedException {
         CompletableFuture<Void> acknowledged = new CompletableFuture<>();
         waiting.put(id, acknowledged);
         long deadline = System.nanoTime() + GIVE_UP_AFTER.toNanos();
+        int attempts = 0;
         try {
             while (!stopped.getAsBoolean() && !acknowledged.isDone()) {
                 if (System.nanoTime() > deadline) {
@@ -61,6 +70,7 @@ final class ReliableE2eDevice implements AutoCloseable {
                 }
                 try {
                     ensureConnected();
+                    attempts++;
                     Mqtt5PublishResult result = client.publishWith().topic(topic).qos(MqttQos.AT_LEAST_ONCE)
                             .payload(payload).send().get(PUBLISH_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
                     if (result.getError().isPresent()) {
@@ -77,6 +87,10 @@ final class ReliableE2eDevice implements AutoCloseable {
                 }
             }
         } finally {
+            // 第一次之外的每次发送都是重发（设备没等到业务回执）
+            if (attempts > 1) {
+                retransmissions.addAndGet(attempts - 1);
+            }
             waiting.remove(id, acknowledged);
         }
     }

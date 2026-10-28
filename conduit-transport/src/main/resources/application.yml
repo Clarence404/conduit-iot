@@ -16,10 +16,19 @@ conduit:
     mqtt:
       host: ${EMQX_HOST:localhost}
       port: ${EMQX_PORT:1883}
-      # 所有 transport 实例共用同一 clientId：EMQX 磁盘持久会话按 clientId 保存积压，新主实例接管同一会话
+      # 所有 transport 实例共用同一 clientId：EMQX 按 clientId 为离线的订阅端排队，新主实例接管同一会话
       client-id: ${TRANSPORT_CLIENT_ID:conduit-transport}
       # 与 EMQX 持久会话消息保留期（durable_sessions.message_retention_period，默认 1 天）一致
       session-expiry-seconds: 86400
+      # 微批写入总线：单线程投递下，每条一次 XADD 的持续上限实测约 1230 条/秒，
+      # 低于接入速率时 EMQX 的 mqueue 会溢出丢弃。攒批把每条一次往返变为每批一次。
+      # batch-delay 是 PUBACK 的最坏额外延迟；batch-size 设为 1 即退回逐条提交。
+      # 规则：batch-size <= EMQX 的 mqtt.max_inflight（编排中的 EMQX_MAX_INFLIGHT），且窗口应为批的若干倍。
+      # 待提交条目数就是 EMQX 侧未确认的在途数，被该窗口硬限：批大于窗口则永远攒不满、每批白等满 batch-delay；
+      # 批等于窗口则是停等协议（发 N 条、等全部确认、再发 N 条），流水线深度为 1；窗口远大于批时
+      # 提交当前批的同时下一批已在途。实测 1024/64 约 4000 条/秒，32/32 约 2600 条/秒。
+      batch-size: ${TRANSPORT_BUS_BATCH_SIZE:64}
+      batch-delay: ${TRANSPORT_BUS_BATCH_DELAY:5ms}
       username: ${TRANSPORT_MQTT_USERNAME:}
       password: ${TRANSPORT_MQTT_PASSWORD:}
     # 单活多备选主（Redis 锁）：只有主实例连接 EMQX，主实例故障后备实例最长 ttl 后接管
@@ -29,6 +38,21 @@ conduit:
       renew-interval: 5s
       acquire-interval: 2s
 
+    # 经 EMQX REST API 观察自己的会话：丢弃、队列水位、会话进程内存与投递停滞。
+    # 2026-10-28 定位的楔死故障中所有既有信号都是绿的，这里是唯一能发现它的地方。
+    monitor:
+      enabled: ${TRANSPORT_MONITOR_ENABLED:true}
+      base-url: ${CONDUIT_TRANSPORT_MONITOR_BASE_URL:http://localhost:18083}
+      # EMQX 5 的 REST API 只认 API key/secret，不接受控制台账号密码
+      api-key: ${CONDUIT_TRANSPORT_MONITOR_API_KEY:}
+      api-secret: ${CONDUIT_TRANSPORT_MONITOR_API_SECRET:}
+      interval: 30s
+      # 连续 6 次采样都「投递受阻且投递总数不变」才判定停滞（至少 2）。N 次采样之间只有 N-1 个间隔，
+      # 所以从首次异常采样到 DOWN 是 5×30s=150 秒（约 2.5 分钟），算上采样相位，自故障真正开始起最长约 3 分钟
+      stall-samples: 6
+      # 须与 EMQX 的 EMQX_CONNECTION_MAX_HEAP_SIZE 一致：独立部署编排把本项与它接到同一个 .env 变量上，天然一致
+      heap-limit: ${CONDUIT_TRANSPORT_MONITOR_HEAP_LIMIT:256MB}
+
 management:
   endpoint:
     health:
@@ -37,7 +61,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,metrics
+        include: health,metrics,prometheus
 
 # 日志写入文件：目录由 CONDUIT_LOG_DIR 指定（默认工作目录下 logs），按天 + 按大小滚动，控制台输出保持不变
 logging:

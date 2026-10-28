@@ -33,13 +33,14 @@ Flyway V7 为四个演示租户补齐客户、项目、站点与资产：共 8 �
 
 设备数据从不直连 server，所以 server 重启或变慢不会堵住 EMQX；新增协议也只需在 transport 侧加适配器。完整接入流程见[设备接入指南](docs/device-integration.md)。
 
-### transport 单活多备与磁盘持久会话
+### transport 单活多备与内存持久会话
 
-- EMQX 开启磁盘持久会话（`durable_sessions`，单节点 `singleton`）。transport 以固定 clientId `conduit-transport`、`cleanStart=false`、会话保留 86400 秒普通订阅 `conduit/+/+/up/#`（订阅选项 `retainHandling=DO_NOT_SEND`，重连时不重放保留消息）；transport 离线期间的消息写入 EMQX 磁盘，保留 1 天，重连后补发，不受内存队列 1000 条的上限。EMQX 5.8.6 的磁盘持久会话不支持共享订阅，所以多个 transport 不再分摊消息，而是单活多备。
+- EMQX 使用**内存**持久会话（磁盘持久会话 `durable_sessions` 已关闭：压测证明它在积压下会静默楔死，恢复只能丢弃会话与积压，见 `docs/test-reports/2026-10-28-emqx-durable-session-wedge.md`）。transport 以固定 clientId `conduit-transport`、`cleanStart=false`、会话保留 86400 秒普通订阅 `conduit/+/+/up/#`（订阅选项 `retainHandling=DO_NOT_SEND`，重连时不重放保留消息）；主备切换窗口内的消息排在会话内存队列 mqueue（`EMQX_MAX_MQUEUE_LEN`，默认 100000）中，重连后补发。mqueue 与单连接堆限 `EMQX_CONNECTION_MAX_HEAP_SIZE` 共享上限，调大队列前须确认堆余量，满载余量尚未实测，在此之前不要上调。EMQX 5.8.6 的磁盘持久会话不支持共享订阅，所以多个 transport 不再分摊消息，而是单活多备。
+- 微批与监控：transport 把消息攒成微批一次写入 Redis 总线（`conduit.transport.mqtt.batch-size` 不得大于 EMQX `mqtt.max_inflight`，且窗口应为批的若干倍，默认 64 / 1024），主实例经 EMQX REST API（只读 API key，`.env` 必填 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`）轮询会话指标，仅「投递停滞」使健康检查为 DOWN。本地开发需在 `application-local.yml` 设 `conduit.transport.monitor.enabled: false`。
 - 选主：Redis 键 `conduit:transport:leader`（值为实例 id），用一段 Lua 脚本抢锁：键不存在则 `SET PX` 写入；键里已是本实例 id 则刷新过期时间并视为抢到（所以 Redis 短暂抖动后原主实例立即拿回锁）；其他情况拒绝。主实例每 5 秒续期，锁 15 秒过期，备实例每 2 秒尝试抢锁，只有主实例连接 EMQX。续期失败（Redis 不可用、锁已被他人持有、超时）立即断开 MQTT 转为备用；正常停止时释放锁，备实例立即接管；主实例崩溃时备实例最长 15 秒后接管同一个会话。配置项 `conduit.transport.leader.ttl` / `renew-interval` / `acquire-interval`。抢锁或适配器启动首次失败记 WARN，之后的重试记 DEBUG，恢复与每次角色变化记 INFO。
 - 健康检查：transport（端口 8081）的 `GET /actuator/health` 在 `components.leader.details` 中显示 `role`（`LEADER` / `STANDBY`）、`instanceId` 与 `connected`；`connected` 仅在已连接且订阅已被 EMQX 批准后才为 true。
 - 独立部署包起两个 transport（一主一备），都配置 `stop_grace_period: 20s` 以便正常停止时释放锁；开发时 IDE 中一个 transport，直接成为主实例。
-- 已解决的旧版问题：EMQX 5.8.6/5.8.9 在正常停止交接时会出现持久会话补发错位并丢少量消息；升级到当前项目版本 5.10.5 后，专项实验 9 次均未复现。该结论只覆盖 transport 正常交接，Broker 自身被强杀或客户机断电的持久性风险仍见「已知限制」。
+- 已解决的旧版问题（磁盘持久会话时期）：EMQX 5.8.6/5.8.9 在正常停止交接时会出现持久会话补发错位并丢少量消息；升级到当前项目版本 5.10.5 后，专项实验 9 次均未复现。该结论只覆盖 transport 正常交接，Broker 自身被强杀或客户机断电的持久性风险仍见「已知限制」。
 
 ## 代码结构
 
@@ -126,7 +127,7 @@ docker compose up -d
 
 项目名与数据卷不变，数据沿用。旧的自定义镜像 `conduit-emqx` 不再使用。
 
-EMQX 开启了磁盘持久会话：compose 环境变量 `EMQX_DURABLE_SESSIONS__ENABLE=true`、`EMQX_CLUSTER__DISCOVERY_STRATEGY=singleton`，并固定节点名 `EMQX_NODE__NAME=emqx@127.0.0.1`（见「transport 单活多备与磁盘持久会话」）。已有部署升级注意：EMQX 以前按容器 IP 命名节点，改为固定节点名后，旧节点名下的运行时数据不再使用，例如在控制台里改过的密码会恢复为 `.env` 中的 `EMQX_DASHBOARD_PASSWORD`，首次重建后 EMQX 也以全新的数据目录启动。
+EMQX 已关闭磁盘持久会话、改用内存持久会话（见「transport 单活多备与内存持久会话」）；compose 环境变量仍设 `EMQX_CLUSTER__DISCOVERY_STRATEGY=singleton` 并固定节点名 `EMQX_NODE__NAME=emqx@127.0.0.1`。**升级必读：`.env` 新增必填变量 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`，缺失则 compose 无法启动。**已有部署升级注意：EMQX 以前按容器 IP 命名节点，改为固定节点名后，旧节点名下的运行时数据不再使用，例如在控制台里改过的密码会恢复为 `.env` 中的 `EMQX_DASHBOARD_PASSWORD`，首次重建后 EMQX 也以全新的数据目录启动。
 
 > **EMQX 配置是 bind mount**：`emqx/base.hocon.tpl` 与 `emqx/acl.conf` 以挂载方式读取，所以 `deploy/dev`（或 `deploy/standalone`）目录必须放在运行 Docker 的那台 Linux 机器上。不再支持在另一台机器上通过远程 `DOCKER_HOST` 执行 compose。
 
@@ -153,6 +154,24 @@ EMQX 开启了磁盘持久会话：compose 环境变量 `EMQX_DURABLE_SESSIONS__
 独立部署包启动后，浏览器打开 `http://<docker-host>:8090`（Docker 在本机时为 `localhost`），用 `.env` 中的 `CONDUIT_ADMIN_USERNAME` / `CONDUIT_ADMIN_PASSWORD` 登录（默认租户的租户管理员）；管理租户用 `CONDUIT_PLATFORM_ADMIN_USERNAME` / `CONDUIT_PLATFORM_ADMIN_PASSWORD` 登录（平台管理员，见「账号与角色」）。Flyway V4 会在全新数据库预置 4 个演示租户、8 个产品、174 台设备与 36 个物模型属性；默认租户包含 100 台「三相电表（演示）」和 10 台环境传感器，其他租户覆盖电力、水务和光伏场景。模拟器仍会保证默认演示电表达到 `SIM_DEVICE_COUNT`（默认 100），补齐演示电表物模型，并重置所模拟设备的密钥后每 10 秒上报。消息收到平台业务回执后才出队，超时原样重发，待确认队列满后暂停产生新数据。
 
 已有部署升级注意：演示产品的默认名称已从「Demo Meter」改为「三相电表（演示）」，升级前请先在界面上把旧产品改名为「三相电表（演示）」，否则模拟器会新建一个产品、旧产品及其设备会遗留下来；改名后模拟器会复用该产品，并把其下设备原地改成新名称。
+
+### 性能观测（可选）
+
+两个部署包都带一套 Prometheus + Grafana 观测栈，放在 compose profile `metrics` 下，**默认不启动**：
+
+```bash
+docker compose --profile metrics up -d      # 启用
+docker compose --profile metrics stop prometheus grafana node-exporter redis-exporter   # 停用（含 cadvisor 时再加 cadvisor）
+```
+
+> 每容器的 CPU 与内存曲线由 cadvisor 提供，它单独放在 `metrics-cadvisor` profile 下：
+> 其镜像托管在 `gcr.io`，部分网络环境不可达（压测机实测 connection refused），
+> 而同一 profile 内任一镜像拉不下来会让整组都起不来。能访问时用
+> `docker compose --profile metrics --profile metrics-cadvisor up -d` 一并启动。
+
+在 `.env` 中先设置 `GRAFANA_ADMIN_PASSWORD`（留空时 Grafana 容器会拒绝启动；变量见 `.env.example` 的「性能观测栈」一组）。访问 `http://<host>:3000`（`GRAFANA_PORT`），预置面板「Conduit 性能瓶颈观测」把设备到 InfluxDB 各跳的速率放在同一张图里，并配有积压、丢弃、延迟、容器资源、宿主机、JVM、Redis 面板；Prometheus 没有登录页，默认只绑本机 `127.0.0.1:9090`（`PROMETHEUS_BIND_ADDR`），看面板走 Grafana。`metrics` profile 的四个容器（Prometheus、Grafana、node-exporter、redis-exporter）合计内存上限约 896m（512m+256m+64m+64m）；cadvisor（192m）另需 `metrics-cadvisor` profile 与一个镜像；Prometheus 数据保留 7 天且限 2 GB。
+
+conduit-server 的指标经专用端点 `/internal/metrics` 抓取：它与 EMQX 鉴权回调同样放在 `/internal/**` 下，由控制器自行校验 `CONDUIT_INTERNAL_TOKEN`（请求头 `X-Conduit-Internal-Token`）；`/actuator/**` 的权限不变（`/actuator/prometheus` 仍仅平台管理员可访问）。开发环境包里应用跑在 IDE 中，应用目标显示 DOWN 属正常。宿主机无外网时需预先导入 `metrics` profile 的 4 个镜像（启用 cadvisor 时再加 1 个）。
 
 ### 模拟器：演示产品与各租户的产品
 
@@ -365,9 +384,9 @@ cd conduit-ui && npm install && npm test && npm run dev
 | 场景 | 故障 | 验证的机制 |
 |---|---|---|
 | 1 | 强制结束 server，3 秒后重启 | 未确认消息被重新认领处理 |
-| 2 | 强制结束主 transport | 备实例接管，磁盘积压补齐 |
-| 3 | 两个 transport 都结束，设备继续上报约 20 秒后重启 | 磁盘持久会话兜底 |
-| 4 | 重启 EMQX 容器 | 设备与 transport 重连，会话与积压不丢 |
+| 2 | 强制结束主 transport | 备实例接管，会话内存队列中的积压补齐 |
+| 3 | 两个 transport 都结束，设备继续上报约 20 秒后重启 | 内存持久会话 mqueue 兜底（窗口内） |
+| 4 | 重启 EMQX 容器 | 设备与 transport 重连；内存会话不保留未投递消息，由带 `id` 的可靠设备重发覆盖 |
 | 5 | 可靠上报期间 SIGKILL EMQX 后原地启动 | 设备收到平台业务回执才出队，未确认消息原样重发 |
 
 每个场景断言 InfluxDB 中该产品恰好 500 条、死信流中没有该产品、消费组 `conduit-server` 没有待确认消息，结束时删除所建产品与设备。口令与 token 每次运行随机生成。
@@ -404,5 +423,5 @@ InfluxDB 3 Core 的写入响应不代表数据已落盘（`object_store` 的本�
 
 - 物模型缓存为进程内缓存：多实例部署时，修改物模型最多 60 秒后在其他实例生效。
 - 未启用 TLS；凭证均为演示用途。
-- transport 离线或 Redis 不可用期间，消息保存在 EMQX 磁盘持久会话中，保留 1 天（`durable_sessions.message_retention_period`），超过即丢；同一时刻只有主 transport 消费（单活多备），接入吞吐受单个实例限制，升级 EMQX 后改回多实例共享订阅（见 `docs/backlog-v0.2.md`）。
+- transport 离线或 Redis 不可用期间，消息排在 EMQX 内存持久会话的队列中（`EMQX_MAX_MQUEUE_LEN`，默认 100000），溢出即丢并计入 `dropped_msgs`，EMQX 重启则未投递消息丢失，不带 `id` 的设备无端到端保证；同一时刻只有主 transport 消费（单活多备），接入吞吐受单个实例限制，升级 EMQX 后改回多实例共享订阅（见 `docs/backlog-v0.2.md`）。
 - 死信只能通过 `redis-cli XRANGE conduit:stream:dead - +` 查看。

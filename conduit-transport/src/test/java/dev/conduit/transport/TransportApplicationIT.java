@@ -16,6 +16,7 @@ import static org.awaitility.Awaitility.await;
 
 /** transport 装配冒烟测试：完整 Spring 上下文连接 Redis 与 EMQX，单实例成为主实例，健康检查显示 role 与 connected。 */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+        "conduit.transport.monitor.enabled=false",
         "logging.file.name=target/test-logs/conduit-transport.log",
         "logging.logback.rollingpolicy.file-name-pattern=target/test-logs/conduit-transport.%d{yyyy-MM-dd}.%i.log.gz"})
 class TransportApplicationIT {

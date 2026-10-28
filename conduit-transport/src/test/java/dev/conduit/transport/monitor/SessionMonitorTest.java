@@ -71,12 +71,23 @@ class SessionMonitorTest {
     }
 
     @Test
-    void warnsWhenSessionHeapApproachesTheLimit() {
-        // 堆限 256MB，按 70% 告警；heap_size 单位是 Erlang 字（×8 字节）
-        long words = (long) (0.75 * 256 * 1024 * 1024 / 8);
+    void warnsWhenSessionHeapApproachesTheActualKillThreshold() {
+        // 配置 256MB，EMQX 实际在 1.5 倍即 384MB 处强杀（2026-10-28 实测），按该值的 70% 告警。
+        // heap_size 单位是 Erlang 字（×8 字节）
+        long words = (long) (0.75 * 1.5 * 256 * 1024 * 1024 / 8);
         SessionMonitor m = monitorOf(() -> snapshot(0, 0, 100_000, 0, 32, 1_000, words, false), 6);
         m.sample();
         assertThat(m.verdict().details()).containsEntry("heapNearLimit", true);
+    }
+
+    @Test
+    void doesNotWarnBelowSeventyPercentOfTheActualKillThreshold() {
+        // 按配置值 256MB 算，这个占用已超 70%（会误报）；按实际的 384MB 算则远未到，应当不告警。
+        // 这条用例守住「不按配置值、而按实际触发值计算」这个修正
+        long words = (long) (0.80 * 256 * 1024 * 1024 / 8);
+        SessionMonitor m = monitorOf(() -> snapshot(0, 0, 100_000, 0, 32, 1_000, words, false), 6);
+        m.sample();
+        assertThat(m.verdict().details()).doesNotContainKey("heapNearLimit");
     }
 
     @Test

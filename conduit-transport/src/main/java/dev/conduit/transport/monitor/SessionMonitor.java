@@ -33,6 +33,12 @@ public class SessionMonitor {
     private static final double MQUEUE_WARN_RATIO = 0.8;
     /** 会话进程堆占堆限多少即预警。 */
     private static final double HEAP_WARN_RATIO = 0.7;
+    /**
+     * EMQX 实际触发强杀的堆大小是配置值的 1.5 倍（2026-10-28 实测：配置 256MB，
+     * 实际在 50331648 字 ×8 = 384MB 处被杀）。按配置值算阈值会让告警在真实上限的
+     * 47% 处就触发，是典型的告警疲劳来源，所以这里换算成实际触发值再取比例。
+     */
+    private static final double HEAP_LIMIT_FACTOR = 1.5;
     /** Erlang 一个字的字节数。 */
     private static final int BYTES_PER_WORD = 8;
 
@@ -161,10 +167,12 @@ public class SessionMonitor {
                     now.mqueueLen(), now.mqueueMax());
         }
         long heapBytes = now.heapWords() * BYTES_PER_WORD;
-        if (heapLimitBytes > 0 && heapBytes >= heapLimitBytes * HEAP_WARN_RATIO) {
+        // 与 EMQX 实际触发强杀的值（配置值 ×1.5）比，而不是与配置值本身比
+        double heapKillBytes = heapLimitBytes * HEAP_LIMIT_FACTOR;
+        if (heapLimitBytes > 0 && heapBytes >= heapKillBytes * HEAP_WARN_RATIO) {
             details.put("heapNearLimit", true);
             log.warn("EMQX session process heap at {} bytes of a {} byte limit: "
-                    + "reduce the queue capacity rather than raising the limit", heapBytes, heapLimitBytes);
+                    + "reduce the queue capacity rather than raising the limit", heapBytes, (long) heapKillBytes);
         }
         if (now.durable()) {
             details.put("durable", true);

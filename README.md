@@ -164,7 +164,7 @@ docker compose --profile metrics up -d      # 启用
 docker compose --profile metrics stop prometheus grafana node-exporter cadvisor redis-exporter   # 停用
 ```
 
-在 `.env` 中先设置 `GRAFANA_ADMIN_PASSWORD`（变量见 `.env.example` 的「性能观测栈」一组）。访问 `http://<host>:3000`（`GRAFANA_PORT`），预置面板「Conduit 性能瓶颈观测」把设备到 InfluxDB 各跳的速率放在同一张图里，并配有积压、丢弃、延迟、容器资源、宿主机、JVM、Redis 面板；Prometheus 在 `:9090`。五个容器合计内存上限约 1 GB，Prometheus 数据保留 7 天且限 2 GB。
+在 `.env` 中先设置 `GRAFANA_ADMIN_PASSWORD`（留空时 Grafana 容器会拒绝启动；变量见 `.env.example` 的「性能观测栈」一组）。访问 `http://<host>:3000`（`GRAFANA_PORT`），预置面板「Conduit 性能瓶颈观测」把设备到 InfluxDB 各跳的速率放在同一张图里，并配有积压、丢弃、延迟、容器资源、宿主机、JVM、Redis 面板；Prometheus 没有登录页，默认只绑本机 `127.0.0.1:9090`（`PROMETHEUS_BIND_ADDR`），看面板走 Grafana。五个容器合计内存上限约 1 GB，Prometheus 数据保留 7 天且限 2 GB。
 
 conduit-server 的指标经专用端点 `/internal/metrics` 抓取：它与 EMQX 鉴权回调同样放在 `/internal/**` 下，由控制器自行校验 `CONDUIT_INTERNAL_TOKEN`（请求头 `X-Conduit-Internal-Token`）；`/actuator/**` 的权限不变（`/actuator/prometheus` 仍仅平台管理员可访问）。开发环境包里应用跑在 IDE 中，应用目标显示 DOWN 属正常。宿主机无外网时需预先导入这 5 个镜像。
 

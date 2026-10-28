@@ -177,17 +177,20 @@ services:
     volumes:
       - prometheus-data:/prometheus
       - ./prometheus/prometheus.yml.tpl:/conduit/prometheus.yml.tpl:ro
+    # Prometheus 没有登录页：默认只绑本机，不跟随 BIND_ADDR；看面板走 Grafana
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+      - "${PROMETHEUS_BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
     restart: unless-stopped
 
   grafana:
     profiles: ["metrics"]
     image: grafana/grafana:11.6.1
+    # 口令为空时拒绝启动：Grafana 空口令会回落到默认口令 admin，而端口可能对内网开放
+    entrypoint: ["/bin/sh", "-c", '[ -n "$$GF_SECURITY_ADMIN_PASSWORD" ] || { echo "GRAFANA_ADMIN_PASSWORD 未设置，拒绝以默认口令启动" >&2; exit 1; }; exec /run.sh']
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       # 不用 :? 必填检查：compose 会对未启用 profile 的服务也做插值，必填会让没开监控栈的人也起不来。
-      # 留空时 Grafana 会回落到默认口令 admin，启用监控栈前务必在 .env 里设置
+      # 改由上面的 entrypoint 在容器启动时检查，留空则启动失败
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"

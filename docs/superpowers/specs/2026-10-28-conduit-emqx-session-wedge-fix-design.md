@@ -67,7 +67,7 @@ List<PublishResult> publish(List<RawMessage> messages);
 
 `MqttProtocolAdapter` 的投递线程改为攒批：
 
-- 收到消息后入本地队列，满足**条数达到 `conduit.transport.bus.batch-size`（默认 64）** 或 **等待达到 `conduit.transport.bus.batch-delay`（默认 5ms）** 两者之一即提交
+- 收到消息后入本地队列，满足**条数达到 `conduit.transport.mqtt.batch-size`（默认 64）** 或 **等待达到 `conduit.transport.mqtt.batch-delay`（默认 5ms）** 两者之一即提交
 - 提交成功的条目各自 `acknowledge()`，属性上报再按原规则发业务回执
 - 提交失败的条目**不 ACK**，按现有 `publishWithRetry` 的退避规则整批重试；会话停止时放弃且不 ACK
 

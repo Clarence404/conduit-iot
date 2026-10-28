@@ -45,7 +45,9 @@ import java.util.function.BooleanSupplier;
 /**
  * MQTT 协议适配器：以固定 clientId、cleanStart=false 的会话普通订阅设备上行 topic 与 EMQX 的 $SYS 上下线 topic，
  * 攒批 XADD 成功后才回 PUBACK（手动 ACK），保证至少一次投递；属性报文带 id 时还向设备发送“平台已持久接收”的业务回执。
- * EMQX 开启磁盘持久会话，transport 离线期间的消息保存在会话中，下次 start（本实例或接管的新主实例）时补发。
+ * EMQX 使用内存持久会话（磁盘持久会话已关闭，原因见 CLAUDE.md 决定记录）：transport 离线期间的消息进入内存队列 mqueue
+ * （容量有限，溢出按 mqueue_dropped 计数），下次 start（本实例或接管的新主实例）时补发；EMQX 重启则不保留未投递消息，
+ * 端到端不丢由设备侧消息 id + 平台业务回执负责。
  *
  * <p>每次 start 打开一个独立的 {@link Session}（客户端、投递线程、状态标志），stop 关闭它，可反复调用。
  * 不使用 HiveMQ 自动重连：意外断线或会话被接管时置 needsRestart，由选主协调器确认仍持锁后重新 start。
@@ -353,7 +355,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     }
 
     /**
-     * 订阅设备上行 topic（普通订阅，磁盘持久会话不支持共享订阅）及 EMQX 的上下线系统 topic，均为 QoS 1。
+     * 订阅设备上行 topic（当前仍用普通订阅与单活多备；共享订阅的阻塞前提（磁盘持久会话拒绝共享订阅）已随其关闭而消失，留作后续评估）及 EMQX 的上下线系统 topic，均为 QoS 1。
      * 设备 topic 不接收保留消息（DO_NOT_SEND）：否则每次重启都会以新的 receivedAt 重放，让离线设备复活。
      */
     CompletableFuture<Mqtt5SubAck> subscribe(Mqtt5AsyncClient client) {
@@ -428,7 +430,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
      * 提交当前批：反复提交尚未成功的条目直到全部写入总线，然后按到达顺序逐条发业务回执并 ACK。
      *
      * <p>绝不能留下未 ACK 的条目而继续处理后面的：EMQX 的 mqtt.retry_interval 默认为 infinity，
-     * 已发出未 ACK 的在途消息不会重传，只在客户端重连时才重投；而 max_inflight 默认 32。
+     * 已发出未 ACK 的在途消息不会重传，只在客户端重连时才重投；而 EMQX 的 max_inflight 默认为 32（本项目在编排中固化为 1024）。
      * 一条失败后放着不管就永久占住一个 inflight 槽位，攒满 32 条后 EMQX 不再投递，整条接入链路停摆。
      * 所以逐条失败也在此阻塞重试（与旧的逐条 publishWithRetry 语义一致）；会话停止时放弃且整批不 ACK。
      */

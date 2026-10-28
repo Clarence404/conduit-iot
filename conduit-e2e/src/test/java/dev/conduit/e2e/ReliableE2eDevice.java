@@ -50,12 +50,12 @@ final class ReliableE2eDevice implements AutoCloseable {
         return credentials.productKey();
     }
 
-    /** 重发同一载荷直到收到匹配业务回执；PUBACK 只表示本次发送完成，不会从本地待确认表删除。 */
     /** 本设备累计重发次数。 */
     int retransmissions() {
         return retransmissions.get();
     }
 
+    /** 重发同一载荷直到收到匹配业务回执；PUBACK 只表示本次发送完成，不会从本地待确认表删除。 */
     void publishUntilPlatformAcked(String topic, String id, byte[] payload, BooleanSupplier stopped)
             throws InterruptedException {
         CompletableFuture<Void> acknowledged = new CompletableFuture<>();

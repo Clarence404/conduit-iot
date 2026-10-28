@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * 选主集成测试（真实 Redis + 磁盘持久会话 EMQX，ttl 3s / 续期 1s / 抢锁 0.5s）：两个实例只有一个成为主且只有它连接；
+ * 选主集成测试（真实 Redis + 内存持久会话 EMQX，ttl 3s / 续期 1s / 抢锁 0.5s）：两个实例只有一个成为主且只有它连接；
  * 主实例停止后备实例在 ttl 内接管并补齐切换期间发布的消息；续期失败（锁被改写）立即断开并保持备用，锁恢复空闲后重新成为主。
  */
 class LeaderElectionIT {

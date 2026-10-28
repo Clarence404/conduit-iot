@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * MqttProtocolAdapter 对真实 EMQX（磁盘持久会话）的集成测试：属性与上下线事件进入总线、无法路由的 topic 不阻塞、
+ * MqttProtocolAdapter 对真实 EMQX（内存持久会话）的集成测试：属性与上下线事件进入总线、无法路由的 topic 不阻塞、
  * 停止期间发布的 2000 条在重新 start 后全部收到、同 clientId 的新连接踢掉旧连接且旧连接不自行重连。
  */
 class MqttProtocolAdapterIT {

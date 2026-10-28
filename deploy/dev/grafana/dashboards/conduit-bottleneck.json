@@ -31,7 +31,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "链路各跳速率（条/秒）",
-      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库来自 conduit-server 的 /internal/metrics；Redis 侧的 XADD 与消费组已读保留作交叉验证，两者应大致吻合。",
+      "description": "同一张图比较各跳，曲线从哪一跳开始低于上一跳即为瓶颈。EMQX 的两个计数含设备上行之外的消息（如回执），只作量级参照；emqx_messages_* 与 redis_stream_group_entries_read 的指标名在目标版本上未经实际验证，无数据时先到 Prometheus 里检查名称。流水线入库来自 conduit-server 的 /internal/metrics；Redis 侧的 XADD 与消费组已读保留作交叉验证，两者应大致吻合。 「EMQX 会话已发送」来自 transport 会话监控（累计值取 rate），反映 EMQX 实际往本会话发出的速率。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -113,6 +113,15 @@
           },
           "expr": "rate(redis_stream_group_entries_read[1m])",
           "legendFormat": "消费组已读（Redis 侧，交叉验证）"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(conduit_transport_session_sent[1m])",
+          "legendFormat": "EMQX 会话已发送（transport 监控）"
         }
       ]
     },
@@ -280,23 +289,10 @@
       ]
     },
     {
-      "id": 6,
-      "type": "row",
-      "title": "3. 丢弃与错误",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 18
-      },
-      "panels": []
-    },
-    {
-      "id": 7,
+      "id": 25,
       "type": "timeseries",
-      "title": "EMQX 丢弃（条/秒）",
-      "description": "队列满丢弃大于 0 即有数据丢失；指标名未经实际验证。",
+      "title": "EMQX 在途窗口占用",
+      "description": "会话当前未确认的在途消息数（inflight）与窗口上限（max_inflight，本项目固化为 1024）。在途长时间贴着上限且不下降，说明 transport 提交变慢或投递停滞；transport 攒批 64 小于窗口，正常应明显低于上限。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -305,7 +301,82 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "conduit_transport_session_inflight",
+          "legendFormat": "在途数"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "conduit_transport_session_inflight_max",
+          "legendFormat": "窗口上限"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "3. 丢弃与错误",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "EMQX 丢弃（条/秒）",
+      "description": "队列满丢弃大于 0 即有数据丢失；指标名未经实际验证。 「会话队列溢出丢弃」来自 transport 会话监控（累计值取 rate），大于 0 是真实的数据丢失，需设备侧重发补回。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -351,6 +422,15 @@
           },
           "expr": "rate(emqx_delivery_dropped_queue_full[1m])",
           "legendFormat": "队列满丢弃（mqueue_dropped）"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(conduit_transport_session_mqueue_dropped[1m])",
+          "legendFormat": "会话队列溢出丢弃（transport 监控）"
         }
       ]
     },
@@ -367,7 +447,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -426,6 +506,59 @@
       ]
     },
     {
+      "id": 26,
+      "type": "timeseries",
+      "title": "transport 会话监控自身健康（连续失败次数）",
+      "description": "transport 经 EMQX REST API 采样会话的连续失败次数，正常为 0。持续大于 0 说明监控本身哑了（API 不可达、key 失效等），此时本页所有 conduit_transport_session_* 曲线都不可信（采样失败时数据指标置为 NaN）。备实例上该值同样为 NaN，是设计如此，不是故障。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "conduit_transport_session_poll_failures",
+          "legendFormat": "连续失败次数"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "row",
       "title": "4. 延迟",
@@ -434,7 +567,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 43
       },
       "panels": []
     },
@@ -451,7 +584,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -522,7 +655,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -571,7 +704,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 52
       },
       "panels": []
     },
@@ -588,7 +721,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -641,7 +774,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -682,6 +815,59 @@
       ]
     },
     {
+      "id": 27,
+      "type": "timeseries",
+      "title": "EMQX 会话堆占用（连接进程）",
+      "description": "transport 会话监控取得的 EMQX 会话进程堆大小。它与 EMQX 的单连接进程堆限共享同一上限（EMQX_CONNECTION_MAX_HEAP_SIZE，实际按 1.5 倍触发，即 384MB）：mqueue 积压驻留在该堆内，逼近上限会被 EMQX 强杀会话。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。 本图数据来自 transport 监控，不依赖 cadvisor。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "conduit_transport_session_heap_bytes",
+          "legendFormat": "会话进程堆"
+        }
+      ]
+    },
+    {
       "id": 15,
       "type": "row",
       "title": "6. 宿主机",
@@ -690,7 +876,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 69
       },
       "panels": []
     },
@@ -707,7 +893,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 46
+        "y": 70
       },
       "fieldConfig": {
         "defaults": {
@@ -760,7 +946,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 46
+        "y": 70
       },
       "fieldConfig": {
         "defaults": {
@@ -813,7 +999,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 46
+        "y": 70
       },
       "fieldConfig": {
         "defaults": {
@@ -880,7 +1066,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 78
       },
       "panels": []
     },
@@ -897,7 +1083,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 55
+        "y": 79
       },
       "fieldConfig": {
         "defaults": {
@@ -959,7 +1145,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 55
+        "y": 79
       },
       "fieldConfig": {
         "defaults": {
@@ -1008,7 +1194,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 87
       },
       "panels": []
     },
@@ -1025,7 +1211,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 64
+        "y": 88
       },
       "fieldConfig": {
         "defaults": {
@@ -1087,7 +1273,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 64
+        "y": 88
       },
       "fieldConfig": {
         "defaults": {

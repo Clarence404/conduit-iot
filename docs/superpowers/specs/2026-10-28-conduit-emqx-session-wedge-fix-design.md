@@ -41,7 +41,12 @@ transport 侧 `cleanStart=false`、`session-expiry-seconds=86400` **不变**—�
 
 mqueue 要覆盖 transport 主备切换窗口：选主锁 TTL 15 秒 + 抢锁间隔 2 秒 ≈ **17 秒**。按 1500 条/秒峰值计约需 2.6 万条，取 **100,000** 留足余量。
 
-**必须验证的约束**：mqueue 驻留在会话进程堆内，与 `max_heap_size`（配置 256MB，实际按 1.5 倍即 384MB 触发）**共享同一上限**。100,000 条若平均占用超过约 3.8 KB 即会触发超堆被杀——这正是磁盘会话那个故障的形状。实施时必须实测 mqueue 满载时的会话进程内存，确认与 384MB 的余量，并把实测值写进报告。余量不足则下调 `MAX_MQUEUE_LEN` 而不是上调堆限。
+**必须验证的约束**：mqueue 驻留在会话进程堆内，与 `max_heap_size`（配置 256MB，实际按 1.5 倍即 384MB 触发）**共享同一上限**。100,000 条若平均占用超过约 3.8 KB 即会触发超堆被杀——这正是磁盘会话那个故障的形状。
+
+所幸这件事不必靠一次性人工测量：`GET /api/v5/clients/{clientid}` 直接返回会话进程的 `heap_size`（Erlang 字）。因此
+
+- 实施时压到 mqueue 满载，记录 `heap_size × 8` 与 384MB 的余量并写入报告；余量不足则下调 `MAX_MQUEUE_LEN`，**不上调堆限**
+- 第 5 节的监控**持续**采集该字段，超过堆限 70% 即 WARN——把这条约束从一次性验证变成常驻守卫
 
 ## 4. 变更二：transport 微批写入总线
 
@@ -83,19 +88,31 @@ List<PublishResult> publish(List<RawMessage> messages);
 ### 5.2 设计
 
 transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（默认 30s）调用
-`GET {base}/api/v5/clients/{clientId}`，以 Basic 认证（EMQX dashboard 账号）读取：
+`GET {base}/api/v5/clients/{clientId}`。字段名以 EMQX 5.10.5 实际返回为准（已实测核对）：
 
-| 字段 | 判据 | 动作 |
+| 判据 | 字段 | 动作 |
 |---|---|---|
-| `mqueue_dropped` | 相对上次采样增加 | WARN 日志 + 指标 `conduit.transport.mqueue_dropped` + 健康明细 |
-| `mqueue_len` | 持续 ≥ 容量 80% | WARN 日志（溢出前预警） |
-| `inflight_cnt` 满且 `mqueue_len > 0` 且 `delivered` 连续 `conduit.transport.monitor.stall-samples`（默认 6，即约 3 分钟）不变 | 判定投递停滞 | **健康检查 DOWN** + ERROR 日志 |
+| 队列溢出丢弃 | `mqueue_dropped` 相对上次采样增加 | WARN + 指标 `conduit.transport.mqueue_dropped` + 健康明细 |
+| 溢出前预警 | `mqueue_len / mqueue_max` ≥ 0.8 | WARN |
+| 会话进程内存逼近上限 | `heap_size × 8` ≥ 堆限的 70%（见 3.1） | WARN |
+| 投递停滞 | `inflight_cnt == inflight_max` 且 `mqueue_len > 0` 且 **`send_msg`** 连续 `conduit.transport.monitor.stall-samples`（默认 6，约 3 分钟）不变 | **健康检查 DOWN** + ERROR |
+| 配置漂移 | `durable` 不为 `false` | WARN（持久会话被意外启用） |
 
-第三条是**对本次故障的防御性兜底**：关闭持久会话后预期不再发生，但一旦复现必须能被发现，不再是零信号。
+投递总数的字段是 **`send_msg`**（不是 CLI 里的 `delivered_msgs`），队列上限是 `mqueue_max`，两者都由 API 直接给出，容量阈值无需另行配置。
+
+「投递停滞」一条是**对本次故障的防御性兜底**：关闭持久会话后预期不再发生，但一旦复现必须能被发现，不再是零信号。
 
 轮询失败（EMQX 不可达、认证失败、字段缺失）**不改变健康状态**，只记 WARN 并保留上次结论——避免监控本身引起误报与抖动。
 
-配置项：`conduit.transport.monitor.enabled`（默认 true）、`.base-url`、`.username`、`.password`、`.interval`、`.stall-samples`。独立部署包经 `.env` 注入，复用 `EMQX_DASHBOARD_USERNAME` / `EMQX_DASHBOARD_PASSWORD`。**口令不得出现在日志中。**
+### 5.3 认证
+
+**EMQX 5 的 REST API 不接受 dashboard 账号密码**（实测返回 401 `BAD_API_KEY_OR_SECRET`），必须用 API key/secret。采用声明式下发，不走控制台手工创建：
+
+- 新增 `deploy/dev/emqx/api-key.bootstrap`，内容为 `${EMQX_API_KEY}:${EMQX_API_SECRET}:viewer`，与现有 `base.hocon.tpl` 一样在启动命令中渲染后只读挂载
+- EMQX 侧设 `EMQX_API_KEY__BOOTSTRAP_FILE`（该配置项在 5.10.5 中存在，已实测确认）
+- transport 以 Basic 认证使用同一对 key/secret；角色取 **viewer**（只读足够）
+
+配置项：`conduit.transport.monitor.enabled`（默认 true）、`.base-url`、`.api-key`、`.api-secret`、`.interval`、`.stall-samples`。两个包的 `.env` 各增 `EMQX_API_KEY` / `EMQX_API_SECRET`（必须改）。**密钥不得出现在日志中。**
 
 关闭（`enabled=false`）时不轮询，健康检查退回现有 `LeaderHealthIndicator` 行为。
 
@@ -103,6 +120,7 @@ transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（�
 
 | 文件 | 内容 |
 |---|---|
+| `deploy/dev/.env.example`、`deploy/standalone/.env.example` | EMQX 组增加 `EMQX_API_KEY` / `EMQX_API_SECRET`（必须改）与 `EMQX_MAX_MQUEUE_LEN`；持久会话相关注释改写 |
 | `CLAUDE.md` 1.2 | 「transport 单活多备」中磁盘持久会话相关描述改写；新增 mqueue 定容与监控说明；第 4 节追加决定记录 |
 | `README.md` | 架构说明中涉及 EMQX 持久化的表述 |
 | `docs/images/architecture.svg`、`docs/images/reliable-uplink.svg` | 涉及「EMQX 磁盘持久会话」的标注 |
@@ -135,6 +153,7 @@ transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（�
 | 微批部分成功导致重复入库 | 流水线本就幂等（同 ts 覆盖、最新值按 ts 比较）；逐条区分成败避免整批重发 |
 | 微批引入乱序 | 单线程 + 批内保序 + 批间顺序提交；由单元测试固定 |
 | 监控引入 EMQX API 依赖 | 轮询失败不改健康状态；可整体关闭 |
+| API key 以 bootstrap 文件下发，密钥进入编排与 `.env` | 角色取只读 viewer；`.env` 已在 `.gitignore`；模板只给占位值 |
 | e2e「重启 EMQX」场景语义变化 | 第 8 节已明确改写方向，属预期内的契约变化 |
 | 关闭持久会话后 EMQX 重启丢数据 | 第 7 节契约声明；带 `id` 的设备由重发覆盖 |
 

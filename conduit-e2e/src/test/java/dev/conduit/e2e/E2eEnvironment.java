@@ -192,10 +192,10 @@ final class E2eEnvironment implements AutoCloseable {
                             "/opt/emqx/etc/base.hocon")
                     .withCopyToContainer(Transferable.of(acl), "/opt/emqx/etc/conduit-acl.conf")
                     // 与部署编排一致：关闭磁盘持久会话（积压下会静默楔死），改用内存持久会话；
-                    // max_inflight 必须等于 transport 的 batch-size（32）
+                    // max_inflight 须不小于 transport 的 batch-size（默认 64），且宜为其若干倍：与部署默认 1024/64 一致
                     .withEnv("EMQX_DURABLE_SESSIONS__ENABLE", "false")
                     .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
-                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "32")
+                    .withEnv("EMQX_MQTT__MAX_INFLIGHT", "1024")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")

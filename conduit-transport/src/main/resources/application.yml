@@ -23,10 +23,11 @@ conduit:
       # 微批写入总线：单线程投递下，每条一次 XADD 的持续上限实测约 1230 条/秒，
       # 低于接入速率时 EMQX 的 mqueue 会溢出丢弃。攒批把每条一次往返变为每批一次。
       # batch-delay 是 PUBACK 的最坏额外延迟；batch-size 设为 1 即退回逐条提交。
-      # batch-size 必须等于 EMQX 的 mqtt.max_inflight（编排中的 EMQX_MAX_INFLIGHT，同为 32）：
-      # 待提交条目数就是 EMQX 侧未确认的在途数，被该窗口硬限。配大了批永远攒不满、每批白等满
-      # batch-delay；配小了窗口没用满。要提高吞吐必须两者一起调大。
-      batch-size: ${TRANSPORT_BUS_BATCH_SIZE:32}
+      # 规则：batch-size <= EMQX 的 mqtt.max_inflight（编排中的 EMQX_MAX_INFLIGHT），且窗口应为批的若干倍。
+      # 待提交条目数就是 EMQX 侧未确认的在途数，被该窗口硬限：批大于窗口则永远攒不满、每批白等满 batch-delay；
+      # 批等于窗口则是停等协议（发 N 条、等全部确认、再发 N 条），流水线深度为 1；窗口远大于批时
+      # 提交当前批的同时下一批已在途。实测 1024/64 约 4000 条/秒，32/32 约 2600 条/秒。
+      batch-size: ${TRANSPORT_BUS_BATCH_SIZE:64}
       batch-delay: ${TRANSPORT_BUS_BATCH_DELAY:5ms}
       username: ${TRANSPORT_MQTT_USERNAME:}
       password: ${TRANSPORT_MQTT_PASSWORD:}

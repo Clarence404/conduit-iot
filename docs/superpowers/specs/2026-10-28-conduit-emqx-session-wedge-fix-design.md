@@ -97,7 +97,7 @@ transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（�
 | 会话进程内存逼近上限 | `heap_size × 8` ≥ 堆限的 70%（见 3.1） | WARN |
 | 投递停滞 | `inflight_cnt == inflight_max` 且 `mqueue_len > 0` 且 **`send_msg`** 连续 `conduit.transport.monitor.stall-samples`（默认 6，约 3 分钟）不变 | **健康检查 DOWN** + ERROR |
 | 配置漂移 | `durable` 不为 `false` | WARN（持久会话被意外启用） |
-| 批大小与窗口不匹配 | `batch-size != inflight_max` | WARN（两者必须相等，否则批永远攒不满或窗口没用满） |
+| 批大小超过窗口 | `batch-size > inflight_max` | WARN（批永远攒不满、每批白等满 batch-delay）。**更正：** 原判据为「不相等即告警」、规则为「必须相等」，已被 2026-10-28 实测否定（见 `docs/test-reports/2026-10-28-throughput-ab.md`）；正确规则是 `batch-size ≤ max_inflight` 且窗口为批的若干倍（默认 1024/64），不相等是正确配置。明细同时给出 `inflightToBatchRatio`（窗口/批，即流水线深度） |
 
 投递总数的字段是 **`send_msg`**（不是 CLI 里的 `delivered_msgs`），队列上限是 `mqueue_max`，两者都由 API 直接给出，容量阈值无需另行配置。
 

@@ -85,6 +85,9 @@ services:
         BUILD_FROM: ${BUILD_FROM:-prebuilt}
         MODULE: conduit-server
         JAR_NAME: conduit-server
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${SERVER_MEM_LIMIT:-1500m}
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-conduit}
@@ -153,6 +156,9 @@ services:
         JAR_NAME: conduit-transport
     # 给主实例留时间断开 MQTT 并释放选主锁（Compose 默认 10 秒），备实例才能立即接管
     stop_grace_period: 20s
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${TRANSPORT_MEM_LIMIT:-512m}
     environment: &transport-env
       REDIS_HOST: redis
       EMQX_HOST: emqx
@@ -161,8 +167,8 @@ services:
       TRANSPORT_MQTT_PASSWORD: ${TRANSPORT_MQTT_PASSWORD}
       CONDUIT_LOG_DIR: /var/log/conduit
       # 会话监控：经 EMQX REST API（只读 API key）观察自己的会话
-      # 攒批写入总线：必须与 EMQX 的 EMQX_MAX_INFLIGHT 相等，两者一起调才有效
-      TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-32}
+      # 攒批写入总线：batch-size 不得大于 EMQX 的 EMQX_MAX_INFLIGHT，且窗口应为批的若干倍（默认 1024/64）
+      TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-64}
       TRANSPORT_BUS_BATCH_DELAY: ${TRANSPORT_BUS_BATCH_DELAY:-5ms}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083
       CONDUIT_TRANSPORT_MONITOR_API_KEY: ${CONDUIT_EMQX_API_KEY:?CONDUIT_EMQX_API_KEY is required}
@@ -209,6 +215,9 @@ services:
         BUILD_FROM: ${BUILD_FROM:-prebuilt}
         MODULE: conduit-simulator
         JAR_NAME: conduit-simulator-exec
+    # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
+    # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap
+    mem_limit: ${SIMULATOR_MEM_LIMIT:-384m}
     environment:
       CONDUIT_API_URL: http://conduit-server:8080
       CONDUIT_ADMIN_USERNAME: ${CONDUIT_ADMIN_USERNAME:-admin}

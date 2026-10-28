@@ -6,7 +6,7 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** SessionMonitor 的六条判据：丢弃增长、队列水位、会话进程内存、投递停滞、配置漂移、批大小与窗口不匹配。 */
+/** SessionMonitor 的六条判据：丢弃增长、队列水位、会话进程内存、投递停滞、配置漂移、批大小超过窗口。 */
 class SessionMonitorTest {
 
     /** 按给定字段造一份快照。 */
@@ -17,7 +17,7 @@ class SessionMonitorTest {
                 sendMsg, heapWords, durable);
     }
 
-    /** 批大小固定取 32，与快照里的 inflightMax 相等，避免干扰其他判据。 */
+    /** 批大小固定取 32，不大于快照里的 inflightMax，避免干扰其他判据。 */
     private static SessionMonitor monitorOf(Supplier<SessionSnapshot> source, int stallSamples) {
         return new SessionMonitor(source, stallSamples, 256L * 1024 * 1024, 32);
     }
@@ -97,21 +97,36 @@ class SessionMonitorTest {
         assertThat(m.verdict().details()).containsEntry("pollFailed", true);
     }
 
+    private static SessionMonitor withBatch(int batchSize, long inflightMax) {
+        return new SessionMonitor(
+                () -> snapshot(0, 0, 100_000, 0, inflightMax, 1_000, 1_000, false), 6, 256L * 1024 * 1024, batchSize);
+    }
+
     @Test
-    void warnsWhenBatchSizeDoesNotMatchTheInflightWindow() {
+    void warnsOnlyWhenBatchSizeExceedsTheInflightWindow() {
         // 批大小 64、窗口 32：批永远攒不满，每批白等满 batch-delay
-        SessionMonitor m = new SessionMonitor(
-                () -> snapshot(0, 0, 100_000, 0, 32, 1_000, 1_000, false), 6, 256L * 1024 * 1024, 64);
+        SessionMonitor m = withBatch(64, 32);
         m.sample();
-        assertThat(m.verdict().details()).containsEntry("batchSizeMismatch", 32L);
+        assertThat(m.verdict().details()).containsEntry("batchSizeExceedsInflight", 32L);
+        assertThat(m.verdict().details()).containsEntry("inflightToBatchRatio", 0.5);
         assertThat(m.verdict().healthy()).isTrue();
     }
 
     @Test
-    void doesNotWarnWhenBatchSizeMatchesTheInflightWindow() {
-        SessionMonitor m = new SessionMonitor(
-                () -> snapshot(0, 0, 100_000, 0, 32, 1_000, 1_000, false), 6, 256L * 1024 * 1024, 32);
+    void doesNotWarnWhenWindowIsSeveralTimesTheBatch() {
+        // 1024/64 是实测最优配置：不相等恰恰是正确的
+        SessionMonitor m = withBatch(64, 1024);
         m.sample();
-        assertThat(m.verdict().details()).doesNotContainKey("batchSizeMismatch");
+        assertThat(m.verdict().details()).doesNotContainKey("batchSizeExceedsInflight");
+        assertThat(m.verdict().details()).containsEntry("inflightToBatchRatio", 16.0);
+    }
+
+    @Test
+    void doesNotWarnWhenBatchSizeEqualsTheWindow() {
+        // 相等虽是停等（比值 1），但批能攒满，不属于「批大于窗口」的真问题
+        SessionMonitor m = withBatch(32, 32);
+        m.sample();
+        assertThat(m.verdict().details()).doesNotContainKey("batchSizeExceedsInflight");
+        assertThat(m.verdict().details()).containsEntry("inflightToBatchRatio", 1.0);
     }
 }

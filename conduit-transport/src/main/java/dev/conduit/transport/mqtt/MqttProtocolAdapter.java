@@ -493,7 +493,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
                 failure = e.getMessage();
             }
             Duration delay = backoff(attempt);
-            // 不能因失败而跳过 ACK（见 flush 注释：retry_interval=infinity + max_inflight=32 会耗尽窗口）
+            // 不能因失败而跳过 ACK（见 flush 注释：retry_interval=infinity 下失败条目会永久占住 inflight 槽位并耗尽窗口）
             log.warn("Bus publish of {} of {} messages failed (attempt {}), retrying in {} ms: {}",
                     remaining.size(), batch.size(), attempt + 1, delay.toMillis(), failure);
             try {

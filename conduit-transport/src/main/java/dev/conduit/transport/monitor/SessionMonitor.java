@@ -9,7 +9,7 @@ import java.util.function.Supplier;
 
 /**
  * EMQX 会话健康判定：按固定间隔采样，对「队列溢出丢弃」「队列逼近容量」「会话进程内存逼近堆限」
- * 「投递停滞」「磁盘持久会话被意外启用」「批大小与 inflight 窗口不匹配」六项给出结论。
+ * 「投递停滞」「磁盘持久会话被意外启用」「批大小超过 inflight 窗口」六项给出结论。
  *
  * <p>「投递停滞」是对 2026-10-28 定位的那次故障的兜底：当时 inflight 占满、队列非空、
  * 投递总数永久不变，而所有既有信号（连接、健康检查、日志、丢弃计数）都是绿的。
@@ -45,7 +45,7 @@ public class SessionMonitor {
      * @param source         采样来源（生产环境为 EMQX REST 客户端）
      * @param stallSamples   投递总数连续多少次采样不变才判定停滞
      * @param heapLimitBytes 配置的单连接堆上限字节数，用于计算内存预警阈值
-     * @param batchSize      transport 攒批提交的批大小，必须与 EMQX 的 inflight 窗口相等
+     * @param batchSize      transport 攒批提交的批大小，不得大于 EMQX 的 inflight 窗口；窗口应为批的若干倍
      */
     public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
                           long heapLimitBytes, int batchSize) {
@@ -118,13 +118,20 @@ public class SessionMonitor {
             details.put("durable", true);
             log.warn("EMQX durable sessions are enabled; this platform expects in-memory sessions");
         }
-        // 批大小必须等于 inflight 窗口：大于则批永远攒不满、每批白等满 batch-delay，小于则窗口没用满。
+        // 规则是 batchSize <= inflightMax，且窗口宜为批的若干倍（2026-10-28 实测，见 throughput-ab 报告）：
+        // 窗口等于批时是停等协议（发 N 条、等全部确认、再发 N 条），窗口远大于批才能让下一批在提交当前批时已在途。
+        // 所以只有「批大于窗口」才告警——此时批永远攒不满，每批白等满 batch-delay；不相等本身是正确配置。
         // 两处配置分属 transport 与 EMQX，很容易被只改一边，所以在这里钉死。
-        if (now.inflightMax() > 0 && batchSize != now.inflightMax()) {
-            details.put("batchSizeMismatch", now.inflightMax());
-            log.warn("transport batch size {} does not match the EMQX inflight window {}: "
-                    + "batches never fill (or the window is underused); these two must be kept equal",
-                    batchSize, now.inflightMax());
+        if (now.inflightMax() > 0) {
+            // 流水线深度 = 窗口 / 批；写入明细使其可观测（1 表示停等）
+            details.put("inflightToBatchRatio", (double) now.inflightMax() / batchSize);
+            if (batchSize > now.inflightMax()) {
+                details.put("batchSizeExceedsInflight", now.inflightMax());
+                log.warn("transport batch size {} exceeds the EMQX inflight window {}: "
+                        + "batches never fill and every batch waits out batch-delay; "
+                        + "keep batch-size <= max_inflight (window should be several times the batch)",
+                        batchSize, now.inflightMax());
+            }
         }
 
         boolean deliveryBlocked = now.inflightCnt() >= now.inflightMax() && now.mqueueLen() > 0;

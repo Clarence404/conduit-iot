@@ -58,10 +58,12 @@ conduit:
     enabled: true
     group: conduit-server
     consumer: ${PIPELINE_CONSUMER:server-${random.uuid}}
-    # 每批读取的最大消息数；-1 = 不限（取走当前可读的全部），正数为上限。吞吐上限约为「批大小 ÷ 1 秒」，
-    # 因为每批只写一次 InfluxDB，而写入要等 WAL 刷盘（默认 1 秒）。写入按 conduit.influx.max-request-bytes
-    # 自动拆分请求，所以批再大也不会 413；代价是单批驻留内存随积压增长，内存受限时改为有界值。
-    batch-size: -1
+    # 每批读取的最大消息数，默认 20000；-1 仍合法，表示不限（取走当前可读的全部）。
+    # 吞吐上限约为「批大小 ÷ 1 秒」，因为每批只写一次 InfluxDB，而写入要等 WAL 刷盘（默认 1 秒）：
+    # 20000 的理论上限是 2 万条/秒，远高于实测约 4000 条/秒的排空能力，既保住吞吐又封住内存。
+    # 不用 -1 的原因：它一次取走流中当前可读的全部消息，而流 MAXLEN 为 100 万条，
+    # 配合容器无内存上限曾导致宿主机满 swap。写入按 conduit.influx.max-request-bytes 自动拆分请求，不会 413。
+    batch-size: 20000
     block: 1s
     claim-min-idle: ${PIPELINE_CLAIM_MIN_IDLE:60s}
     claim-interval: 10s

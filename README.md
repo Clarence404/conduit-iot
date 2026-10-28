@@ -161,6 +161,11 @@ EMQX 已关闭磁盘持久会话、改用内存持久会话（见「transport �
 
 ```bash
 docker compose --profile metrics up -d      # 启用
+
+> 每容器的 CPU 与内存曲线由 cadvisor 提供，它单独放在 `metrics-cadvisor` profile 下：
+> 其镜像托管在 `gcr.io`，部分网络环境不可达（压测机实测 connection refused），
+> 而同一 profile 内任一镜像拉不下来会让整组都起不来。能访问时用
+> `docker compose --profile metrics --profile metrics-cadvisor up -d` 一并启动。
 docker compose --profile metrics stop prometheus grafana node-exporter cadvisor redis-exporter   # 停用
 ```
 

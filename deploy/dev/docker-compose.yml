@@ -220,8 +220,13 @@ services:
     restart: unless-stopped
 
   cadvisor:
-    # 每容器 CPU / 内存。需要只读挂载宿主机的 cgroup 与 docker 目录
-    profiles: ["metrics"]
+    # 每容器 CPU / 内存。需要只读挂载宿主机的 cgroup 与 docker 目录。
+    # 单独放在 metrics-cadvisor profile 下：镜像托管在 gcr.io，部分网络环境不可达
+    # （压测机实测 connection refused），而 profile 内任一镜像拉取失败会让整组都起不来。
+    # 能访问 gcr.io 时用 --profile metrics --profile metrics-cadvisor 一并启动；
+    # 不能访问时只用 --profile metrics，代价是没有非 JVM 容器（EMQX/Redis/PG/InfluxDB）的
+    # CPU 与内存曲线，宿主机级指标仍由 node-exporter 提供。
+    profiles: ["metrics-cadvisor"]
     image: gcr.io/cadvisor/cadvisor:v0.52.1
     command: ["--docker_only=true", "--housekeeping_interval=15s", "--store_container_labels=false",
               "--whitelisted_container_labels=com.docker.compose.service"]

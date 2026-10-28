@@ -97,6 +97,7 @@ transport **仅在主实例**上，每 `conduit.transport.monitor.interval`（�
 | 会话进程内存逼近上限 | `heap_size × 8` ≥ 堆限的 70%（见 3.1） | WARN |
 | 投递停滞 | `inflight_cnt == inflight_max` 且 `mqueue_len > 0` 且 **`send_msg`** 连续 `conduit.transport.monitor.stall-samples`（默认 6，约 3 分钟）不变 | **健康检查 DOWN** + ERROR |
 | 配置漂移 | `durable` 不为 `false` | WARN（持久会话被意外启用） |
+| 批大小与窗口不匹配 | `batch-size != inflight_max` | WARN（两者必须相等，否则批永远攒不满或窗口没用满） |
 
 投递总数的字段是 **`send_msg`**（不是 CLI 里的 `delivered_msgs`），队列上限是 `mqueue_max`，两者都由 API 直接给出，容量阈值无需另行配置。
 

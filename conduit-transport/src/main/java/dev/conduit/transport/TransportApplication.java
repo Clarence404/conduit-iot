@@ -14,6 +14,8 @@ import dev.conduit.transport.monitor.EmqxSessionClient;
 import dev.conduit.transport.monitor.SessionMonitor;
 import dev.conduit.transport.monitor.SessionMonitorProperties;
 import dev.conduit.transport.mqtt.MqttTransportProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -38,6 +40,8 @@ import java.util.concurrent.TimeUnit;
 @EnableConfigurationProperties({MqttTransportProperties.class, LeaderProperties.class,
         SessionMonitorProperties.class})
 public class TransportApplication {
+
+    private static final Logger log = LoggerFactory.getLogger(TransportApplication.class);
 
     /** 启动 transport 进程。 */
     public static void main(String[] args) {
@@ -82,12 +86,24 @@ public class TransportApplication {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofPlatform().name("session-monitor").daemon().factory());
         long millis = props.interval().toMillis();
-        scheduler.scheduleWithFixedDelay(() -> {
+        scheduler.scheduleWithFixedDelay(() -> pollOnce(election, monitor), millis, millis, TimeUnit.MILLISECONDS);
+        return scheduler;
+    }
+
+    /**
+     * 单次轮询：主实例采样，非主实例重置监控状态。整体捕获 Throwable——scheduleWithFixedDelay
+     * 的任务一旦抛出就会被永久取消且无日志，监控不能因一次意外而静默死亡。
+     */
+    static void pollOnce(LeaderElection election, SessionMonitor monitor) {
+        try {
             if (election.role() == Role.LEADER) {
                 monitor.sample();
+            } else {
+                monitor.reset();
             }
-        }, millis, millis, TimeUnit.MILLISECONDS);
-        return scheduler;
+        } catch (Throwable t) {
+            log.error("session monitor poll crashed; will retry at the next interval", t);
+        }
     }
 
     /** 健康检查组件 leader：显示角色、实例 id、连接状态与会话监控结论（监控关闭时为 null）。 */

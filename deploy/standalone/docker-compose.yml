@@ -135,8 +135,8 @@ services:
       CONDUIT_LOG_DIR: /var/log/conduit
       # 会话监控：经 EMQX REST API（只读 API key）观察自己的会话
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083
-      CONDUIT_TRANSPORT_MONITOR_API_KEY: ${EMQX_API_KEY:?EMQX_API_KEY is required}
-      CONDUIT_TRANSPORT_MONITOR_API_SECRET: ${EMQX_API_SECRET:?EMQX_API_SECRET is required}
+      CONDUIT_TRANSPORT_MONITOR_API_KEY: ${CONDUIT_EMQX_API_KEY:?CONDUIT_EMQX_API_KEY is required}
+      CONDUIT_TRANSPORT_MONITOR_API_SECRET: ${CONDUIT_EMQX_API_SECRET:?CONDUIT_EMQX_API_SECRET is required}
     volumes:
       - conduit-logs:/var/log/conduit
     depends_on:

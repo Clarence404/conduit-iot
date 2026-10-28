@@ -31,9 +31,21 @@ public record SessionMonitorProperties(
 
     /** stallSamples 为 1 时只要投递受阻就立刻判停滞，即使投递总数其实在增长也会误报，故要求至少 2。 */
     public SessionMonitorProperties {
+        if (enabled && (apiKey == null || apiKey.isBlank() || apiSecret == null || apiSecret.isBlank())) {
+            throw new IllegalArgumentException(
+                    "会话监控已启用，必须配置 conduit.transport.monitor.api-key 与 api-secret（或将 enabled 设为 false）");
+        }
         if (stallSamples < 2) {
             throw new IllegalArgumentException(
                     "conduit.transport.monitor.stall-samples 至少为 2（为 1 时投递受阻即误判停滞），当前为 " + stallSamples);
         }
+    }
+
+    /** 打码 apiKey 与 apiSecret，避免 record 自动生成的 toString 把密钥带进日志。 */
+    @Override
+    public String toString() {
+        return "SessionMonitorProperties[enabled=" + enabled + ", baseUrl=" + baseUrl + ", apiKey=******"
+                + ", apiSecret=******, interval=" + interval + ", stallSamples=" + stallSamples
+                + ", heapLimit=" + heapLimit + "]";
     }
 }

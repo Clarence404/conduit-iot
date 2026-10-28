@@ -59,4 +59,21 @@ class LeaderHealthIndicatorTest {
         assertThat(h.getDetails()).containsKey("sessionError").containsKey("session")
                 .containsEntry("role", "LEADER");
     }
+
+    @Test
+    void standbyDoesNotReuseStaleVerdict() {
+        SessionMonitor monitor = new SessionMonitor(
+                () -> new SessionSnapshot(0, 50, 100, 32, 32, 7, 0, false), 2, 1L << 28, 32);
+        monitor.sample();
+        monitor.sample();
+        LeaderElection standby = mock(LeaderElection.class);
+        when(standby.role()).thenReturn(Role.STANDBY);
+        when(standby.instanceId()).thenReturn("inst-2");
+
+        Health h = new LeaderHealthIndicator(standby, monitor).health();
+
+        assertThat(h.getStatus()).isEqualTo(Status.UP);
+        assertThat(h.getDetails()).doesNotContainKey("sessionError").containsKey("session");
+        assertThat(h.getDetails().get("session").toString()).contains("备实例");
+    }
 }

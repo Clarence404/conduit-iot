@@ -1,9 +1,12 @@
 package dev.conduit.transport.monitor;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.function.Supplier;
 
@@ -14,6 +17,9 @@ import java.util.function.Supplier;
  */
 public class EmqxSessionClient implements Supplier<SessionSnapshot> {
 
+    /** 连接与读超时。 */
+    static final Duration TIMEOUT = Duration.ofSeconds(5);
+
     private final RestClient client;
     private final String clientId;
 
@@ -22,7 +28,12 @@ public class EmqxSessionClient implements Supplier<SessionSnapshot> {
         this.clientId = clientId;
         String credentials = Base64.getEncoder().encodeToString(
                 (props.apiKey() + ":" + props.apiSecret()).getBytes(StandardCharsets.UTF_8));
+        // 必须设超时：会话楔死时 REST 可能挂起，无超时会让单线程轮询永久阻塞、监控自己哑掉
+        JdkClientHttpRequestFactory http = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(TIMEOUT).build());
+        http.setReadTimeout(TIMEOUT);
         this.client = RestClient.builder()
+                .requestFactory(http)
                 .baseUrl(props.baseUrl())
                 .defaultHeader("Authorization", "Basic " + credentials)
                 .build();

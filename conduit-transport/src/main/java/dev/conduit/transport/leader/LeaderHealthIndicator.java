@@ -4,6 +4,8 @@ import dev.conduit.transport.monitor.SessionMonitor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 
+import java.util.Map;
+
 /**
  * 健康检查组件 leader（/actuator/health 的 components.leader）：details 含 role（LEADER / STANDBY）、
  * instanceId、connected（主实例的协议适配器是否已连接），以及会话监控的 session 明细。
@@ -25,7 +27,10 @@ public class LeaderHealthIndicator implements HealthIndicator {
     @Override
     public Health health() {
         Health.Builder builder = Health.up();
-        if (monitor != null) {
+        if (monitor != null && election.role() != LeaderElection.Role.LEADER) {
+            // 备实例不采样，不能沿用（可能已过期的）结论，也要让人看出本实例没在监控
+            builder.withDetail("session", Map.of("monitoring", "备实例，不监控本会话"));
+        } else if (monitor != null) {
             SessionMonitor.Verdict verdict = monitor.verdict();
             if (!verdict.healthy()) {
                 builder = Health.down().withDetail("sessionError", verdict.reason());

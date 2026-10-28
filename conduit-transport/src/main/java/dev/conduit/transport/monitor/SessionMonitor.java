@@ -16,7 +16,8 @@ import java.util.function.Supplier;
  * 关闭磁盘持久会话后预期不再发生，一旦复现必须能被发现。
  *
  * <p>只有投递停滞会置为不健康（系统停摆）；其余各项只告警，避免健康检查变得没人信。
- * 采样失败不改变健康结论，只标记 pollFailed——监控本身的抖动不应制造故障。
+ * 采样偶发失败不改变健康结论，只标记 pollFailed——监控本身的抖动不应制造故障；但连续失败达到
+ * stallSamples 次（key 配错、EMQX 不可达或接口挂起）则置为不健康：无法采样的监控不能继续报「健康」。
  */
 public class SessionMonitor {
 
@@ -36,6 +37,8 @@ public class SessionMonitor {
 
     private SessionSnapshot previous;
     private int unchangedSendSamples;
+    private int consecutiveFailures;
+    private long lastSuccessMillis;
     private volatile Verdict verdict = new Verdict(true, "not sampled yet", Map.of());
 
     /**
@@ -52,7 +55,7 @@ public class SessionMonitor {
         this.batchSize = batchSize;
     }
 
-    /** 当前结论；从未成功采样时为健康。 */
+    /** 当前结论；从未采样过时为健康（偶发失败不翻转，连续失败达阈值才翻转）。 */
     public Verdict verdict() {
         return verdict;
     }
@@ -62,20 +65,34 @@ public class SessionMonitor {
      * 其余各项是告警——丢弃虽然是真实的数据丢失，但系统仍在正常推进。
      * 采样失败时保留上次结论，仅标记 pollFailed。
      */
-    public void sample() {
+    public synchronized void sample() {
         SessionSnapshot now;
         try {
             now = source.get();
         } catch (RuntimeException e) {
-            // 保留上次结论：EMQX 短暂不可达不等于会话有问题
+            consecutiveFailures++;
             Map<String, Object> failed = new LinkedHashMap<>(verdict.details());
             failed.put("pollFailed", true);
-            verdict = new Verdict(verdict.healthy(), verdict.reason(), Map.copyOf(failed));
-            log.warn("EMQX session poll failed, keeping the previous verdict: {}", e.getMessage());
+            failed.put("consecutiveFailures", consecutiveFailures);
+            failed.put("lastSuccessAt", lastSuccessMillis == 0 ? "never" : String.valueOf(lastSuccessMillis));
+            if (consecutiveFailures >= stallSamples) {
+                String reason = "会话监控连续 " + consecutiveFailures + " 次采样失败，无法判断会话健康";
+                verdict = new Verdict(false, reason, Map.copyOf(failed));
+                log.error("{}: {}", reason, e.getMessage());
+            } else {
+                // 偶发失败保留上次结论：EMQX 短暂不可达不等于会话有问题
+                verdict = new Verdict(verdict.healthy(), verdict.reason(), Map.copyOf(failed));
+                log.warn("EMQX session poll failed ({} in a row), keeping the previous verdict: {}",
+                        consecutiveFailures, e.getMessage());
+            }
             return;
         }
+        consecutiveFailures = 0;
+        lastSuccessMillis = System.currentTimeMillis();
 
         Map<String, Object> details = new LinkedHashMap<>();
+        details.put("consecutiveFailures", 0);
+        details.put("lastSuccessAt", lastSuccessMillis);
         details.put("mqueueLen", now.mqueueLen());
         details.put("sendMsg", now.sendMsg());
 
@@ -129,6 +146,18 @@ public class SessionMonitor {
         } else {
             verdict = new Verdict(true, "ok", Map.copyOf(details));
         }
+    }
+
+    /**
+     * 清空内部状态与结论。本实例不再是主实例时调用：此后读到的不是自己的会话，
+     * 旧快照与停滞计数不能带到下次当选后继续累加。
+     */
+    public synchronized void reset() {
+        previous = null;
+        unchangedSendSamples = 0;
+        consecutiveFailures = 0;
+        lastSuccessMillis = 0;
+        verdict = new Verdict(true, "not sampled yet", Map.of());
     }
 
     /**

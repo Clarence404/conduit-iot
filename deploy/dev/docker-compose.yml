@@ -114,6 +114,9 @@ services:
       # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
       # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警（会话监控随后续变更落地）
       EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-100000}
+      # 在途窗口：EMQX 最多允许多少条已投递未确认的消息。transport 的待提交批就被它硬限，
+      # 所以必须与 conduit.transport.mqtt.batch-size 保持相等；要提高吞吐两者一起调大
+      EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-32}
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录
       EMQX_NODE__NAME: emqx@127.0.0.1

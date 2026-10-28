@@ -12,7 +12,9 @@ import java.time.Duration;
  * @param username             为空表示匿名连接（仅测试环境）
  * @param sessionExpirySeconds 会话保留秒数，与 EMQX 持久会话消息保留期（1 天）一致
  * @param ownClientPrefix      平台内部客户端的 clientId 前缀，这些客户端的上下线事件不转发
- * @param batchSize            一次提交到总线的最大条数；1 等价于逐条提交（回退开关）
+ * @param batchSize            一次提交到总线的最大条数；1 等价于逐条提交（回退开关）。
+ *                             必须与 EMQX 的 mqtt.max_inflight 相等——待提交条目数就是 EMQX 侧未确认的
+ *                             在途数，被该窗口硬限，配大了批永远攒不满、每批白等满 batchDelay
  * @param batchDelay           攒批的最长等待：不足 batchSize 时最多等这么久也要提交，
  *                             直接体现为 PUBACK 的最坏额外延迟
  */
@@ -25,7 +27,7 @@ public record MqttTransportProperties(
         String password,
         @DefaultValue("86400") long sessionExpirySeconds,
         @DefaultValue("conduit-") String ownClientPrefix,
-        @DefaultValue("64") int batchSize,
+        @DefaultValue("32") int batchSize,
         @DefaultValue("5ms") Duration batchDelay) {
 
     public MqttTransportProperties {

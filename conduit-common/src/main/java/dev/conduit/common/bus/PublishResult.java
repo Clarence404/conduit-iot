@@ -10,6 +10,7 @@ package dev.conduit.common.bus;
  */
 public record PublishResult(String id, RuntimeException failure) {
 
+    /** 强制 id / failure 二选一：两者都有或都没有都无法表达「这条到底成没成」，调用方会误确认或误重投。 */
     public PublishResult {
         if ((id == null) == (failure == null)) {
             throw new IllegalArgumentException("PublishResult requires exactly one of id / failure");

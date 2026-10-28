@@ -84,6 +84,21 @@ class RedisStreamMessageBusIT {
     }
 
     @Test
+    void batchReturnsPerMessageFailuresInsteadOfThrowingWhenXaddFails() {
+        // 把上行流的 key 写成普通字符串，使整批 XADD 都返回 WRONGTYPE
+        redis.opsForValue().set("test:up", "not-a-stream");
+        try {
+            List<PublishResult> results = bus.publish(List.of(message("dk1"), message("dk2")));
+
+            assertThat(results).hasSize(2);
+            assertThat(results).noneMatch(PublishResult::succeeded);
+            assertThat(results).allSatisfy(r -> assertThat(r.failure()).isNotNull());
+        } finally {
+            redis.delete("test:up");
+        }
+    }
+
+    @Test
     void emptyBatchPublishesNothing() {
         assertThat(bus.publish(List.of())).isEmpty();
     }

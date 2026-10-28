@@ -5,6 +5,7 @@ import dev.conduit.common.message.RawMessageCodec;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.connection.Limit;
+import org.springframework.data.redis.connection.RedisPipelineException;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -56,25 +57,34 @@ public class RedisStreamMessageBus implements MessageBus {
     /**
      * 管道提交整批 XADD：一次网络往返，吞吐不再受「每条消息一次往返」的限制。
      * 管道中某条失败不影响其他条，所以逐条映射结果；返回值与入参等长同序。
+     * 有命令失败时 executePipelined 会抛 RedisPipelineException，这里捕获并取回逐条结果，不向外抛。
      */
     @Override
     public List<PublishResult> publish(List<RawMessage> messages) {
         if (messages.isEmpty()) {
             return List.of();
         }
-        List<Object> raw = redis.executePipelined((RedisCallback<Object>) c -> {
-            for (RawMessage message : messages) {
-                Map<byte[], byte[]> fields = new LinkedHashMap<>();
-                RawMessageCodec.toFields(message).forEach((k, v) -> fields.put(bytes(k), bytes(v)));
-                c.streamCommands().xAdd(
-                        StreamRecords.rawBytes(fields).withStreamKey(bytes(props.streamKey())),
-                        XAddOptions.maxlen(props.maxLen()).approximateTrimming(true));
-            }
-            return null;
-        });
+        List<Object> raw;
+        try {
+            raw = redis.executePipelined((RedisCallback<Object>) c -> {
+                for (RawMessage message : messages) {
+                    Map<byte[], byte[]> fields = new LinkedHashMap<>();
+                    RawMessageCodec.toFields(message).forEach((k, v) -> fields.put(bytes(k), bytes(v)));
+                    c.streamCommands().xAdd(
+                            StreamRecords.rawBytes(fields).withStreamKey(bytes(props.streamKey())),
+                            XAddOptions.maxlen(props.maxLen()).approximateTrimming(true));
+                }
+                return null;
+            });
+        } catch (RedisPipelineException e) {
+            // 实测：管道中任一命令失败时 Spring 不会把异常放进结果列表，而是整体抛出
+            // RedisPipelineException；成功命令的结果仍在 getPipelineResult() 里（失败位为异常对象）。
+            // 取回逐条结果继续映射，避免丢掉已成功条目的 id 而让上游整批重投、重复写入。
+            raw = e.getPipelineResult();
+        }
         List<PublishResult> results = new ArrayList<>(messages.size());
         for (int i = 0; i < messages.size(); i++) {
-            Object value = i < raw.size() ? raw.get(i) : null;
+            Object value = raw != null && i < raw.size() ? raw.get(i) : null;
             if (value instanceof RecordId id) {
                 results.add(PublishResult.ok(id.getValue()));
             } else if (value instanceof Exception e) {

@@ -100,11 +100,18 @@ services:
         sed -e "s|__CONDUIT_INTERNAL_TOKEN__|$$(esc "$${CONDUIT_INTERNAL_TOKEN}")|"
         -e "s|__CONDUIT_AUTH_URL__|$$(esc "$${CONDUIT_AUTH_URL}")|"
         /conduit/base.hocon.tpl > /opt/emqx/etc/base.hocon
+        && sed -e "s|__EMQX_API_KEY__|$$(esc "$${EMQX_API_KEY}")|"
+        -e "s|__EMQX_API_SECRET__|$$(esc "$${EMQX_API_SECRET}")|"
+        /conduit/api-key.bootstrap.tpl > /opt/emqx/data/api-key.bootstrap
         && exec /usr/bin/docker-entrypoint.sh /opt/emqx/bin/emqx foreground
     environment:
       CONDUIT_INTERNAL_TOKEN: ${CONDUIT_INTERNAL_TOKEN:?CONDUIT_INTERNAL_TOKEN is required}
       # 鉴权回调地址（必填）：开发时为开发机上 server 的地址 http://<dev-host>:8080；独立部署包固定为 http://conduit-server:8080
       CONDUIT_AUTH_URL: ${CONDUIT_AUTH_URL:?CONDUIT_AUTH_URL is required}
+      # transport 读取会话指标用的只读 API key（EMQX 5 的 REST API 不接受控制台账号密码），经 bootstrap 文件下发
+      EMQX_API_KEY__BOOTSTRAP_FILE: /opt/emqx/data/api-key.bootstrap
+      EMQX_API_KEY: ${EMQX_API_KEY:?EMQX_API_KEY is required}
+      EMQX_API_SECRET: ${EMQX_API_SECRET:?EMQX_API_SECRET is required}
       EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME:-admin}
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD is required}
       # 内存持久会话（2026-10-28）：磁盘持久会话在积压下会静默楔死且只能丢弃会话恢复，已关闭。
@@ -112,7 +119,7 @@ services:
       # 端到端不丢由设备侧的消息 id + 业务回执负责，见 docs/device-integration.md。
       EMQX_DURABLE_SESSIONS__ENABLE: "false"
       # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
-      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警（会话监控随后续变更落地）
+      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警
       EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-100000}
       # 在途窗口：EMQX 最多允许多少条已投递未确认的消息。transport 的待提交批就被它硬限，
       # 所以必须与 conduit.transport.mqtt.batch-size 保持相等；要提高吞吐两者一起调大
@@ -127,6 +134,7 @@ services:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读
       - ./emqx/base.hocon.tpl:/conduit/base.hocon.tpl:ro
+      - ./emqx/api-key.bootstrap.tpl:/conduit/api-key.bootstrap.tpl:ro
       - ./emqx/acl.conf:/opt/emqx/etc/conduit-acl.conf:ro
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${MQTT_PORT:-1883}:1883"

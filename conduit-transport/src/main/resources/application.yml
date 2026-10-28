@@ -37,6 +37,21 @@ conduit:
       renew-interval: 5s
       acquire-interval: 2s
 
+    # 经 EMQX REST API 观察自己的会话：丢弃、队列水位、会话进程内存与投递停滞。
+    # 2026-10-28 定位的楔死故障中所有既有信号都是绿的，这里是唯一能发现它的地方。
+    monitor:
+      enabled: ${TRANSPORT_MONITOR_ENABLED:true}
+      base-url: ${CONDUIT_TRANSPORT_MONITOR_BASE_URL:http://localhost:18083}
+      # EMQX 5 的 REST API 只认 API key/secret，不接受控制台账号密码
+      api-key: ${CONDUIT_TRANSPORT_MONITOR_API_KEY:}
+      api-secret: ${CONDUIT_TRANSPORT_MONITOR_API_SECRET:}
+      interval: 30s
+      # 连续 6 次采样都「投递受阻且投递总数不变」才判定停滞（至少 2）。N 次采样之间只有 N-1 个间隔，
+      # 所以从首次异常采样到 DOWN 是 5×30s=150 秒（约 2.5 分钟），算上采样相位，自故障真正开始起最长约 3 分钟
+      stall-samples: 6
+      # 须与编排中 EMQX_CONNECTION_MAX_HEAP_SIZE 保持一致
+      heap-limit: 256MB
+
 management:
   endpoint:
     health:

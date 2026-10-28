@@ -109,10 +109,10 @@ services:
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD is required}
       # 内存持久会话（2026-10-28）：磁盘持久会话在积压下会静默楔死且只能丢弃会话恢复，已关闭。
       # transport 离线期间的消息进内存队列 mqueue，重连后补发；EMQX 重启则不保留——
-      # 端到端不丢由设备侧的消息 id + 业务回执负责，见设备接入契约。
+      # 端到端不丢由设备侧的消息 id + 业务回执负责，见 docs/device-integration.md。
       EMQX_DURABLE_SESSIONS__ENABLE: "false"
       # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
-      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警
+      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警（会话监控随后续变更落地）
       EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-100000}
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录

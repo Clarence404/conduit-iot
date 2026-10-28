@@ -115,7 +115,7 @@ services:
     restart: unless-stopped
 
   # transport 单活多备（V0.2-R）：两个实例经 Redis 锁 conduit:transport:leader 选主，只有主实例连接 EMQX；
-  # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个磁盘持久会话
+  # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个内存持久会话
   conduit-transport: &transport
     build:
       context: ../..

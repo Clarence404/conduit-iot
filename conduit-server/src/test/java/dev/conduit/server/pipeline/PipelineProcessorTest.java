@@ -75,7 +75,7 @@ class PipelineProcessorTest {
     @BeforeEach
     void setUp() {
         PipelineProperties props = new PipelineProperties(true, GROUP, "c", 100,
-                Duration.ofSeconds(1), Duration.ofSeconds(60), Duration.ofSeconds(10), 5);
+                Duration.ofSeconds(1), Duration.ofSeconds(60), Duration.ofSeconds(10), 5, 1);
         processor = new PipelineProcessor(bus, props, identities, thingModels, decoders, presenceHandler, writer,
                 latest, presence, meters, Duration.ofMillis(1), Duration.ofMillis(5));
         when(thingModels.find("pk")).thenReturn(Optional.of(new ProductProfile("standard-json", Map.of())));
@@ -471,7 +471,7 @@ class PipelineProcessorTest {
 
     private PipelineProcessor processorWithClock(long nowMillis) {
         PipelineProperties props = new PipelineProperties(true, GROUP, "c", 100,
-                Duration.ofSeconds(1), Duration.ofSeconds(60), Duration.ofSeconds(10), 5);
+                Duration.ofSeconds(1), Duration.ofSeconds(60), Duration.ofSeconds(10), 5, 1);
         return new PipelineProcessor(bus, props, identities, thingModels, decoders, presenceHandler, writer,
                 latest, presence, meters, Duration.ofMillis(1), Duration.ofMillis(5), () -> nowMillis);
     }

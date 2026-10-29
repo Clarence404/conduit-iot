@@ -7,11 +7,15 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * 流水线后台消费线程，随应用生命周期启停（conduit.pipeline.enabled=false 时不创建）。
- * 在一条虚拟线程中循环：定期认领遗留投递，再读取新消息交给 {@link PipelineRunner}；
- * 循环内出现任何异常（如 Redis 不可用）都按 1s→30s 指数退避后继续，成功一轮后退避复位。
+ * 启动 {@code conduit.pipeline.workers} 条虚拟线程，每条是消费组里一个独立消费者（名为 consumer-序号），
+ * 各自循环：定期认领遗留投递，再读取新消息交给 {@link PipelineRunner}；
+ * 循环内出现任何异常（如 Redis 不可用）都按 1s→30s 指数退避后继续，成功一轮后退避复位，各线程互不影响。
+ * 为什么并发、以及为什么乱序安全，见 {@link PipelineProperties} 的 workers 说明。
  */
 @Component
 @ConditionalOnProperty(prefix = "conduit.pipeline", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -26,7 +30,7 @@ public class PipelineWorker implements SmartLifecycle {
     private final Clock clock;
 
     private volatile boolean running;
-    private Thread thread;
+    private final List<Thread> threads = new ArrayList<>();
 
     public PipelineWorker(PipelineRunner runner, PipelineProperties props, Clock clock) {
         this.runner = runner;
@@ -34,26 +38,40 @@ public class PipelineWorker implements SmartLifecycle {
         this.clock = clock;
     }
 
-    /** 启动消费线程。 */
+    /** 启动 workers 条消费线程，每条一个独立消费者名。 */
     @Override
     public void start() {
         running = true;
-        thread = Thread.ofVirtual().name("pipeline-worker").start(this::loop);
-        log.info("Pipeline worker started as consumer {}", props.consumer());
+        for (int i = 0; i < props.workers(); i++) {
+            String consumer = props.consumer() + "-" + i;
+            threads.add(Thread.ofVirtual().name("pipeline-worker-" + i).start(() -> loop(consumer)));
+        }
+        log.info("Pipeline started {} worker(s) as consumers {}-0..{}", props.workers(), props.consumer(),
+                props.workers() - 1);
     }
 
-    /** 停止循环：中断线程并最多等待 5 秒；正在处理的批次若被中断，未 ACK 的投递留待之后认领。 */
+    /**
+     * 停止循环：中断全部线程并合计最多等待 5 秒；正在处理的批次若被中断，未 ACK 的投递留待之后认领。
+     * 等待时间按全部线程共享一个截止时刻，而不是每条各等 5 秒——否则 workers 越多，停机越慢。
+     */
     @Override
     public void stop() {
         running = false;
-        if (thread != null) {
-            thread.interrupt();
+        threads.forEach(Thread::interrupt);
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        for (Thread t : threads) {
+            long left = (deadline - System.nanoTime()) / 1_000_000;
+            if (left <= 0) {
+                break;
+            }
             try {
-                thread.join(5_000);
+                t.join(left);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                break;
             }
         }
+        threads.clear();
     }
 
     @Override
@@ -62,21 +80,23 @@ public class PipelineWorker implements SmartLifecycle {
     }
 
     /**
-     * 消费主循环：每隔 claimInterval 先把待认领的积压全部认领处理完，再读取新消息。
+     * 一个消费者的主循环：每隔 claimInterval 先把待认领的积压全部认领处理完，再读取新消息。
      * 异常时退避重试；线程被中断或 running 变为 false 时退出。
+     *
+     * @param consumer 本循环在消费组中的消费者名
      */
-    private void loop() {
+    private void loop(String consumer) {
         long nextClaimAt = 0;
         long backoff = INITIAL_BACKOFF_MS;
         while (running) {
             try {
                 if (clock.millis() >= nextClaimAt) {
-                    while (running && runner.claimOnce() > 0) {
+                    while (running && runner.claimOnce(consumer) > 0) {
                         // 把积压的待处理消息全部认领完
                     }
                     nextClaimAt = clock.millis() + props.claimInterval().toMillis();
                 }
-                runner.pollOnce();
+                runner.pollOnce(consumer);
                 backoff = INITIAL_BACKOFF_MS;
             } catch (Exception e) {
                 if (!running) {

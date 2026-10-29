@@ -35,32 +35,44 @@ public class PipelineRunner {
         bus.ensureGroup(props.group());
     }
 
+    /** 以配置中的消费者名读取并处理一批新消息；测试直接调用。见 {@link #pollOnce(String)}。 */
+    public int pollOnce() {
+        return pollOnce(props.consumer());
+    }
+
     /**
-     * 读取并处理一批新消息（最长阻塞 props.block）。
+     * 以指定消费者身份读取并处理一批新消息（最长阻塞 props.block）。
+     * 同一进程内的多个消费循环各用一个消费者名，由消费组在它们之间分摊消息。
      *
      * @return 本次读到的投递数，0 表示无新消息
      */
-    public int pollOnce() {
+    public int pollOnce(String consumer) {
         List<Delivery> batch = guarded(
-                () -> bus.read(props.group(), props.consumer(), props.batchSize(), props.block()));
+                () -> bus.read(props.group(), consumer, props.batchSize(), props.block()));
         if (!batch.isEmpty()) {
-            log.debug("Read {} deliveries as consumer {} (group {})", batch.size(), props.consumer(), props.group());
+            log.debug("Read {} deliveries as consumer {} (group {})", batch.size(), consumer, props.group());
             processor.process(batch);
         }
         return batch.size();
     }
 
+    /** 以配置中的消费者名认领遗留投递；测试直接调用。见 {@link #claimOnce(String)}。 */
+    public int claimOnce() {
+        return claimOnce(props.consumer());
+    }
+
     /**
-     * 认领并处理一批空闲超过 claimMinIdle 的待确认投递（其他实例崩溃或本实例未 ACK 遗留的），不阻塞。
+     * 以指定消费者身份认领并处理一批空闲超过 claimMinIdle 的待确认投递（其他实例或消费者崩溃遗留的），不阻塞。
+     * claimMinIdle 必须远大于单批处理时长，否则会把别的消费者正在处理的消息抢过来重复处理。
      *
      * @return 本次认领的投递数，0 表示没有可认领的
      */
-    public int claimOnce() {
+    public int claimOnce(String consumer) {
         List<Delivery> batch = guarded(
-                () -> bus.claimStale(props.group(), props.consumer(), props.claimMinIdle(), props.batchSize()));
+                () -> bus.claimStale(props.group(), consumer, props.claimMinIdle(), props.batchSize()));
         if (!batch.isEmpty()) {
             log.debug("Claimed {} stale deliveries (idle >= {} ms) as consumer {}", batch.size(),
-                    props.claimMinIdle().toMillis(), props.consumer());
+                    props.claimMinIdle().toMillis(), consumer);
             processor.process(batch);
         }
         return batch.size();

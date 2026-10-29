@@ -21,6 +21,15 @@ import java.time.Duration;
  * @param claimMinIdle  待确认消息空闲多久后可被认领（崩溃实例遗留的投递）
  * @param claimInterval worker 两次认领扫描的最短间隔
  * @param maxDeliveries 单条消息的最大投递次数，超过则进死信 MAX_DELIVERY_EXCEEDED
+ * @param workers       本进程内并发运行的消费循环数，每个是消费组里一个独立消费者（名为 consumer-序号）。
+ *                      为什么要并发：每批写 InfluxDB 要等 WAL 刷盘（约 0.5～1 秒），单线程串行时这段时间
+ *                      线程纯等、Redis 与 CPU 都闲着。而 InfluxDB 的刷盘是周期性的，同一周期内到达的多个
+ *                      写请求会被同一次刷盘一起落盘，所以多批同时在途能把等待摊薄，且每批仍等刷盘后才 ACK，
+ *                      持久性不受影响（这是它优于 no_sync 的地方）。缩短刷盘间隔则是负优化——实测会把批
+ *                      变小、让每批的固定开销摊不薄，吞吐反降 36%。
+ *                      并发后各批完成顺序不再确定，但各下游都不依赖顺序：最新值按测点比较 ts、InfluxDB
+ *                      按（序列, ts）幂等、在线状态有 since 守护。多消费者分摊也是消费组的本来用法，
+ *                      与将来拆成多个进程是同一套机制。必须为正数。
  */
 @ConfigurationProperties(prefix = "conduit.pipeline")
 public record PipelineProperties(
@@ -31,5 +40,13 @@ public record PipelineProperties(
         @DefaultValue("1s") Duration block,
         @DefaultValue("60s") Duration claimMinIdle,
         @DefaultValue("10s") Duration claimInterval,
-        @DefaultValue("5") int maxDeliveries) {
+        @DefaultValue("5") int maxDeliveries,
+        @DefaultValue("4") int workers) {
+
+    /** 启动时校验：workers 为 0 或负数时没有任何消费循环，消息会静默堆积，必须在启动时就失败。 */
+    public PipelineProperties {
+        if (workers < 1) {
+            throw new IllegalArgumentException("conduit.pipeline.workers must be >= 1, but was " + workers);
+        }
+    }
 }

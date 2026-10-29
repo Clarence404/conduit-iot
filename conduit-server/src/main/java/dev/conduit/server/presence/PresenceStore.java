@@ -42,6 +42,8 @@ public class PresenceStore {
 
     private static final ClassPathResource APPLY_RESOURCE = new ClassPathResource("redis/presence-apply.lua");
     private static final RedisScript<Long> APPLY = RedisScript.of(APPLY_RESOURCE, Long.class);
+    /** 脚本源码，类加载时读一次：批量路径每批都要 SCRIPT LOAD，不能每批再去 jar 里读资源文件。 */
+    private static final byte[] SCRIPT_BYTES = scriptSource();
 
     private final StringRedisTemplate redis;
 
@@ -85,10 +87,15 @@ public class PresenceStore {
         if (lastSeenByDevice.isEmpty()) {
             return;
         }
-        byte[] script = scriptSource();
         byte[] grace = Long.toString(DATA_ONLINE_GRACE_MILLIS).getBytes(StandardCharsets.UTF_8);
+        // 每批只 SCRIPT LOAD 一次，之后全部 EVALSHA。原先是每台设备一次 EVAL 并附带完整脚本源码
+        // （约 1.9KB），600 台设备即每批约 1.1MB 冗余传输，且每批还要从 jar 重新读一遍资源文件。
+        // 这笔开销与批大小无关、只与设备数有关，是流水线每批固定成本的主要来源之一。
+        // pipeline 内无法按 NOSCRIPT 回退到 EVAL，所以先在 pipeline 外加载（幂等）。
+        redis.execute((RedisCallback<String>) c -> c.scriptingCommands().scriptLoad(SCRIPT_BYTES));
         List<Object> results = redis.executePipelined((RedisCallback<Object>) connection -> {
-            lastSeenByDevice.forEach((dk, ts) -> connection.scriptingCommands().eval(script, ReturnType.INTEGER, 1,
+            lastSeenByDevice.forEach((dk, ts) -> connection.scriptingCommands().evalSha(APPLY.getSha1(),
+                    ReturnType.INTEGER, 1,
                     key(dk).getBytes(StandardCharsets.UTF_8), "true".getBytes(StandardCharsets.UTF_8),
                     Long.toString(ts).getBytes(StandardCharsets.UTF_8), new byte[0],
                     "data".getBytes(StandardCharsets.UTF_8), grace));

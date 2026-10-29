@@ -192,6 +192,8 @@ services:
   # 日志写到共享卷的子目录，避免两个进程滚动同一个日志文件
   conduit-transport-2:
     <<: *transport
+    # 固定容器名：默认名会带副本序号成为 conduit-conduit-transport-2-1，与第一个 transport 的 -1 并列时易误读
+    container_name: conduit-conduit-transport-2
     environment:
       <<: *transport-env
       CONDUIT_LOG_DIR: /var/log/conduit/transport-2

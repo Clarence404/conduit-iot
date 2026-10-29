@@ -15,22 +15,24 @@ import dev.conduit.server.telemetry.TelemetryPoint;
 import dev.conduit.server.telemetry.TelemetryWriter;
 import dev.conduit.server.telemetry.WriteResult;
 import dev.conduit.server.thingmodel.ThingModelCache;
+import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import io.micrometer.core.instrument.Timer;
-import java.util.function.LongSupplier;
-import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -45,6 +47,14 @@ public class PipelineProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(PipelineProcessor.class);
 
+    /** 阶段耗时的指标名；各阶段以 stage 标签区分。 */
+    static final String STAGE_METRIC = "conduit.pipeline.stage";
+    /**
+     * 串行阶段：identity 批量查设备身份、influx 写时序库、latest 更新最新值、ack 确认，
+     * total 为整批处理总耗时。total 减去四个子阶段即解码与校验等纯 CPU 开销。
+     */
+    static final List<String> STAGES = List.of("total", "identity", "influx", "latest", "ack");
+
     /** 已通过解码与校验、等待批量写库的属性消息：原投递与处理结果。 */
     private record PendingProperty(Delivery delivery, Prepared prepared) {
     }
@@ -58,6 +68,21 @@ public class PipelineProcessor {
     private final Backoff backoff;
     /** 入库端到端延迟 Timer，构造时解析一次并复用，避免每条消息查注册表。 */
     private final Timer ingestLatency;
+    /**
+     * 每批各阶段耗时，按 stage 标签分开，构造时建好复用。
+     *
+     * <p>为什么需要：入库吞吐约等于「每批条数 ÷ 每批耗时」，而每批耗时由若干串行阶段相加
+     * （流水线是单条虚拟线程，阶段之间不并发）。只有分阶段计时才能回答「吞吐上不去是卡在
+     * 等 InfluxDB 刷盘，还是卡在 Redis，还是批根本没攒满」。
+     * 此前只能靠 DEBUG 日志读到写库耗时，但同类里还有逐条 DEBUG，高负载下开启日志本身就会
+     * 把被测对象拖慢，测到的不是真实耗时——所以必须用指标而不是日志。
+     */
+    private final Map<String, Timer> stageTimers;
+    /**
+     * 每批的投递条数分布。与阶段耗时配合才能解释吞吐：批没攒满时吞吐受到达率限制（不是系统到顶），
+     * 批攒满了才说明受 batch-size 或下游限制。
+     */
+    private final DistributionSummary batchSize;
     /** 当前时间（毫秒）来源，生产为系统时钟，测试可替换以构造时钟漂移。 */
     private final LongSupplier clock;
 
@@ -78,6 +103,17 @@ public class PipelineProcessor {
                 .publishPercentileHistogram()
                 .minimumExpectedValue(Duration.ofMillis(1))
                 .maximumExpectedValue(Duration.ofSeconds(60))
+                .register(meters);
+        this.stageTimers = STAGES.stream().collect(Collectors.toMap(s -> s, s -> Timer.builder(STAGE_METRIC)
+                .tag("stage", s)
+                .description("流水线每批各阶段耗时；total 为整批处理总耗时，其余为其中的串行子阶段")
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(1))
+                .maximumExpectedValue(Duration.ofSeconds(60))
+                .register(meters)));
+        this.batchSize = DistributionSummary.builder("conduit.pipeline.batch.size")
+                .description("每批从总线读到的投递条数")
+                .publishPercentileHistogram()
                 .register(meters);
         this.bus = bus;
         this.props = props;
@@ -118,10 +154,12 @@ public class PipelineProcessor {
      * @throws ProcessingAbortedException 线程在退避重试中被中断；已读取但未处理的投递保持未 ACK，之后重新认领
      */
     public void process(List<Delivery> batch) {
+        long batchStart = System.nanoTime();
+        batchSize.record(batch.size());
         log.debug("Processing batch of {} deliveries", batch.size());
         List<String> presenceAcks = new ArrayList<>();
         List<PendingProperty> properties = new ArrayList<>();
-        Map<String, DeviceIdentity> known = prefetchIdentities(batch);
+        Map<String, DeviceIdentity> known = timed("identity", () -> prefetchIdentities(batch));
 
         for (Delivery delivery : batch) {
             if (delivery.deliveryCount() > props.maxDeliveries()) {
@@ -166,6 +204,16 @@ public class PipelineProcessor {
         if (!properties.isEmpty()) {
             writeProperties(properties);
         }
+        // 即使中途抛出也不记录 total：半截的耗时混进百分位只会误导，宁可少一个样本
+        stageTimers.get("total").record(System.nanoTime() - batchStart, TimeUnit.NANOSECONDS);
+    }
+
+    /** 给一个阶段计时并返回其结果；阶段抛出时不记录样本（半截耗时会污染百分位）。 */
+    private <T> T timed(String stage, Supplier<T> action) {
+        long start = System.nanoTime();
+        T result = action.get();
+        stageTimers.get(stage).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+        return result;
     }
 
     /**
@@ -225,7 +273,7 @@ public class PipelineProcessor {
     private void writeProperties(List<PendingProperty> items) {
         List<TelemetryPoint> points = items.stream().map(i -> i.prepared().point()).toList();
         long writeStart = System.nanoTime();
-        WriteResult result = backoff.run("influx write", () -> ingestor.write(points));
+        WriteResult result = timed("influx", () -> backoff.run("influx write", () -> ingestor.write(points)));
         log.debug("Influx write: lines={} rejected={} elapsedMs={}", points.size(), result.rejected().size(),
                 (System.nanoTime() - writeStart) / 1_000_000);
         Set<Integer> rejected = result.rejected().stream()
@@ -249,7 +297,7 @@ public class PipelineProcessor {
         }
 
         // 阶段二：最新值一次 pipeline 提交；批量失败（不可恢复）时退回逐条，使失败只影响出错的那一条
-        List<PendingProperty> updated = updateLatest(candidates);
+        List<PendingProperty> updated = timed("latest", () -> updateLatest(candidates));
 
         List<String> acks = new ArrayList<>();
         Map<String, Long> reportedAt = new LinkedHashMap<>();
@@ -277,7 +325,10 @@ public class PipelineProcessor {
                 dead(item.delivery(), DeadReason.PROCESSING_ERROR);
             }
         }
-        ack(acks);
+        timed("ack", () -> {
+            ack(acks);
+            return null;
+        });
         markOnline(reportedAt);
         meters.counter("conduit.pipeline.processed", "type", "property").increment(acks.size());
     }

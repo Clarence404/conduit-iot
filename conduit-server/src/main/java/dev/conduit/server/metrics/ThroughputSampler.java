@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Executors;
@@ -54,6 +55,12 @@ public class ThroughputSampler {
 
     private ScheduledExecutorService timer;
 
+    /**
+     * 生产构造器。**必须标注 {@code @Autowired}**：本类有两个构造器，不指定时 Spring 会去找
+     * 默认构造器并在启动时失败（2026-10-29 实测服务崩溃重启循环，
+     * 因为单元测试不启动 Spring 上下文、而集成测试需要 Docker 当时未运行，所以没能挡住）。
+     */
+    @Autowired
     public ThroughputSampler(MeterRegistry meters) {
         this(meters, System::currentTimeMillis);
     }

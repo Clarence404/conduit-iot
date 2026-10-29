@@ -108,6 +108,46 @@ class LatestValueStoreIT extends IntegrationTestBase {
         assertThat(store.lastReportTimes(List.of(dk))).containsEntry(dk, t + 1);
     }
 
+    /**
+     * 快路径不得改变语义：脚本在 ts >= __last 时跳过逐测点比较直接整批覆盖，
+     * 依据是「每个测点存的 ts 必然 ≤ __last」。本用例把这条依据正面压一遍——
+     * 先写入一个较新的测点抬高 __last，再用更早的 ts 补传，旧数据必须被拒绝。
+     */
+    @Test
+    void 乱序补传不得覆盖更新的测点值() {
+        String dk = unique("dk");
+        store.update(dk, 1000, Map.of("a", 1.0, "b", 2.0));
+        store.update(dk, 2000, Map.of("a", 9.0));
+
+        // ts=1500 落在 b 的 1000 之后、a 的 2000 之前：b 该被覆盖，a 不该
+        store.update(dk, 1500, Map.of("a", 5.0, "b", 7.0));
+
+        assertThat(store.get(dk)).containsEntry("a", new LatestValue(9.0, 2000))
+                .containsEntry("b", new LatestValue(7.0, 1500));
+        assertThat(store.lastReportTimes(List.of(dk))).containsEntry(dk, 2000L);
+    }
+
+    /**
+     * 快路径用 unpack 一次性 HSET，但 unpack 受 Lua 栈限制，测点极多时会报
+     * "too many results to unpack"，脚本为此在超过阈值时改为逐个写。
+     * 这里用 120 个测点越过该阈值，确认写入与时间戳语义都正常。
+     */
+    @Test
+    void 测点数量超过unpack阈值时仍正确写入() {
+        String dk = unique("dk");
+        Map<String, Object> many = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < 120; i++) {
+            many.put("p" + i, (double) i);
+        }
+
+        store.update(dk, 3000, many);
+
+        assertThat(store.get(dk)).hasSize(120)
+                .containsEntry("p0", new LatestValue(0.0, 3000))
+                .containsEntry("p119", new LatestValue(119.0, 3000));
+        assertThat(store.lastReportTimes(List.of(dk))).containsEntry(dk, 3000L);
+    }
+
     /** 同一组输入：一份逐条 update、一份 updateBatch，读回的全部最新值与 __last 必须完全一致。 */
     @Test
     void batchUpdateProducesExactlyTheSameStateAsOneByOneUpdates() {

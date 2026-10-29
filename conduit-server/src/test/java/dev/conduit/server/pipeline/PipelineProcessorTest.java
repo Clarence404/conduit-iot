@@ -429,8 +429,11 @@ class PipelineProcessorTest {
         verify(identities, times(1)).findAll(argThat(c -> c.stream().distinct().count() == 2 && c.size() == 2));
         // 逐条的 find 只在 findAll 的桩内部被调用（每个去重设备一次），处理循环本身不再逐条查身份
         verify(identities, times(1)).find("d1");
-        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 3));
+        // d1 的两条 ts 与测点相同，前一条被后一条完全覆盖，合并后批量调用只剩 d2 与 d1 各一次（LatestCoalescer）
+        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 2
+                && l.get(0).deviceKey().equals("d2") && l.get(1).deviceKey().equals("d1")));
         verify(latest, never()).update(anyString(), anyLong(), any());
+        // 被合并掉的 1-0 仍然要 ACK：它已写入 InfluxDB，最新值贡献已被 3-0 覆盖
         verify(bus).ack(GROUP, List.of("1-0", "2-0", "3-0"));
     }
 
@@ -463,7 +466,8 @@ class PipelineProcessorTest {
         processor.process(List.of(delivery("1-0", "d1"), ghost, delivery("3-0", "d1")));
 
         verifyDeadLettered(ghost, "UNKNOWN_DEVICE");
-        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 2));
+        // d1 的两条 ts 与测点相同，合并为一次最新值调用；两条仍都 ACK
+        verify(latest, times(1)).updateBatch(argThat(l -> l.size() == 1));
         verify(bus).ack(GROUP, List.of("1-0", "3-0"));
     }
 

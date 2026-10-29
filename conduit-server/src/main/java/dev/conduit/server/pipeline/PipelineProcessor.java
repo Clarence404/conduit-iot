@@ -368,7 +368,11 @@ public class PipelineProcessor {
         if (candidates.isEmpty()) {
             return candidates;
         }
-        List<TelemetryPoint> points = candidates.stream().map(i -> i.prepared().point()).toList();
+        // 只对批量路径做合并：剔除被同批后续消息完全覆盖的点，每台设备通常只剩一次脚本调用
+        // （等价性见 LatestCoalescer）。被剔除者的最新值贡献已被后续点覆盖，照常算作已更新、照常 ACK。
+        // 批量失败时下面的逐条回退仍对全部候选逐个执行、不做合并，出错路径与改动前完全一致。
+        List<TelemetryPoint> points = LatestCoalescer.coalesce(
+                candidates.stream().map(i -> i.prepared().point()).toList());
         try {
             backoff.run("latest update batch", () -> {
                 ingestor.updateLatestBatch(points);

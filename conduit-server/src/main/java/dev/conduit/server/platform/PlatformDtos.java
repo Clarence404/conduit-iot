@@ -1,5 +1,6 @@
 package dev.conduit.server.platform;
 
+import dev.conduit.server.metrics.ThroughputSampler.ThroughputView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -22,10 +23,11 @@ public final class PlatformDtos {
      *
      * @param userCount  租户用户总数（不含平台管理员）
      * @param topTenants 设备数最多的 5 个租户（设备数降序，相同时按编码）
+     * @param throughput 本进程的入库吞吐，重启归零；速率在采样不足时为 null
      */
     public record PlatformOverview(int tenantCount, int activeTenantCount, int disabledTenantCount, int userCount,
                                    int productCount, int deviceCount, Integer onlineCount,
-                                   List<TenantStat> topTenants) {
+                                   List<TenantStat> topTenants, ThroughputView throughput) {
     }
 
     /**

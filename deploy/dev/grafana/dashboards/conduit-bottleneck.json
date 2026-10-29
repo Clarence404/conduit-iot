@@ -43,7 +43,7 @@
       "description": "真正写进 InfluxDB 的属性消息条数/秒。**对外承诺能力只能用这个数**——过载时 EMQX 会先回 PUBACK 再丢弃，接入 QPS 里包含随后被丢掉的消息。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -55,7 +55,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
           "legendFormat": "",
@@ -104,7 +104,7 @@
       "description": "最近 5 分钟内入库 TPS 的最高值。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 4,
@@ -116,7 +116,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max_over_time((sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m])))[5m:15s])",
           "legendFormat": "",
@@ -165,7 +165,7 @@
       "description": "EMQX 收到并确认的消息条数/秒。高于入库 TPS 且持续拉开，说明在积压或丢失。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -177,7 +177,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_received[1m]))",
           "legendFormat": "",
@@ -226,7 +226,7 @@
       "description": "EMQX 丢弃消息的速率，**应为 0**。非 0 即设备已收到 PUBACK 而平台没存下来。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -238,7 +238,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_dropped[1m]))",
           "legendFormat": "",
@@ -291,7 +291,7 @@
       "description": "从 transport 收到到写入 InfluxDB 并更新最新值的耗时（仅实时消费，不含重放）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -303,7 +303,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P50",
@@ -313,7 +313,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P99",
@@ -370,7 +370,7 @@
       "description": "EMQX 会话队列（transport 来不及取）与 Redis 消费组 lag（流水线来不及处理）。持续增长即过载。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 20,
@@ -382,7 +382,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(conduit_transport_session_mqueue_len >= 0)",
           "legendFormat": "EMQX 队列",
@@ -392,7 +392,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(redis_stream_group_lag)",
           "legendFormat": "消费组 lag",
@@ -449,7 +449,7 @@
       "description": "**当前硬件墙在这里**：2026-10-29 实测 13,000 条/秒时约 92%、16,000 时 96～97% 即开始丢消息。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -461,7 +461,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
           "legendFormat": "",
@@ -518,7 +518,7 @@
       "description": "1 分钟平均负载除以核数。大于 1 表示运行队列超过核数、进程在排队等 CPU（16,000 条/秒时实测约 1.9）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 4,
@@ -530,7 +530,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(node_load1) / count(count(node_cpu_seconds_total) by (cpu))",
           "legendFormat": "",
@@ -587,7 +587,7 @@
       "description": "Redis 主线程占一个核的百分比。Redis 单线程，接近 100% 即饱和：transport 的 XADD 会排队、回 PUBACK 变慢，进而让 EMQX 信箱堆积。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -599,7 +599,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
           "legendFormat": "",
@@ -656,7 +656,7 @@
       "description": "各条 transport 连接进程 Erlang 信箱中待处理的消息数，取最大。超过 EMQX 的 max_mailbox_size（仓库默认 1000，压测 VM 为 10000）该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。2026-10-29 实测健康 8,000 条/秒时最大 31，过载 16,000 条/秒时最大 2,194。注意会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -668,7 +668,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(conduit_transport_session_mailbox_len >= 0)",
           "legendFormat": "",
@@ -725,7 +725,7 @@
       "description": "transport 主实例的共享订阅条数，应等于 conduit.transport.mqtt.connections（默认 4）。少了说明有连接没连上，约 1/K 的流量会滞留在它的会话里。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -737,7 +737,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "emqx_subscriptions_shared_count",
           "legendFormat": "",
@@ -790,7 +790,7 @@
       "description": "应为「流水线 workers × server 实例数」（默认 4）。持续增长说明有死消费者残留：消费者名每次重启随机换新，旧的留在组里（已知问题，见 backlog）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 20,
@@ -802,7 +802,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(redis_stream_group_consumers)",
           "legendFormat": "",
@@ -872,7 +872,7 @@
       "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -884,7 +884,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_received[1m]))",
           "legendFormat": "① EMQX 接收（接入 QPS）",
@@ -894,7 +894,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_delivered[1m]))",
           "legendFormat": "② EMQX 投递",
@@ -904,7 +904,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_transport_session_sent[1m]) >= 0)",
           "legendFormat": "③ transport 收取（各连接合计）",
@@ -914,7 +914,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(redis_commands_total{cmd=\"xadd\"}[1m]))",
           "legendFormat": "④ XADD 写入总线",
@@ -924,7 +924,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(redis_stream_group_entries_read[1m]))",
           "legendFormat": "⑤ 消费组读取",
@@ -934,7 +934,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
           "legendFormat": "⑥ 写入 InfluxDB（入库 TPS）",
@@ -1008,7 +1008,7 @@
       "description": "设备连接数与 transport 共享订阅数。共享订阅数应恒等于 transport 的连接数。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -1020,7 +1020,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "emqx_connections_count",
           "legendFormat": "连接数",
@@ -1030,7 +1030,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "emqx_live_connections_count",
           "legendFormat": "活跃连接",
@@ -1040,7 +1040,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "emqx_subscriptions_shared_count",
           "legendFormat": "共享订阅",
@@ -1101,7 +1101,7 @@
       "description": "应全部为 0。queue_full 是会话队列满（transport 取得太慢）；no_subscribers 是无人订阅（transport 未连上）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -1113,7 +1113,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_dropped[1m]))",
           "legendFormat": "丢弃合计",
@@ -1123,7 +1123,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_delivery_dropped_queue_full[1m]))",
           "legendFormat": "会话队列满",
@@ -1133,7 +1133,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(emqx_messages_dropped_no_subscribers[1m]))",
           "legendFormat": "无订阅者",
@@ -1207,7 +1207,7 @@
       "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -1219,7 +1219,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (rate(conduit_transport_session_sent[1m]) >= 0)",
           "legendFormat": "{{client}}",
@@ -1280,7 +1280,7 @@
       "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -1292,7 +1292,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (conduit_transport_session_mqueue_len >= 0)",
           "legendFormat": "{{client}}",
@@ -1302,7 +1302,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(conduit_transport_session_mqueue_max >= 0)",
           "legendFormat": "上限",
@@ -1389,7 +1389,7 @@
       "description": "已推给 transport、尚未收到 PUBACK 的消息数，上限为 EMQX max_inflight。持续顶满说明 transport 回确认的速度跟不上。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -1401,7 +1401,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (conduit_transport_session_inflight >= 0)",
           "legendFormat": "{{client}}",
@@ -1411,7 +1411,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(conduit_transport_session_inflight_max >= 0)",
           "legendFormat": "上限",
@@ -1498,7 +1498,7 @@
       "description": "EMQX 里每条 transport 连接进程的堆。实际强杀线是配置值的 1.5 倍（256MB 配置在 384MB 处被杀，见红色虚线）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -1510,7 +1510,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (conduit_transport_session_heap_bytes >= 0)",
           "legendFormat": "{{client}}",
@@ -1578,7 +1578,7 @@
       "description": "transport 经 EMQX REST API 采样会话指标，连续失败次数。非 0 时上面几张图的数据不可信。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -1590,7 +1590,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (conduit_transport_session_poll_failures >= 0)",
           "legendFormat": "{{client}}",
@@ -1658,7 +1658,7 @@
       "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -1670,7 +1670,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (conduit_transport_session_mailbox_len >= 0)",
           "legendFormat": "{{client}}",
@@ -1742,7 +1742,7 @@
       "description": "每条连接进程每秒的 Erlang 工作量。一个进程同一时刻只能跑在一个调度器上，单连接时 recon 实测约 500～600 万/秒即顶满单核（这正是改用共享订阅的原因）。4 条连接下实测 8,000 条/秒每条约 90 万、16,000 条/秒每条约 200 万，离上限尚远——现在的墙在 VM 整机 CPU。若有人把连接数改回 1，这张图会立刻冲向上限。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -1754,7 +1754,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (client) (rate(conduit_transport_session_reductions[2m]) >= 0)",
           "legendFormat": "{{client}}",
@@ -1839,7 +1839,7 @@
       "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -1851,7 +1851,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "redis_stream_length{stream=\"conduit:stream:up\"}",
           "legendFormat": "流长度",
@@ -1861,7 +1861,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(redis_stream_group_lag)",
           "legendFormat": "消费组 lag",
@@ -1871,7 +1871,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(redis_stream_group_messages_pending)",
           "legendFormat": "待确认 pending",
@@ -1932,7 +1932,7 @@
       "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -1944,7 +1944,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
           "legendFormat": "Redis 主线程",
@@ -2012,7 +2012,7 @@
       "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -2024,7 +2024,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (cmd) (rate(redis_commands_total{cmd=~\"xadd|evalsha|xack|xreadgroup|mget|hmget\"}[1m]))",
           "legendFormat": "{{cmd}}",
@@ -2085,7 +2085,7 @@
       "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -2097,7 +2097,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xadd\"}[1m]) / rate(redis_commands_total{cmd=\"xadd\"}[1m])",
           "legendFormat": "xadd",
@@ -2107,7 +2107,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(redis_commands_duration_seconds_total{cmd=\"evalsha\"}[1m]) / rate(redis_commands_total{cmd=\"evalsha\"}[1m])",
           "legendFormat": "evalsha",
@@ -2117,7 +2117,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xack\"}[1m]) / rate(redis_commands_total{cmd=\"xack\"}[1m])",
           "legendFormat": "xack",
@@ -2127,7 +2127,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xreadgroup\"}[1m]) / rate(redis_commands_total{cmd=\"xreadgroup\"}[1m])",
           "legendFormat": "xreadgroup",
@@ -2188,7 +2188,7 @@
       "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -2200,7 +2200,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "redis_memory_used_bytes",
           "legendFormat": "已用内存",
@@ -2210,7 +2210,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "redis_aof_current_size_bytes",
           "legendFormat": "AOF 大小",
@@ -2284,7 +2284,7 @@
       "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -2296,7 +2296,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"total\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"total\"}[1m])",
           "legendFormat": "total",
@@ -2306,7 +2306,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"influx\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"influx\"}[1m])",
           "legendFormat": "influx",
@@ -2316,7 +2316,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"latest\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"latest\"}[1m])",
           "legendFormat": "latest",
@@ -2326,7 +2326,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"ack\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"ack\"}[1m])",
           "legendFormat": "ack",
@@ -2336,7 +2336,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"identity\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"identity\"}[1m])",
           "legendFormat": "identity",
@@ -2346,7 +2346,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"decode\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"decode\"}[1m])",
           "legendFormat": "decode",
@@ -2407,7 +2407,7 @@
       "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -2419,7 +2419,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(conduit_pipeline_batch_size_sum[1m]) / rate(conduit_pipeline_batch_size_count[1m])",
           "legendFormat": "平均",
@@ -2429,7 +2429,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(conduit_pipeline_batch_size_max)",
           "legendFormat": "最大",
@@ -2490,7 +2490,7 @@
       "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 18,
@@ -2502,7 +2502,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P50",
@@ -2512,7 +2512,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.95, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P95",
@@ -2522,7 +2522,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "P99",
@@ -2583,7 +2583,7 @@
       "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -2595,7 +2595,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "redis_stream_length{stream=\"conduit:stream:dead\"} or on() vector(0)",
           "legendFormat": "死信流长度",
@@ -2605,7 +2605,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (reason) (rate(conduit_pipeline_dead_total[5m])) or on() vector(0)",
           "legendFormat": "死信/秒 {{reason}}",
@@ -2615,7 +2615,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (reason, source) (rate(conduit_pipeline_rejected_fields_total[5m])) or on() vector(0)",
           "legendFormat": "测点被拒/秒 {{reason}} {{source}}",
@@ -2689,7 +2689,7 @@
       "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -2701,7 +2701,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (status) (rate(http_requests_total{job=\"influxdb\",path=\"/api/v3/write_lp\"}[1m]))",
           "legendFormat": "{{status}}",
@@ -2762,7 +2762,7 @@
       "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -2774,7 +2774,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
           "legendFormat": "P50",
@@ -2784,7 +2784,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
           "legendFormat": "P99",
@@ -2845,7 +2845,7 @@
       "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -2857,7 +2857,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
           "legendFormat": "InfluxDB",
@@ -2918,7 +2918,7 @@
       "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -2930,7 +2930,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.99, sum by (le, op) (rate(object_store_op_duration_seconds_bucket{job=\"influxdb\"}[5m])))",
           "legendFormat": "P99 {{op}}",
@@ -2991,7 +2991,7 @@
       "description": "历史曲线等查询请求的耗时分位数。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -3003,7 +3003,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
           "legendFormat": "P50",
@@ -3013,7 +3013,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
           "legendFormat": "P99",
@@ -3087,7 +3087,7 @@
       "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -3099,7 +3099,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
           "legendFormat": "已用",
@@ -3109,7 +3109,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "count(count(node_cpu_seconds_total) by (cpu))",
           "legendFormat": "总核数",
@@ -3196,7 +3196,7 @@
       "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -3208,7 +3208,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (job, instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
           "legendFormat": "{{instance}}",
@@ -3218,7 +3218,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
           "legendFormat": "redis",
@@ -3228,7 +3228,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
           "legendFormat": "influxdb",
@@ -3238,7 +3238,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "clamp_min((1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu)) - (sum(process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count) or vector(0)) - (sum(rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])) or vector(0)) - (sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m])) or vector(0)), 0)",
           "legendFormat": "其余（主要是 EMQX）",
@@ -3299,7 +3299,7 @@
       "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -3311,7 +3311,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
           "legendFormat": "已用",
@@ -3321,7 +3321,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_memory_MemTotal_bytes",
           "legendFormat": "总量",
@@ -3331,7 +3331,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
           "legendFormat": "swap 已用",
@@ -3392,7 +3392,7 @@
       "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
@@ -3404,7 +3404,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum by (instance) (jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"})",
           "legendFormat": "{{instance}}",
@@ -3414,7 +3414,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "redis_memory_used_bytes",
           "legendFormat": "redis",
@@ -3475,7 +3475,7 @@
       "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
@@ -3487,7 +3487,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_load1",
           "legendFormat": "load1",
@@ -3497,7 +3497,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_load5",
           "legendFormat": "load5",
@@ -3507,7 +3507,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "count(count(node_cpu_seconds_total) by (cpu))",
           "legendFormat": "核数",
@@ -3568,7 +3568,7 @@
       "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -3580,7 +3580,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(node_disk_written_bytes_total[1m]))",
           "legendFormat": "写入",
@@ -3590,7 +3590,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "sum(rate(node_disk_read_bytes_total[1m]))",
           "legendFormat": "读取",
@@ -3651,7 +3651,7 @@
       "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -3663,7 +3663,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
           "legendFormat": "可用",
@@ -3724,7 +3724,7 @@
       "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
       "datasource": {
         "type": "prometheus",
-        "uid": "conduit-prometheus"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 18,
@@ -3736,7 +3736,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "expr": "max(rate(node_disk_io_time_seconds_total[1m]))",
           "legendFormat": "忙碌占比",
@@ -3809,7 +3809,7 @@
           "description": "各 JVM 服务的堆已用与上限。",
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "gridPos": {
             "x": 0,
@@ -3821,7 +3821,7 @@
             {
               "datasource": {
                 "type": "prometheus",
-                "uid": "conduit-prometheus"
+                "uid": "prometheus"
               },
               "expr": "sum by (instance) (jvm_memory_used_bytes{area=\"heap\"})",
               "legendFormat": "{{instance}} 已用",
@@ -3831,7 +3831,7 @@
             {
               "datasource": {
                 "type": "prometheus",
-                "uid": "conduit-prometheus"
+                "uid": "prometheus"
               },
               "expr": "sum by (instance) (jvm_memory_max_bytes{area=\"heap\"})",
               "legendFormat": "{{instance}} 上限",
@@ -3892,7 +3892,7 @@
           "description": "每秒中用于 GC 暂停的秒数。持续高于 0.1 说明 GC 压力大。",
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "gridPos": {
             "x": 12,
@@ -3904,7 +3904,7 @@
             {
               "datasource": {
                 "type": "prometheus",
-                "uid": "conduit-prometheus"
+                "uid": "prometheus"
               },
               "expr": "sum by (instance) (rate(jvm_gc_pause_seconds_sum[1m]))",
               "legendFormat": "{{instance}}",
@@ -3965,7 +3965,7 @@
           "description": "各 JVM 服务的活动线程数。",
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "gridPos": {
             "x": 0,
@@ -3977,7 +3977,7 @@
             {
               "datasource": {
                 "type": "prometheus",
-                "uid": "conduit-prometheus"
+                "uid": "prometheus"
               },
               "expr": "jvm_threads_live_threads",
               "legendFormat": "{{instance}}",
@@ -4038,7 +4038,7 @@
           "description": "各 JVM 服务进程占用的核数。",
           "datasource": {
             "type": "prometheus",
-            "uid": "conduit-prometheus"
+            "uid": "prometheus"
           },
           "gridPos": {
             "x": 12,
@@ -4050,7 +4050,7 @@
             {
               "datasource": {
                 "type": "prometheus",
-                "uid": "conduit-prometheus"
+                "uid": "prometheus"
               },
               "expr": "sum by (instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
               "legendFormat": "{{instance}}",

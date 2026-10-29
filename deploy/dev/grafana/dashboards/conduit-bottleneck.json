@@ -17,16 +17,86 @@
   "editable": true,
   "graphTooltip": 1,
   "templating": {
-    "list": []
+    "list": [
+      {
+        "type": "custom",
+        "name": "max_mailbox_size",
+        "label": "EMQX max_mailbox_size",
+        "description": "「连接信箱 / 强杀线」的分母，按实际部署的 force_shutdown.max_mailbox_size 选",
+        "query": "1000,10000",
+        "current": {
+          "text": "1000",
+          "value": "1000"
+        },
+        "options": [
+          {
+            "text": "1000",
+            "value": "1000",
+            "selected": true
+          },
+          {
+            "text": "10000",
+            "value": "10000",
+            "selected": false
+          }
+        ],
+        "hide": 0,
+        "multi": false,
+        "includeAll": false
+      }
+    ]
   },
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "iconColor": "purple",
+        "name": "服务重启",
+        "expr": "changes(process_start_time_seconds{job=~\"conduit-server|conduit-transport\"}[1m]) > 0",
+        "step": "15s",
+        "titleFormat": "服务重启",
+        "textFormat": "{{instance}}",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "iconColor": "red",
+        "name": "EMQX 重启",
+        "expr": "resets(emqx_messages_received[1m]) > 0",
+        "step": "15s",
+        "titleFormat": "EMQX 重启",
+        "textFormat": "{{instance}}",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "name": "transport 主备切换",
+        "expr": "(max by (instance) (conduit_transport_session_mqueue_len >= bool 0)) - (max by (instance) (conduit_transport_session_mqueue_len offset 1m >= bool 0)) > 0",
+        "step": "15s",
+        "titleFormat": "transport 成为主实例",
+        "textFormat": "{{instance}}",
+        "useValueForTime": false
+      }
+    ]
   },
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "0. 总览：现在怎么样",
+      "title": "0. 总览：吞吐 / 有没有丢 / 余量",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -48,7 +118,7 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -107,9 +177,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 4,
+        "x": 6,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -162,15 +232,15 @@
       "id": 4,
       "type": "stat",
       "title": "接入 QPS（当前）",
-      "description": "EMQX 收到并确认的消息条数/秒。高于入库 TPS 且持续拉开，说明在积压或丢失。",
+      "description": "EMQX 收到的设备上行（QoS 1）条数/秒。不含 transport 发给设备的 QoS 0 回执。高于入库 TPS 且持续拉开，说明在积压或丢失。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 8,
+        "x": 12,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -179,7 +249,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(emqx_messages_received[1m]))",
+          "expr": "sum(rate(emqx_messages_qos1_received[1m]))",
           "legendFormat": "",
           "refId": "A",
           "range": true
@@ -222,71 +292,6 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "丢弃（条/秒）",
-      "description": "EMQX 丢弃消息的速率，**应为 0**。非 0 即设备已收到 PUBACK 而平台没存下来。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 1,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(emqx_messages_dropped[1m]))",
-          "legendFormat": "",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix:条/秒",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 0.001
-              }
-            ]
-          },
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "value",
-        "orientation": "auto"
-      }
-    },
-    {
-      "id": 6,
-      "type": "stat",
       "title": "端到端延迟",
       "description": "从 transport 收到到写入 InfluxDB 并更新最新值的耗时（仅实时消费，不含重放）。",
       "datasource": {
@@ -294,9 +299,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -364,18 +369,18 @@
       }
     },
     {
-      "id": 7,
+      "id": 6,
       "type": "stat",
-      "title": "当前积压",
-      "description": "EMQX 会话队列（transport 来不及取）与 Redis 消费组 lag（流水线来不及处理）。持续增长即过载。",
+      "title": "守恒差（看板时间范围内）",
+      "description": "看板时间范围内 EMQX 收到、却没写进 Redis 总线的消息条数（已扣除仍在排队的积压），**应为 0**。为正即设备已收到 PUBACK 而平台没存下来——包括 EMQX 丢弃计数之外的丢失，例如连接被强杀时信箱里的消息；为负是主备切换时的重投（InfluxDB 同 ts 覆盖吸收，不算多写）。**只在时间范围的起点与终点都空闲时计算**：负载中各组件抓取时刻不一致，会整体平移约 9 秒的流量，与丢没丢无关。压测后要核对，就把时间范围拉到覆盖整次压测、两端落在空闲处。流水线一侧的问题看死信与积压。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 20,
-        "y": 1,
-        "w": 4,
+        "x": 0,
+        "y": 5,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -384,19 +389,209 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(conduit_transport_session_mqueue_len >= 0)",
-          "legendFormat": "EMQX 队列",
+          "expr": "((sum(emqx_messages_qos1_received) - sum(emqx_messages_qos1_received offset $__range)) + (sum(emqx_client_connected) - sum(emqx_client_connected offset $__range)) + (sum(emqx_client_disconnected) - sum(emqx_client_disconnected offset $__range)) - (sum(redis_stream_group_entries_read{stream=\"conduit:stream:up\"}) - sum(redis_stream_group_entries_read{stream=\"conduit:stream:up\"} offset $__range)) - (sum(redis_stream_group_lag{stream=\"conduit:stream:up\"}) - sum(redis_stream_group_lag{stream=\"conduit:stream:up\"} offset $__range)) - (((sum(conduit_transport_session_mqueue_len >= 0) + sum(conduit_transport_session_inflight >= 0)) or on() vector(0)) - ((sum(conduit_transport_session_mqueue_len offset $__range >= 0) + sum(conduit_transport_session_inflight offset $__range >= 0)) or on() vector(0)))) and on() (sum(rate(emqx_messages_qos1_received[1m])) < 200) and on() (sum(rate(emqx_messages_qos1_received[1m] offset $__range)) < 200)",
+          "legendFormat": "",
           "refId": "A",
           "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 2000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "noValue": "负载中不计算"
         },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "EMQX 丢弃（看板时间范围内）",
+      "description": "EMQX 自己统计到的丢弃条数（发布时被丢 + 投递给会话时被丢，如会话队列满），**应为 0**。注意它不含连接进程被强杀时随进程丢失的消息——那一类 EMQX 不计数，只有左边的守恒差能看到（2026-10-29 一次过载中 EMQX 计到 5,190 条，实际丢了约 40 万条）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(redis_stream_group_lag)",
-          "legendFormat": "消费组 lag",
-          "refId": "B",
+          "expr": "sum(increase(emqx_messages_dropped[$__range])) + sum(increase(emqx_delivery_dropped[$__range]))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "死信（看板时间范围内）",
+      "description": "进入死信的消息条数，应为 0。从未发生时计数器不存在，按 0 显示。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(conduit_pipeline_dead_total[$__range])) or on() vector(0)",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "当前积压",
+      "description": "平台内尚未入库的消息：EMQX 会话队列与在途窗口（transport 来不及取）+ 消费组未读与未确认（流水线来不及处理）。持续增长即过载。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(redis_stream_group_lag{stream=\"conduit:stream:up\"}) or on() vector(0)) + (sum(redis_stream_group_messages_pending{stream=\"conduit:stream:up\"}) or on() vector(0)) + (sum(conduit_transport_session_mqueue_len >= 0) or on() vector(0)) + (sum(conduit_transport_session_inflight >= 0) or on() vector(0))",
+          "legendFormat": "",
+          "refId": "A",
           "range": true
         }
       ],
@@ -438,12 +633,12 @@
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
     {
-      "id": 8,
+      "id": 10,
       "type": "stat",
       "title": "VM 整机 CPU",
       "description": "**当前硬件墙在这里**：2026-10-29 实测 13,000 条/秒时约 92%、16,000 时 96～97% 即开始丢消息。",
@@ -453,8 +648,8 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 5,
-        "w": 4,
+        "y": 9,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -512,76 +707,7 @@
       }
     },
     {
-      "id": 9,
-      "type": "stat",
-      "title": "负载 / 核数",
-      "description": "1 分钟平均负载除以核数。大于 1 表示运行队列超过核数、进程在排队等 CPU（16,000 条/秒时实测约 1.9）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 4,
-        "y": 5,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(node_load1) / count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.8
-              },
-              {
-                "color": "red",
-                "value": 1.0
-              }
-            ]
-          },
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "value",
-        "orientation": "auto"
-      }
-    },
-    {
-      "id": 10,
+      "id": 11,
       "type": "stat",
       "title": "Redis 单线程 CPU",
       "description": "Redis 主线程占一个核的百分比。Redis 单线程，接近 100% 即饱和：transport 的 XADD 会排队、回 PUBACK 变慢，进而让 EMQX 信箱堆积。",
@@ -590,9 +716,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 8,
-        "y": 5,
-        "w": 4,
+        "x": 6,
+        "y": 9,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -650,18 +776,18 @@
       }
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "stat",
-      "title": "transport 连接信箱（最大）",
-      "description": "各条 transport 连接进程 Erlang 信箱中待处理的消息数，取最大。超过 EMQX 的 max_mailbox_size（仓库默认 1000，压测 VM 为 10000）该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。2026-10-29 实测健康 8,000 条/秒时最大 31，过载 16,000 条/秒时最大 2,194。注意会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
+      "title": "连接信箱 / 强杀线",
+      "description": "各条 transport 连接进程 Erlang 信箱中待处理消息数的最大值，占 EMQX max_mailbox_size 的百分比。到 100% 该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。强杀线取看板顶部的变量 max_mailbox_size（仓库默认 1000，压测 VM 为 10000，按实际部署选）。2026-10-29 实测健康 8,000 条/秒时信箱最大 31，过载 16,000 条/秒时最大 2,194。会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 5,
-        "w": 4,
+        "y": 9,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -670,7 +796,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(conduit_transport_session_mailbox_len >= 0)",
+          "expr": "100 * max(conduit_transport_session_mailbox_len >= 0) / $max_mailbox_size",
           "legendFormat": "",
           "refId": "A",
           "range": true
@@ -678,7 +804,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -688,83 +814,18 @@
               },
               {
                 "color": "yellow",
-                "value": 300
+                "value": 30
               },
               {
                 "color": "red",
-                "value": 800
+                "value": 80
               }
             ]
           },
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "textMode": "value",
-        "orientation": "auto"
-      }
-    },
-    {
-      "id": 12,
-      "type": "stat",
-      "title": "共享订阅数",
-      "description": "transport 主实例的共享订阅条数，应等于 conduit.transport.mqtt.connections（默认 4）。少了说明有连接没连上，约 1/K 的流量会滞留在它的会话里。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 5,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "emqx_subscriptions_shared_count",
-          "legendFormat": "",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 4
-              }
-            ]
-          },
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0
+          "decimals": 1
         },
         "overrides": []
       },
@@ -786,16 +847,16 @@
     {
       "id": 13,
       "type": "stat",
-      "title": "消费组消费者数",
-      "description": "应为「流水线 workers × server 实例数」（默认 4）。持续增长说明有死消费者残留：消费者名每次重启随机换新，旧的留在组里（已知问题，见 backlog）。",
+      "title": "连接忙碌度 / 单核上限",
+      "description": "最忙的那条 transport 连接进程的 reductions/秒，占单连接实测上限（约 550 万/秒，一个调度器跑满）的百分比。4 条连接下实测 8,000 条/秒约 17%、16,000 条/秒约 36%——现在的墙在 VM 整机 CPU，不在这里。若连接数被改回 1，这里会立刻冲高。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 20,
-        "y": 5,
-        "w": 4,
+        "x": 18,
+        "y": 9,
+        "w": 6,
         "h": 4
       },
       "targets": [
@@ -804,7 +865,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(redis_stream_group_consumers)",
+          "expr": "100 * max(sum by (client) (rate(conduit_transport_session_reductions[2m]) >= 0)) / 5500000",
           "legendFormat": "",
           "refId": "A",
           "range": true
@@ -812,7 +873,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -822,11 +883,11 @@
               },
               {
                 "color": "yellow",
-                "value": 8
+                "value": 55
               },
               {
                 "color": "red",
-                "value": 20
+                "value": 80
               }
             ]
           },
@@ -859,7 +920,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 13,
         "w": 24,
         "h": 1
       },
@@ -869,14 +930,14 @@
       "id": 15,
       "type": "timeseries",
       "title": "各跳速率（条/秒）：① 接入 → ⑥ 入库",
-      "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。",
+      "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。① 只计设备上行（QoS 1），不含 transport 发给设备的回执。两条横线是压测 VM（8 vCPU）的实测容量：11,500 条/秒守恒全过，13,000 为边缘（3 次 2 过）；换机器后需重测。竖线标注服务重启、EMQX 重启与 transport 主备切换。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 10,
+        "y": 14,
         "w": 24,
         "h": 9
       },
@@ -886,7 +947,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(emqx_messages_received[1m]))",
+          "expr": "sum(rate(emqx_messages_qos1_received[1m]))",
           "legendFormat": "① EMQX 接收（接入 QPS）",
           "refId": "A",
           "range": true
@@ -940,6 +1001,26 @@
           "legendFormat": "⑥ 写入 InfluxDB（入库 TPS）",
           "refId": "F",
           "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(11500)",
+          "legendFormat": "压测 VM 已验证容量 11,500",
+          "refId": "G",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(13000)",
+          "legendFormat": "压测 VM 边缘 13,000",
+          "refId": "H",
+          "range": true
         }
       ],
       "fieldConfig": {
@@ -970,7 +1051,58 @@
             "mode": "palette-classic"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "压测 VM 已验证容量 11,500"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "压测 VM 边缘 13,000"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    4
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -995,7 +1127,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 23,
         "w": 24,
         "h": 1
       },
@@ -1011,7 +1143,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 20,
+            "y": 24,
             "w": 12,
             "h": 8
           },
@@ -1104,7 +1236,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 20,
+            "y": 24,
             "w": 12,
             "h": 8
           },
@@ -1185,23 +1317,270 @@
               "sort": "desc"
             }
           }
+        },
+        {
+          "id": 19,
+          "type": "timeseries",
+          "title": "设备鉴权（次/秒）",
+          "description": "通过与被拒的鉴权次数。被拒持续不为 0 说明有设备密钥失效或配置错误——2026-10-29 曾有 100 台压测设备的密钥被模拟器重置，连接全部被拒，而发压脚本当时并不报错，只能从这里看出来。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 9,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(emqx_authentication_success[1m]))",
+              "legendFormat": "通过",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(emqx_authentication_failure[1m]))",
+              "legendFormat": "被拒",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:次/秒",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "被拒"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "鉴权回调耗时（server）",
+          "description": "EMQX 调用 server 鉴权接口的平均与最大耗时。设备连接要等它返回，变慢会拖慢整批重连；回调超时时 EMQX 按配置拒绝或放行，两种都不对。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 9,
+            "y": 32,
+            "w": 9,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(http_server_requests_seconds_sum{uri=\"/internal/mqtt/auth\"}[1m])) / sum(rate(http_server_requests_seconds_count{uri=\"/internal/mqtt/auth\"}[1m]))",
+              "legendFormat": "平均",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(http_server_requests_seconds_max{uri=\"/internal/mqtt/auth\"})",
+              "legendFormat": "最大",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 21,
+          "type": "stat",
+          "title": "共享订阅数",
+          "description": "transport 主实例的共享订阅条数，应等于 conduit.transport.mqtt.connections（默认 4）。少了说明有连接没连上，约 1/K 的流量会滞留在它的会话里。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 18,
+            "y": 32,
+            "w": 6,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "emqx_subscriptions_shared_count",
+              "legendFormat": "",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 4
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "textMode": "value",
+            "orientation": "auto"
+          }
         }
       ]
     },
     {
-      "id": 19,
+      "id": 22,
       "type": "row",
       "title": "3. transport：按连接",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 24,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 20,
+          "id": 23,
           "type": "timeseries",
           "title": "各连接收取速率（条/秒）",
           "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
@@ -1211,7 +1590,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 21,
+            "y": 25,
             "w": 12,
             "h": 8
           },
@@ -1274,7 +1653,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 24,
           "type": "timeseries",
           "title": "各连接会话队列（mqueue）",
           "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
@@ -1284,7 +1663,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 21,
+            "y": 25,
             "w": 12,
             "h": 8
           },
@@ -1383,7 +1762,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 25,
           "type": "timeseries",
           "title": "各连接在途窗口",
           "description": "已推给 transport、尚未收到 PUBACK 的消息数，上限为 EMQX max_inflight。持续顶满说明 transport 回确认的速度跟不上。",
@@ -1393,7 +1772,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 29,
+            "y": 33,
             "w": 8,
             "h": 8
           },
@@ -1492,7 +1871,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 26,
           "type": "timeseries",
           "title": "各连接会话进程堆",
           "description": "EMQX 里每条 transport 连接进程的堆。实际强杀线是配置值的 1.5 倍（256MB 配置在 384MB 处被杀，见红色虚线）。",
@@ -1502,7 +1881,7 @@
           },
           "gridPos": {
             "x": 8,
-            "y": 29,
+            "y": 33,
             "w": 8,
             "h": 8
           },
@@ -1572,7 +1951,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 27,
           "type": "timeseries",
           "title": "会话监控取数失败",
           "description": "transport 经 EMQX REST API 采样会话指标，连续失败次数。非 0 时上面几张图的数据不可信。",
@@ -1582,7 +1961,7 @@
           },
           "gridPos": {
             "x": 16,
-            "y": 29,
+            "y": 33,
             "w": 8,
             "h": 8
           },
@@ -1652,7 +2031,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 28,
           "type": "timeseries",
           "title": "各连接进程信箱",
           "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
@@ -1662,7 +2041,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 37,
+            "y": 41,
             "w": 12,
             "h": 8
           },
@@ -1736,7 +2115,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 29,
           "type": "timeseries",
           "title": "各连接进程忙碌度（reductions/秒）",
           "description": "每条连接进程每秒的 Erlang 工作量。一个进程同一时刻只能跑在一个调度器上，单连接时 recon 实测约 500～600 万/秒即顶满单核（这正是改用共享订阅的原因）。4 条连接下实测 8,000 条/秒每条约 90 万、16,000 条/秒每条约 200 万，离上限尚远——现在的墙在 VM 整机 CPU。若有人把连接数改回 1，这张图会立刻冲向上限。",
@@ -1746,7 +2125,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 37,
+            "y": 41,
             "w": 12,
             "h": 8
           },
@@ -1822,19 +2201,19 @@
       ]
     },
     {
-      "id": 27,
+      "id": 30,
       "type": "row",
       "title": "4. Redis 总线",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 21,
+        "y": 25,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 28,
+          "id": 31,
           "type": "timeseries",
           "title": "上行流与消费组积压",
           "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
@@ -1844,7 +2223,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 22,
+            "y": 26,
             "w": 12,
             "h": 8
           },
@@ -1927,7 +2306,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 32,
           "type": "timeseries",
           "title": "Redis 单线程 CPU（%）",
           "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
@@ -1937,7 +2316,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 22,
+            "y": 26,
             "w": 12,
             "h": 8
           },
@@ -2007,7 +2386,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 33,
           "type": "timeseries",
           "title": "命令吞吐（次/秒）",
           "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
@@ -2017,7 +2396,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 30,
+            "y": 34,
             "w": 8,
             "h": 8
           },
@@ -2080,7 +2459,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 34,
           "type": "timeseries",
           "title": "命令平均耗时",
           "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
@@ -2090,7 +2469,7 @@
           },
           "gridPos": {
             "x": 8,
-            "y": 30,
+            "y": 34,
             "w": 8,
             "h": 8
           },
@@ -2183,7 +2562,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 35,
           "type": "timeseries",
           "title": "内存与 AOF",
           "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
@@ -2193,8 +2572,8 @@
           },
           "gridPos": {
             "x": 16,
-            "y": 30,
-            "w": 8,
+            "y": 34,
+            "w": 5,
             "h": 8
           },
           "targets": [
@@ -2264,23 +2643,92 @@
               "sort": "desc"
             }
           }
+        },
+        {
+          "id": 36,
+          "type": "stat",
+          "title": "消费组消费者数",
+          "description": "应为「流水线 workers × server 实例数」（默认 4）。持续增长说明有死消费者残留：消费者名每次重启随机换新，旧的留在组里（已知问题，见 backlog）。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 21,
+            "y": 34,
+            "w": 3,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(redis_stream_group_consumers)",
+              "legendFormat": "",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 8
+                  },
+                  {
+                    "color": "red",
+                    "value": 20
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "textMode": "value",
+            "orientation": "auto"
+          }
         }
       ]
     },
     {
-      "id": 33,
+      "id": 37,
       "type": "row",
       "title": "5. 流水线：server",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 26,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 34,
+          "id": 38,
           "type": "timeseries",
           "title": "每批各阶段平均耗时",
           "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
@@ -2290,7 +2738,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 23,
+            "y": 27,
             "w": 12,
             "h": 9
           },
@@ -2403,7 +2851,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 39,
           "type": "timeseries",
           "title": "每批条数",
           "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
@@ -2413,7 +2861,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 23,
+            "y": 27,
             "w": 6,
             "h": 9
           },
@@ -2486,7 +2934,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 40,
           "type": "timeseries",
           "title": "端到端延迟",
           "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
@@ -2496,7 +2944,7 @@
           },
           "gridPos": {
             "x": 18,
-            "y": 23,
+            "y": 27,
             "w": 6,
             "h": 9
           },
@@ -2579,7 +3027,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 41,
           "type": "timeseries",
           "title": "死信与测点拒绝",
           "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
@@ -2589,7 +3037,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 32,
+            "y": 36,
             "w": 24,
             "h": 7
           },
@@ -2674,19 +3122,19 @@
       ]
     },
     {
-      "id": 38,
+      "id": 42,
       "type": "row",
       "title": "6. InfluxDB",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 23,
+        "y": 27,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 39,
+          "id": 43,
           "type": "timeseries",
           "title": "写入请求（次/秒）",
           "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
@@ -2696,7 +3144,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 24,
+            "y": 28,
             "w": 8,
             "h": 8
           },
@@ -2759,7 +3207,7 @@
           }
         },
         {
-          "id": 40,
+          "id": 44,
           "type": "timeseries",
           "title": "写入耗时",
           "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
@@ -2769,7 +3217,7 @@
           },
           "gridPos": {
             "x": 8,
-            "y": 24,
+            "y": 28,
             "w": 8,
             "h": 8
           },
@@ -2842,7 +3290,7 @@
           }
         },
         {
-          "id": 41,
+          "id": 45,
           "type": "timeseries",
           "title": "InfluxDB CPU（核）",
           "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
@@ -2852,7 +3300,7 @@
           },
           "gridPos": {
             "x": 16,
-            "y": 24,
+            "y": 28,
             "w": 8,
             "h": 8
           },
@@ -2915,7 +3363,7 @@
           }
         },
         {
-          "id": 42,
+          "id": 46,
           "type": "timeseries",
           "title": "落盘（对象存储）操作耗时",
           "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
@@ -2925,7 +3373,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 32,
+            "y": 36,
             "w": 12,
             "h": 8
           },
@@ -2988,7 +3436,7 @@
           }
         },
         {
-          "id": 43,
+          "id": 47,
           "type": "timeseries",
           "title": "查询耗时",
           "description": "历史曲线等查询请求的耗时分位数。",
@@ -2998,7 +3446,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 32,
+            "y": 36,
             "w": 12,
             "h": 8
           },
@@ -3073,19 +3521,19 @@
       ]
     },
     {
-      "id": 44,
+      "id": 48,
       "type": "row",
       "title": "7. 资源",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 28,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 45,
+          "id": 49,
           "type": "timeseries",
           "title": "CPU 合计（核）",
           "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
@@ -3095,7 +3543,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 25,
+            "y": 29,
             "w": 12,
             "h": 8
           },
@@ -3194,7 +3642,7 @@
           }
         },
         {
-          "id": 46,
+          "id": 50,
           "type": "timeseries",
           "title": "各服务 CPU（核，堆叠）",
           "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
@@ -3204,7 +3652,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 25,
+            "y": 29,
             "w": 12,
             "h": 8
           },
@@ -3297,7 +3745,7 @@
           }
         },
         {
-          "id": 47,
+          "id": 51,
           "type": "timeseries",
           "title": "内存合计",
           "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
@@ -3307,7 +3755,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 33,
+            "y": 37,
             "w": 8,
             "h": 8
           },
@@ -3390,7 +3838,7 @@
           }
         },
         {
-          "id": 48,
+          "id": 52,
           "type": "timeseries",
           "title": "各服务内存",
           "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
@@ -3400,7 +3848,7 @@
           },
           "gridPos": {
             "x": 8,
-            "y": 33,
+            "y": 37,
             "w": 8,
             "h": 8
           },
@@ -3473,7 +3921,7 @@
           }
         },
         {
-          "id": 49,
+          "id": 53,
           "type": "timeseries",
           "title": "负载",
           "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
@@ -3483,7 +3931,7 @@
           },
           "gridPos": {
             "x": 16,
-            "y": 33,
+            "y": 37,
             "w": 8,
             "h": 8
           },
@@ -3566,7 +4014,7 @@
           }
         },
         {
-          "id": 50,
+          "id": 54,
           "type": "timeseries",
           "title": "磁盘 I/O",
           "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
@@ -3576,7 +4024,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 41,
+            "y": 45,
             "w": 12,
             "h": 8
           },
@@ -3649,7 +4097,7 @@
           }
         },
         {
-          "id": 51,
+          "id": 55,
           "type": "timeseries",
           "title": "根分区可用空间",
           "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
@@ -3659,7 +4107,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 41,
+            "y": 45,
             "w": 6,
             "h": 8
           },
@@ -3722,7 +4170,7 @@
           }
         },
         {
-          "id": 52,
+          "id": 56,
           "type": "timeseries",
           "title": "磁盘忙碌占比",
           "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
@@ -3732,7 +4180,7 @@
           },
           "gridPos": {
             "x": 18,
-            "y": 41,
+            "y": 45,
             "w": 6,
             "h": 8
           },
@@ -3797,19 +4245,19 @@
       ]
     },
     {
-      "id": 57,
+      "id": 61,
       "type": "row",
       "title": "8. JVM",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 29,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 53,
+          "id": 57,
           "type": "timeseries",
           "title": "堆占用",
           "description": "各 JVM 服务的堆已用与上限。",
@@ -3819,7 +4267,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 26,
+            "y": 30,
             "w": 12,
             "h": 8
           },
@@ -3892,7 +4340,7 @@
           }
         },
         {
-          "id": 54,
+          "id": 58,
           "type": "timeseries",
           "title": "GC 暂停（秒/秒）",
           "description": "每秒中用于 GC 暂停的秒数。持续高于 0.1 说明 GC 压力大。",
@@ -3902,7 +4350,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 26,
+            "y": 30,
             "w": 12,
             "h": 8
           },
@@ -3965,7 +4413,7 @@
           }
         },
         {
-          "id": 55,
+          "id": 59,
           "type": "timeseries",
           "title": "线程数",
           "description": "各 JVM 服务的活动线程数。",
@@ -3975,7 +4423,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 34,
+            "y": 38,
             "w": 12,
             "h": 8
           },
@@ -4038,7 +4486,7 @@
           }
         },
         {
-          "id": 56,
+          "id": 60,
           "type": "timeseries",
           "title": "进程 CPU（核）",
           "description": "各 JVM 服务进程占用的核数。",
@@ -4048,7 +4496,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 34,
+            "y": 38,
             "w": 12,
             "h": 8
           },

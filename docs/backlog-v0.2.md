@@ -186,3 +186,22 @@
 - **流水线每条消息 2 次 Redis 往返**（2026-10-28 定位）：`DeviceIdentityCache.find()` 的 GET 与 `LatestValueStore.update()` 的 EVALSHA 在逐条循环内，构成入库约 3,000 条/秒的上限。批量化方向：身份查找改一次 MGET、最新值改一次 pipeline 或多设备 Lua，可把往返由 `O(消息数)` 降为 `O(1)`/批。**必须保持 Lua 脚本按测点比较时间戳的语义**（旧数据不覆盖新值）。见 `docs/test-reports/2026-10-28-pipeline-redis-roundtrips.md`。
 
 - **压测负载端需要升级**（2026-10-29 定位）：现有 Python + 600 线程的负载端在约 3,500 条/秒即出现线程颠簸，且目标越高实际打出越少（8,000 档 2,857、10,000 档 1,679），导致系统容量天花板测不出来（只知道 ≥ 6,600 条/秒）。改进方向：多进程替代多线程绕开 GIL，或多台机器并发发压。见 `docs/test-reports/2026-10-29-capacity-after-batching.md`。
+
+## 2026-10-29 压测 VM 最大吞吐遗留
+
+详见 [测试报告](test-reports/2026-10-29-vm-max-throughput.md)。
+
+- **把 VM 上验证过的配置写成仓库默认值**（所有者决定暂缓）：EMQX `max_mailbox_size` 10000、`max_inflight` 1024、transport `batch-size` 512。
+  这三项目前只在压测 VM 上，按仓库默认部署**无法复现**报告中的容量数字。写入前需确认约束 `batch ≤ inflight ≪ mailbox` 仍成立，
+  且 `max_mailbox_size` 只调信箱、堆上限 256MB 不动（见 `CLAUDE.md` 第 4 节「方向调整」条）。
+- 信箱 1000 与 transport 共享订阅的组合未测：拆成 4 条连接后单进程信箱压力已大幅下降，可能不再需要调大信箱。
+- **海量连接的容量未测**：现有数字来自 600 条连接各发高频消息，不能换算成设备数。真实设备约 10 秒一报，
+  10,000 条/秒对应约 10 万条连接，EMQX 维持连接的内存与调度、鉴权回调压力、在线状态写入量都需单独压测。
+- 需要 Docker 的集成测试未在本轮运行（所有者决定不跟进）：`MqttProtocolAdapterIT`（含共享订阅退订旧过滤器的真实 broker 行为）、
+  `ReliabilityE2EIT`、`LatestValueStoreIT`（含新增的乱序补传与 120 测点用例）、`PlatformOverviewApiIT`。
+- 消费组中死消费者累积：流水线消费者名为 `server-${random.uuid}-序号`，每次重启都换新名，旧消费者留在消费组中
+  （压测 VM 上已累计 20 余个），现在每次重启多留 4 个。不影响正确性（`claimStale` 会认领其遗留），但会无限增长，
+  需在启动时清理无待确认消息的旧消费者，或改用稳定的消费者名。
+- 可靠无损 11,500、硬件墙 16,000，墙已在 CPU：再往上需降低每条消息的 CPU 开销（EMQX 约占 VM 的 35～40%，其次是
+  server、transport、Redis），或加核（所有者当前决定不加）。
+- `max_inflight=512` 那组 A/B 实验跑在坏掉的发压器上（100 台设备静默鉴权失败），绝对值不可信，未用修复后的发压器重做。

@@ -33,11 +33,11 @@ Flyway V7 为四个演示租户补齐客户、项目、站点与资产：共 8 �
 
 设备数据从不直连 server，所以 server 重启或变慢不会堵住 EMQX；新增协议也只需在 transport 侧加适配器。完整接入流程见[设备接入指南](docs/device-integration.md)。
 
-### transport 单活多备与内存持久会话
+### transport 单活多备、多连接共享订阅与内存持久会话
 
-- EMQX 使用**内存**持久会话（磁盘持久会话 `durable_sessions` 已关闭：压测证明它在积压下会静默楔死，恢复只能丢弃会话与积压，见 `docs/test-reports/2026-10-28-emqx-durable-session-wedge.md`）。transport 以固定 clientId `conduit-transport`、`cleanStart=false`、会话保留 86400 秒普通订阅 `conduit/+/+/up/#`（订阅选项 `retainHandling=DO_NOT_SEND`，重连时不重放保留消息）；主备切换窗口内的消息排在会话内存队列 mqueue（`EMQX_MAX_MQUEUE_LEN`，默认 100000）中，重连后补发。mqueue 与单连接堆限 `EMQX_CONNECTION_MAX_HEAP_SIZE` 共享上限，调大队列前须确认堆余量，满载余量尚未实测，在此之前不要上调。EMQX 5.8.6 的磁盘持久会话不支持共享订阅，所以多个 transport 不再分摊消息，而是单活多备。
-- 微批与监控：transport 把消息攒成微批一次写入 Redis 总线（`conduit.transport.mqtt.batch-size` 不得大于 EMQX `mqtt.max_inflight`，且窗口应为批的若干倍，默认 64 / 1024），主实例经 EMQX REST API（只读 API key，`.env` 必填 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`）轮询会话指标，仅「投递停滞」使健康检查为 DOWN。本地开发需在 `application-local.yml` 设 `conduit.transport.monitor.enabled: false`。
-- 选主：Redis 键 `conduit:transport:leader`（值为实例 id），用一段 Lua 脚本抢锁：键不存在则 `SET PX` 写入；键里已是本实例 id 则刷新过期时间并视为抢到（所以 Redis 短暂抖动后原主实例立即拿回锁）；其他情况拒绝。主实例每 5 秒续期，锁 15 秒过期，备实例每 2 秒尝试抢锁，只有主实例连接 EMQX。续期失败（Redis 不可用、锁已被他人持有、超时）立即断开 MQTT 转为备用；正常停止时释放锁，备实例立即接管；主实例崩溃时备实例最长 15 秒后接管同一个会话。配置项 `conduit.transport.leader.ttl` / `renew-interval` / `acquire-interval`。抢锁或适配器启动首次失败记 WARN，之后的重试记 DEBUG，恢复与每次角色变化记 INFO。
+- EMQX 使用**内存**持久会话（磁盘持久会话 `durable_sessions` 已关闭：压测证明它在积压下会静默楔死，恢复只能丢弃会话与积压，见 `docs/test-reports/2026-10-28-emqx-durable-session-wedge.md`）。主实例开 `conduit.transport.mqtt.connections` 条连接（默认 4，clientId 为 `conduit-transport`、`conduit-transport-1`…），均 `cleanStart=false`、会话保留 86400 秒，以**共享订阅** `$share/conduit-transport/conduit/+/+/up/#` 分摊 EMQX 的投递（订阅选项 `retainHandling=DO_NOT_SEND`，重连时不重放保留消息）。原因：EMQX 每条连接由一个单核封顶的 Erlang 进程负责，单连接时全平台上行挤过同一个进程，约 9,000 条/秒即顶满。上下线事件只由第 0 条订阅；EMQX 分发策略 `hash_clientid` 使同一设备固定走同一条连接。`connections=1` 退回单连接普通订阅。主备切换窗口内的消息排在会话内存队列 mqueue（`EMQX_MAX_MQUEUE_LEN`，默认 100000）中，重连后补发。mqueue 与单连接堆限 `EMQX_CONNECTION_MAX_HEAP_SIZE` 共享上限，调大队列前须确认堆余量，满载余量尚未实测，在此之前不要上调。多个 transport **实例**之间仍是单活多备——共享订阅只用在主实例内部的多条连接之间；共享组成员离线时消息排进其会话、重连后补发，所以主备切换不丢（负载下强杀主实例实测零丢失）。
+- 微批与监控：transport 把消息攒成微批一次写入 Redis 总线（`conduit.transport.mqtt.batch-size` 不得大于 EMQX `mqtt.max_inflight`，且窗口应为批的若干倍，默认 64 / 512），主实例经 EMQX REST API（只读 API key，`.env` 必填 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`）轮询会话指标，仅「投递停滞」使健康检查为 DOWN。本地开发需在 `application-local.yml` 设 `conduit.transport.monitor.enabled: false`。
+- 选主：Redis 键 `conduit:transport:leader`（值为实例 id），用一段 Lua 脚本抢锁：键不存在则 `SET PX` 写入；键里已是本实例 id 则刷新过期时间并视为抢到（所以 Redis 短暂抖动后原主实例立即拿回锁）；其他情况拒绝。主实例每 5 秒续期，锁 15 秒过期，备实例每 2 秒尝试抢锁，只有主实例连接 EMQX。续期失败（Redis 不可用、锁已被他人持有、超时）立即断开 MQTT 转为备用；正常停止时释放锁，备实例立即接管；主实例崩溃时备实例最长 15 秒后接管同一组会话（实测约 25 秒全部连接就绪）。配置项 `conduit.transport.leader.ttl` / `renew-interval` / `acquire-interval`。抢锁或适配器启动首次失败记 WARN，之后的重试记 DEBUG，恢复与每次角色变化记 INFO。
 - 健康检查：transport（端口 8081）的 `GET /actuator/health` 在 `components.leader.details` 中显示 `role`（`LEADER` / `STANDBY`）、`instanceId` 与 `connected`；`connected` 仅在已连接且订阅已被 EMQX 批准后才为 true。
 - 独立部署包起两个 transport（一主一备），都配置 `stop_grace_period: 20s` 以便正常停止时释放锁；开发时 IDE 中一个 transport，直接成为主实例。
 - 已解决的旧版问题（磁盘持久会话时期）：EMQX 5.8.6/5.8.9 在正常停止交接时会出现持久会话补发错位并丢少量消息；升级到当前项目版本 5.10.5 后，专项实验 9 次均未复现。该结论只覆盖 transport 正常交接，Broker 自身被强杀或客户机断电的持久性风险仍见「已知限制」。
@@ -127,7 +127,7 @@ docker compose up -d
 
 项目名与数据卷不变，数据沿用。旧的自定义镜像 `conduit-emqx` 不再使用。
 
-EMQX 已关闭磁盘持久会话、改用内存持久会话（见「transport 单活多备与内存持久会话」）；compose 环境变量仍设 `EMQX_CLUSTER__DISCOVERY_STRATEGY=singleton` 并固定节点名 `EMQX_NODE__NAME=emqx@127.0.0.1`。**升级必读：`.env` 新增必填变量 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`，缺失则 compose 无法启动。**已有部署升级注意：EMQX 以前按容器 IP 命名节点，改为固定节点名后，旧节点名下的运行时数据不再使用，例如在控制台里改过的密码会恢复为 `.env` 中的 `EMQX_DASHBOARD_PASSWORD`，首次重建后 EMQX 也以全新的数据目录启动。
+EMQX 已关闭磁盘持久会话、改用内存持久会话（见「transport 单活多备、多连接共享订阅与内存持久会话」）；compose 环境变量仍设 `EMQX_CLUSTER__DISCOVERY_STRATEGY=singleton` 并固定节点名 `EMQX_NODE__NAME=emqx@127.0.0.1`。**升级必读：`.env` 新增必填变量 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`，缺失则 compose 无法启动。**已有部署升级注意：EMQX 以前按容器 IP 命名节点，改为固定节点名后，旧节点名下的运行时数据不再使用，例如在控制台里改过的密码会恢复为 `.env` 中的 `EMQX_DASHBOARD_PASSWORD`，首次重建后 EMQX 也以全新的数据目录启动。
 
 > **EMQX 配置是 bind mount**：`emqx/base.hocon.tpl` 与 `emqx/acl.conf` 以挂载方式读取，所以 `deploy/dev`（或 `deploy/standalone`）目录必须放在运行 Docker 的那台 Linux 机器上。不再支持在另一台机器上通过远程 `DOCKER_HOST` 执行 compose。
 

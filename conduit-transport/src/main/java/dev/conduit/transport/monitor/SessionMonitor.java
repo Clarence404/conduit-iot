@@ -108,7 +108,8 @@ public class SessionMonitor {
             "conduit.transport.session.mqueue.len", "conduit.transport.session.mqueue.max",
             "conduit.transport.session.mqueue.dropped", "conduit.transport.session.inflight",
             "conduit.transport.session.inflight.max", "conduit.transport.session.sent",
-            "conduit.transport.session.heap.bytes", "conduit.transport.session.poll.failures");
+            "conduit.transport.session.heap.bytes", "conduit.transport.session.poll.failures",
+            "conduit.transport.session.mailbox.len", "conduit.transport.session.reductions");
 
     private void setGauge(String name, double value) {
         gaugeValues.get(name).set(value);
@@ -165,11 +166,15 @@ public class SessionMonitor {
         setGauge("conduit.transport.session.sent", now.sendMsg());
         setGauge("conduit.transport.session.heap.bytes", (double) now.heapWords() * BYTES_PER_WORD);
         setGauge("conduit.transport.session.poll.failures", 0);
+        // 只暴露、暂不参与健康判定：阈值须先用过载与健康两种历史数据验证能区分，再决定（见 SessionSnapshot 说明）
+        setGauge("conduit.transport.session.mailbox.len", now.mailboxLen());
+        setGauge("conduit.transport.session.reductions", now.reductions());
 
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("consecutiveFailures", 0);
         details.put("lastSuccessAt", lastSuccessText());
         details.put("mqueueLen", now.mqueueLen());
+        details.put("mailboxLen", now.mailboxLen());
         details.put("sendMsg", now.sendMsg());
 
         if (previous != null && now.mqueueDropped() > previous.mqueueDropped()) {

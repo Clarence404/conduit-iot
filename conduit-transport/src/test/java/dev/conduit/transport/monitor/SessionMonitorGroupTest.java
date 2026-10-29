@@ -76,4 +76,20 @@ class SessionMonitorGroupTest {
         assertThat(reg.find("conduit.transport.session.inflight").tag("client", "conduit-transport-1").gauge())
                 .isNotNull();
     }
+
+    @Test
+    void 信箱与reductions按连接发布为仪表且只暴露不参与健康判定() {
+        SimpleMeterRegistry reg = new SimpleMeterRegistry();
+        SessionMonitor m = new SessionMonitor(() -> new SessionSnapshot(0, 0, 100000, 0, 1024, 100, 1000, false,
+                9999, 123456789L), 3, 1L << 28, 64, reg, "conduit-transport-2");
+
+        m.sample();
+
+        assertThat(reg.find("conduit.transport.session.mailbox.len").tag("client", "conduit-transport-2").gauge().value())
+                .isEqualTo(9999);
+        assertThat(reg.find("conduit.transport.session.reductions").tag("client", "conduit-transport-2").gauge().value())
+                .isEqualTo(123456789);
+        // 信箱已逼近强杀线，但阈值尚未经过载数据标定，此时不得据此把健康置为 DOWN
+        assertThat(m.verdict().healthy()).isTrue();
+    }
 }

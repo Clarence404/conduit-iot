@@ -57,6 +57,8 @@ public class EmqxSessionClient implements Supplier<SessionSnapshot> {
                 n.path("inflight_max").asLong(),
                 n.path("send_msg").asLong(),
                 n.path("heap_size").asLong(),
-                n.path("durable").asBoolean(false));
+                n.path("durable").asBoolean(false),
+                n.path("mailbox_len").asLong(),
+                n.path("reductions").asLong());
     }
 }

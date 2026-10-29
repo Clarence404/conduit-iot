@@ -652,8 +652,8 @@
     {
       "id": 11,
       "type": "stat",
-      "title": "InfluxDB 写入耗时 P99",
-      "description": "流水线每批写入 InfluxDB 的耗时，主要在等 WAL 刷盘（1 秒间隔）。2026-10-29 实测健康负载下 P99 约 0.7～2.2 秒；它直接决定每批周期，进而决定入库吞吐。颜色只作参考，未经过载数据标定。",
+      "title": "transport 连接信箱（最大）",
+      "description": "各条 transport 连接进程 Erlang 信箱中待处理的消息数，取最大。超过 EMQX 的 max_mailbox_size（仓库默认 1000，压测 VM 为 10000）该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。2026-10-29 实测健康 8,000 条/秒时最大 31，过载 16,000 条/秒时最大 2,194。注意会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
       "datasource": {
         "type": "prometheus",
         "uid": "conduit-prometheus"
@@ -670,7 +670,7 @@
             "type": "prometheus",
             "uid": "conduit-prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+          "expr": "max(conduit_transport_session_mailbox_len >= 0)",
           "legendFormat": "",
           "refId": "A",
           "range": true
@@ -678,7 +678,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -688,18 +688,18 @@
               },
               {
                 "color": "yellow",
-                "value": 2.5
+                "value": 300
               },
               {
                 "color": "red",
-                "value": 5
+                "value": 800
               }
             ]
           },
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 2
+          "decimals": 0
         },
         "overrides": []
       },
@@ -1653,19 +1653,187 @@
     },
     {
       "id": 25,
+      "type": "timeseries",
+      "title": "各连接进程信箱",
+      "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (conduit_transport_session_mailbox_len >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 800
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "各连接进程忙碌度（reductions/秒）",
+      "description": "每条连接进程每秒的 Erlang 工作量。一个进程同一时刻只能跑在一个调度器上，单连接时 recon 实测约 500～600 万/秒即顶满单核（这正是改用共享订阅的原因）。4 条连接下实测 8,000 条/秒每条约 90 万、16,000 条/秒每条约 200 万，离上限尚远——现在的墙在 VM 整机 CPU。若有人把连接数改回 1，这张图会立刻冲向上限。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (rate(conduit_transport_session_reductions[2m]) >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3000000
+              },
+              {
+                "color": "red",
+                "value": 4500000
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
       "type": "row",
       "title": "4. Redis 总线",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 53,
         "w": 24,
         "h": 1
       },
       "panels": []
     },
     {
-      "id": 26,
+      "id": 28,
       "type": "timeseries",
       "title": "上行流与消费组积压",
       "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
@@ -1675,7 +1843,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 46,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -1758,7 +1926,7 @@
       }
     },
     {
-      "id": 27,
+      "id": 29,
       "type": "timeseries",
       "title": "Redis 单线程 CPU（%）",
       "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
@@ -1768,7 +1936,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 46,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -1838,7 +2006,7 @@
       }
     },
     {
-      "id": 28,
+      "id": 30,
       "type": "timeseries",
       "title": "命令吞吐（次/秒）",
       "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
@@ -1848,7 +2016,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 62,
         "w": 8,
         "h": 8
       },
@@ -1911,7 +2079,7 @@
       }
     },
     {
-      "id": 29,
+      "id": 31,
       "type": "timeseries",
       "title": "命令平均耗时",
       "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
@@ -1921,7 +2089,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 54,
+        "y": 62,
         "w": 8,
         "h": 8
       },
@@ -2014,7 +2182,7 @@
       }
     },
     {
-      "id": 30,
+      "id": 32,
       "type": "timeseries",
       "title": "内存与 AOF",
       "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
@@ -2024,7 +2192,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 54,
+        "y": 62,
         "w": 8,
         "h": 8
       },
@@ -2097,20 +2265,20 @@
       }
     },
     {
-      "id": 31,
+      "id": 33,
       "type": "row",
       "title": "5. 流水线：server",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 70,
         "w": 24,
         "h": 1
       },
       "panels": []
     },
     {
-      "id": 32,
+      "id": 34,
       "type": "timeseries",
       "title": "每批各阶段平均耗时",
       "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
@@ -2120,7 +2288,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 71,
         "w": 12,
         "h": 9
       },
@@ -2233,7 +2401,7 @@
       }
     },
     {
-      "id": 33,
+      "id": 35,
       "type": "timeseries",
       "title": "每批条数",
       "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
@@ -2243,7 +2411,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 63,
+        "y": 71,
         "w": 6,
         "h": 9
       },
@@ -2316,7 +2484,7 @@
       }
     },
     {
-      "id": 34,
+      "id": 36,
       "type": "timeseries",
       "title": "端到端延迟",
       "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
@@ -2326,7 +2494,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 63,
+        "y": 71,
         "w": 6,
         "h": 9
       },
@@ -2409,7 +2577,7 @@
       }
     },
     {
-      "id": 35,
+      "id": 37,
       "type": "timeseries",
       "title": "死信与测点拒绝",
       "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
@@ -2419,7 +2587,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 80,
         "w": 24,
         "h": 7
       },
@@ -2502,20 +2670,20 @@
       }
     },
     {
-      "id": 36,
+      "id": 38,
       "type": "row",
       "title": "6. InfluxDB",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 79,
+        "y": 87,
         "w": 24,
         "h": 1
       },
       "panels": []
     },
     {
-      "id": 37,
+      "id": 39,
       "type": "timeseries",
       "title": "写入请求（次/秒）",
       "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
@@ -2525,7 +2693,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 88,
         "w": 8,
         "h": 8
       },
@@ -2588,7 +2756,7 @@
       }
     },
     {
-      "id": 38,
+      "id": 40,
       "type": "timeseries",
       "title": "写入耗时",
       "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
@@ -2598,7 +2766,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 80,
+        "y": 88,
         "w": 8,
         "h": 8
       },
@@ -2671,7 +2839,7 @@
       }
     },
     {
-      "id": 39,
+      "id": 41,
       "type": "timeseries",
       "title": "InfluxDB CPU（核）",
       "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
@@ -2681,7 +2849,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 80,
+        "y": 88,
         "w": 8,
         "h": 8
       },
@@ -2744,7 +2912,7 @@
       }
     },
     {
-      "id": 40,
+      "id": 42,
       "type": "timeseries",
       "title": "落盘（对象存储）操作耗时",
       "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
@@ -2754,7 +2922,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -2817,7 +2985,7 @@
       }
     },
     {
-      "id": 41,
+      "id": 43,
       "type": "timeseries",
       "title": "查询耗时",
       "description": "历史曲线等查询请求的耗时分位数。",
@@ -2827,7 +2995,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 88,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -2900,20 +3068,20 @@
       }
     },
     {
-      "id": 42,
+      "id": 44,
       "type": "row",
       "title": "7. 资源",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 104,
         "w": 24,
         "h": 1
       },
       "panels": []
     },
     {
-      "id": 43,
+      "id": 45,
       "type": "timeseries",
       "title": "CPU 合计（核）",
       "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
@@ -2923,7 +3091,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 97,
+        "y": 105,
         "w": 12,
         "h": 8
       },
@@ -3022,7 +3190,7 @@
       }
     },
     {
-      "id": 44,
+      "id": 46,
       "type": "timeseries",
       "title": "各服务 CPU（核，堆叠）",
       "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
@@ -3032,7 +3200,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 97,
+        "y": 105,
         "w": 12,
         "h": 8
       },
@@ -3125,7 +3293,7 @@
       }
     },
     {
-      "id": 45,
+      "id": 47,
       "type": "timeseries",
       "title": "内存合计",
       "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
@@ -3135,7 +3303,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 113,
         "w": 8,
         "h": 8
       },
@@ -3218,7 +3386,7 @@
       }
     },
     {
-      "id": 46,
+      "id": 48,
       "type": "timeseries",
       "title": "各服务内存",
       "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
@@ -3228,7 +3396,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 105,
+        "y": 113,
         "w": 8,
         "h": 8
       },
@@ -3301,7 +3469,7 @@
       }
     },
     {
-      "id": 47,
+      "id": 49,
       "type": "timeseries",
       "title": "负载",
       "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
@@ -3311,7 +3479,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 105,
+        "y": 113,
         "w": 8,
         "h": 8
       },
@@ -3394,7 +3562,7 @@
       }
     },
     {
-      "id": 48,
+      "id": 50,
       "type": "timeseries",
       "title": "磁盘 I/O",
       "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
@@ -3404,7 +3572,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 113,
+        "y": 121,
         "w": 12,
         "h": 8
       },
@@ -3477,7 +3645,7 @@
       }
     },
     {
-      "id": 49,
+      "id": 51,
       "type": "timeseries",
       "title": "根分区可用空间",
       "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
@@ -3487,7 +3655,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 113,
+        "y": 121,
         "w": 6,
         "h": 8
       },
@@ -3550,7 +3718,7 @@
       }
     },
     {
-      "id": 50,
+      "id": 52,
       "type": "timeseries",
       "title": "磁盘忙碌占比",
       "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
@@ -3560,7 +3728,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 113,
+        "y": 121,
         "w": 6,
         "h": 8
       },
@@ -3623,19 +3791,19 @@
       }
     },
     {
-      "id": 55,
+      "id": 57,
       "type": "row",
       "title": "8. JVM",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 121,
+        "y": 129,
         "w": 24,
         "h": 1
       },
       "panels": [
         {
-          "id": 51,
+          "id": 53,
           "type": "timeseries",
           "title": "堆占用",
           "description": "各 JVM 服务的堆已用与上限。",
@@ -3645,7 +3813,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 122,
+            "y": 130,
             "w": 12,
             "h": 8
           },
@@ -3718,7 +3886,7 @@
           }
         },
         {
-          "id": 52,
+          "id": 54,
           "type": "timeseries",
           "title": "GC 暂停（秒/秒）",
           "description": "每秒中用于 GC 暂停的秒数。持续高于 0.1 说明 GC 压力大。",
@@ -3728,7 +3896,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 122,
+            "y": 130,
             "w": 12,
             "h": 8
           },
@@ -3791,7 +3959,7 @@
           }
         },
         {
-          "id": 53,
+          "id": 55,
           "type": "timeseries",
           "title": "线程数",
           "description": "各 JVM 服务的活动线程数。",
@@ -3801,7 +3969,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 130,
+            "y": 138,
             "w": 12,
             "h": 8
           },
@@ -3864,7 +4032,7 @@
           }
         },
         {
-          "id": 54,
+          "id": 56,
           "type": "timeseries",
           "title": "进程 CPU（核）",
           "description": "各 JVM 服务进程占用的核数。",
@@ -3874,7 +4042,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 130,
+            "y": 138,
             "w": 12,
             "h": 8
           },

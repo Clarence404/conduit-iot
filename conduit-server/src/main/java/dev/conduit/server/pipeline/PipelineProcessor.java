@@ -53,7 +53,7 @@ public class PipelineProcessor {
      * 串行阶段：identity 批量查设备身份、influx 写时序库、latest 更新最新值、ack 确认，
      * total 为整批处理总耗时。total 减去四个子阶段即解码与校验等纯 CPU 开销。
      */
-    static final List<String> STAGES = List.of("total", "identity", "influx", "latest", "ack");
+    static final List<String> STAGES = List.of("total", "identity", "decode", "influx", "latest", "ack");
 
     /** 已通过解码与校验、等待批量写库的属性消息：原投递与处理结果。 */
     private record PendingProperty(Delivery delivery, Prepared prepared) {
@@ -74,6 +74,10 @@ public class PipelineProcessor {
      * <p>为什么需要：入库吞吐约等于「每批条数 ÷ 每批耗时」，而每批耗时由若干串行阶段相加
      * （流水线是单条虚拟线程，阶段之间不并发）。只有分阶段计时才能回答「吞吐上不去是卡在
      * 等 InfluxDB 刷盘，还是卡在 Redis，还是批根本没攒满」。
+     *
+     * <p><b>total 只在含属性数据的批上记录。</b>上下线事件会产生大量近乎零耗时的微批
+     * （600 台设备每轮连断即数千个事件），把它们算进 total 会让 total 的均值远低于其子阶段，
+     * 相减得出负的「其余」——2026-10-29 首次测量就栽在这个分母不一致上。
      * 此前只能靠 DEBUG 日志读到写库耗时，但同类里还有逐条 DEBUG，高负载下开启日志本身就会
      * 把被测对象拖慢，测到的不是真实耗时——所以必须用指标而不是日志。
      */
@@ -161,6 +165,7 @@ public class PipelineProcessor {
         List<PendingProperty> properties = new ArrayList<>();
         Map<String, DeviceIdentity> known = timed("identity", () -> prefetchIdentities(batch));
 
+        long decodeStart = System.nanoTime();
         for (Delivery delivery : batch) {
             if (delivery.deliveryCount() > props.maxDeliveries()) {
                 dead(delivery, DeadReason.MAX_DELIVERY_EXCEEDED);
@@ -200,12 +205,15 @@ public class PipelineProcessor {
             }
         }
 
+        stageTimers.get("decode").record(System.nanoTime() - decodeStart, TimeUnit.NANOSECONDS);
+
         ack(presenceAcks);
         if (!properties.isEmpty()) {
             writeProperties(properties);
+            // 只在含属性数据的批上记录 total，保证与各子阶段分母一致（见 stageTimers 的说明）。
+            // 中途抛出时不记录：半截的耗时混进百分位只会误导，宁可少一个样本。
+            stageTimers.get("total").record(System.nanoTime() - batchStart, TimeUnit.NANOSECONDS);
         }
-        // 即使中途抛出也不记录 total：半截的耗时混进百分位只会误导，宁可少一个样本
-        stageTimers.get("total").record(System.nanoTime() - batchStart, TimeUnit.NANOSECONDS);
     }
 
     /** 给一个阶段计时并返回其结果；阶段抛出时不记录样本（半截耗时会污染百分位）。 */

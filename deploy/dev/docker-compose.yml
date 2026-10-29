@@ -39,6 +39,9 @@ services:
   influxdb:
     image: influxdb:3.12.0-core
     # 启动时由 INFLUX_TOKEN 生成离线管理员 token 文件（只有库里还没有管理员 token 时才生效），再启动服务
+    # --disable-authz 中的 metrics：让 Prometheus 免 token 抓取运行指标。InfluxDB 3 Core 只有管理员 token（能写能删整个库），
+    # 为读几个运行指标把全权限凭据分发给 Prometheus 会扩大泄露面；/metrics 只暴露运行指标，泄露代价远小于管理员 token。
+    # 允许的取值经实测为 health、ping、metrics、ready、pprof、node_stop（--help 里不列，用非法值探测得到）。
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -46,7 +49,7 @@ services:
         umask 077
         && printf '{"token":"%s","name":"_admin"}' "$${INFLUX_TOKEN}" > /tmp/admin-token.json
         && exec influxdb3 serve --node-id node0 --object-store file --data-dir /var/lib/influxdb3/data
-        --admin-token-file /tmp/admin-token.json --disable-authz health,ping
+        --admin-token-file /tmp/admin-token.json --disable-authz health,ping,metrics
     environment:
       INFLUX_TOKEN: ${INFLUX_TOKEN:?INFLUX_TOKEN is required}
       # 单次查询允许打开的 parquet 文件数上限（InfluxDB 3 Core 默认 432）。

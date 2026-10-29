@@ -205,3 +205,8 @@
 - 可靠无损 11,500、硬件墙 16,000，墙已在 CPU：再往上需降低每条消息的 CPU 开销（EMQX 约占 VM 的 35～40%，其次是
   server、transport、Redis），或加核（所有者当前决定不加）。
 - `max_inflight=512` 那组 A/B 实验跑在坏掉的发压器上（100 台设备静默鉴权失败），绝对值不可信，未用修复后的发压器重做。
+- **transport 会话监控采集 `mailbox_len` 与 `reductions`**（看板缺一个经验证的「连接被杀前兆」）：EMQX 的
+  `/api/v5/clients/{clientid}` 已返回这两个字段（2026-10-29 实测），`SessionSnapshot` 未解析。`mailbox_len` 是每条
+  连接进程的信箱长度，超过 `max_mailbox_size` 即被强杀，是真正的前兆；`reductions` 求速率即该连接进程的忙碌度，
+  也就是当天花一下午用 recon 手工测出的「单连接进程顶满单核」——有了它这个瓶颈在看板上一眼可见。
+  加上后须照例用过载与健康两种数据验证其确实能区分，再标阈值。

@@ -50,4 +50,9 @@ scrape_configs:
     static_configs:
       - targets: ["redis-exporter:9121"]
 
-  # InfluxDB 3 Core 是否提供 Prometheus 端点未能验证，不硬凑；其资源占用由 cadvisor 的容器指标覆盖。
+  # InfluxDB 3 Core 提供 /metrics（2026-10-29 实测）。不带 token：InfluxDB 以 --disable-authz ...,metrics 对该端点免鉴权，
+  # 避免把能写能删整个库的管理员 token 分发给 Prometheus。其中 tokio_worker_total_busy_duration_seconds_total 之和
+  # 即 InfluxDB 自身占用的核数——cadvisor 默认不启动，这是拿到它 CPU 的唯一途径。
+  - job_name: influxdb
+    static_configs:
+      - targets: ["influxdb:8181"]

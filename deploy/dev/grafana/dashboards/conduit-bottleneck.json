@@ -1,8 +1,10 @@
 {
   "uid": "conduit-bottleneck",
   "title": "Conduit 性能瓶颈观测",
+  "description": "按数据流逐跳排布：EMQX → transport → Redis → 流水线 → InfluxDB，并配积压、丢弃与资源。",
   "tags": [
-    "conduit"
+    "conduit",
+    "performance"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -13,392 +15,959 @@
     "to": "now"
   },
   "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
   "panels": [
-    {
-      "id": 131,
-      "type": "row",
-      "title": "0. 总览：现在怎么样",
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "collapsed": false,
-      "panels": []
-    },
-    {
-      "id": 132,
-      "type": "stat",
-      "title": "入库 TPS（当前）",
-      "description": "最近 1 分钟平均的入库速率。\n\n**口径**：入库 TPS 指真正写进 InfluxDB 的条数，不是接入量。过载时 EMQX 会先向设备 PUBACK 再丢弃，**对外承诺能力只能用入库 TPS**。",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 0,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
-    {
-      "id": 133,
-      "type": "stat",
-      "title": "入库 TPS（5 分钟峰值）",
-      "description": "最近 5 分钟内的最高入库速率。峰值只说明瞬时能力，**可持续容量请以容量测试结论为准**。\n\n**口径**：入库 TPS 指真正写进 InfluxDB 的条数，不是接入量。过载时 EMQX 会先向设备 PUBACK 再丢弃，**对外承诺能力只能用入库 TPS**。",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 4,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "max_over_time((sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m])))[5m:15s])",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
-    {
-      "id": 134,
-      "type": "stat",
-      "title": "接入 QPS（当前）",
-      "description": "EMQX 接收并向设备 PUBACK 的速率。**它大于入库 TPS 的部分正在被堆积或丢弃**，不能当作平台能力。",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 8,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "rate(emqx_messages_received[1m])",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
-    {
-      "id": 135,
-      "type": "stat",
-      "title": "端到端延迟 P50 / P99",
-      "description": "从 transport 收到消息到写入时序库并更新最新值的耗时，即「数据多久能查到」。\n只统计实时消费，不含遥测重放（重放处理旧数据会污染百分位）。\n**时钟来源**：receivedAt 取自 transport 进程时钟，计时在 server 进程；当前两者同宿主机，分机部署后该值会带上时钟差。",
-      "gridPos": {
-        "h": 5,
-        "w": 5,
-        "x": 12,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "P50",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "P99",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "decimals": 3,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
-    {
-      "id": 136,
-      "type": "stat",
-      "title": "当前积压（队列 + 消费组）",
-      "description": "入口与出口的积压。两者都平说明在容量以内；任一持续单调上涨说明已超容量。",
-      "gridPos": {
-        "h": 5,
-        "w": 3,
-        "x": 17,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "conduit_transport_session_mqueue_len",
-          "legendFormat": "EMQX 队列",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        },
-        {
-          "expr": "sum(redis_stream_group_lag)",
-          "legendFormat": "消费组 lag",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
-    {
-      "id": 137,
-      "type": "stat",
-      "title": "累计入库 / 累计丢弃",
-      "description": "自服务启动以来的累计值。**丢弃不为零即发生过真实数据丢失**（队列满时 EMQX 丢弃，设备若不带消息 id 则无从得知）。",
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 20,
-        "y": 1
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "conduit-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum(conduit_pipeline_processed_total{type=\"property\"})",
-          "legendFormat": "累计入库",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        },
-        {
-          "expr": "conduit_transport_session_mqueue_dropped",
-          "legendFormat": "累计丢弃",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "conduit-prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      }
-    },
     {
       "id": 1,
       "type": "row",
-      "title": "1. 各跳速率对比：哪一跳先掉下来（① 接入 QPS / ④ 入库 TPS）",
+      "title": "0. 总览：现在怎么样",
       "collapsed": false,
       "gridPos": {
-        "h": 1,
-        "w": 24,
         "x": 0,
-        "y": 7
+        "y": 0,
+        "w": 24,
+        "h": 1
       },
       "panels": []
     },
     {
       "id": 2,
-      "type": "timeseries",
-      "title": "链路各跳速率（条/秒）：① 接入 QPS → ④ 入库 TPS",
-      "description": "按链路顺序编号：① 接入 QPS 是 EMQX 接收并向设备 PUBACK 的速率，④ 入库 TPS 是真正写进 InfluxDB 的速率。\n**对外承诺能力只能用入库 TPS，不能用接入 QPS。** 过载时 EMQX 会先 PUBACK 再丢弃，不带消息 id 的设备拿到确认却丢了数据（2026-10-28 实测一轮丢弃 51,671 条）。\n① 与 ④ 的差值即当前被堆积或丢弃的量；若差值持续扩大，说明已超出稳态容量。",
+      "type": "stat",
+      "title": "入库 TPS（当前）",
+      "description": "真正写进 InfluxDB 的属性消息条数/秒。**对外承诺能力只能用这个数**——过载时 EMQX 会先回 PUBACK 再丢弃，接入 QPS 里包含随后被丢掉的消息。",
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "conduit-prometheus"
       },
       "gridPos": {
-        "h": 8,
-        "w": 24,
         "x": 0,
-        "y": 8
+        "y": 1,
+        "w": 4,
+        "h": 4
       },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "suffix:条/秒",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "入库 TPS（5 分钟峰值）",
+      "description": "最近 5 分钟内入库 TPS 的最高值。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max_over_time((sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m])))[5m:15s])",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "接入 QPS（当前）",
+      "description": "EMQX 收到并确认的消息条数/秒。高于入库 TPS 且持续拉开，说明在积压或丢失。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_received[1m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "丢弃（条/秒）",
+      "description": "EMQX 丢弃消息的速率，**应为 0**。非 0 即设备已收到 PUBACK 而平台没存下来。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_dropped[1m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "端到端延迟",
+      "description": "从 transport 收到到写入 InfluxDB 并更新最新值的耗时（仅实时消费，不含重放）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "当前积压",
+      "description": "EMQX 会话队列（transport 来不及取）与 Redis 消费组 lag（流水线来不及处理）。持续增长即过载。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(conduit_transport_session_mqueue_len >= 0)",
+          "legendFormat": "EMQX 队列",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(redis_stream_group_lag)",
+          "legendFormat": "消费组 lag",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 50000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "VM 整机 CPU",
+      "description": "**当前硬件墙在这里**：2026-10-29 实测 13,000 条/秒时约 92%、16,000 时 96～97% 即开始丢消息。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "负载 / 核数",
+      "description": "1 分钟平均负载除以核数。大于 1 表示运行队列超过核数、进程在排队等 CPU（16,000 条/秒时实测约 1.9）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(node_load1) / count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 1.0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Redis 单线程 CPU",
+      "description": "Redis 主线程占一个核的百分比。Redis 单线程，接近 100% 即饱和：transport 的 XADD 会排队、回 PUBACK 变慢，进而让 EMQX 信箱堆积。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "InfluxDB 写入耗时 P99",
+      "description": "流水线每批写入 InfluxDB 的耗时，主要在等 WAL 刷盘（1 秒间隔）。2026-10-29 实测健康负载下 P99 约 0.7～2.2 秒；它直接决定每批周期，进而决定入库吞吐。颜色只作参考，未经过载数据标定。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2.5
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "共享订阅数",
+      "description": "transport 主实例的共享订阅条数，应等于 conduit.transport.mqtt.connections（默认 4）。少了说明有连接没连上，约 1/K 的流量会滞留在它的会话里。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "emqx_subscriptions_shared_count",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 4
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "消费组消费者数",
+      "description": "应为「流水线 workers × server 实例数」（默认 4）。持续增长说明有死消费者残留：消费者名每次重启随机换新，旧的留在组里（已知问题，见 backlog）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max(redis_stream_group_consumers)",
+          "legendFormat": "",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 8
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "1. 链路各跳速率：哪一跳先掉下来",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "各跳速率（条/秒）：① 接入 → ⑥ 入库",
+      "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_received[1m]))",
+          "legendFormat": "① EMQX 接收（接入 QPS）",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_delivered[1m]))",
+          "legendFormat": "② EMQX 投递",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(conduit_transport_session_sent[1m]) >= 0)",
+          "legendFormat": "③ transport 收取（各连接合计）",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(redis_commands_total{cmd=\"xadd\"}[1m]))",
+          "legendFormat": "④ XADD 写入总线",
+          "refId": "D",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(redis_stream_group_entries_read[1m]))",
+          "legendFormat": "⑤ 消费组读取",
+          "refId": "E",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
+          "legendFormat": "⑥ 写入 InfluxDB（入库 TPS）",
+          "refId": "F",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
             "spanNulls": false,
-            "showPoints": "never"
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
@@ -407,6 +976,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
+          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max"
@@ -416,116 +986,381 @@
           "mode": "multi",
           "sort": "desc"
         }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(emqx_messages_received[1m])",
-          "legendFormat": "① 接入 QPS：EMQX 接收并确认"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(emqx_messages_delivered[1m])",
-          "legendFormat": "EMQX 投递"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_total{cmd=\"xadd\"}[1m])",
-          "legendFormat": "③ 写入总线：XADD"
-        },
-        {
-          "refId": "D",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(conduit_pipeline_processed_total{type=\"property\"}[1m]))",
-          "legendFormat": "④ 入库 TPS：写进 InfluxDB"
-        },
-        {
-          "refId": "E",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_stream_group_entries_read[1m])",
-          "legendFormat": "消费组已读（Redis 侧，交叉验证）"
-        },
-        {
-          "refId": "F",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_transport_session_sent[1m])",
-          "legendFormat": "② 投递：EMQX → transport"
-        }
-      ]
+      }
     },
     {
-      "id": 3,
+      "id": 16,
       "type": "row",
-      "title": "2. 积压",
+      "title": "2. 接入：EMQX",
       "collapsed": false,
       "gridPos": {
-        "h": 1,
-        "w": 24,
         "x": 0,
-        "y": 16
+        "y": 19,
+        "w": 24,
+        "h": 1
       },
       "panels": []
     },
     {
-      "id": 4,
+      "id": 17,
       "type": "timeseries",
-      "title": "EMQX 会话队列",
-      "description": "transport 会话监控经 EMQX REST API 采样并导出的队列深度（EMQX 自带 Prometheus 端点不提供）。队列水位=len/max，逼近 100% 将发生溢出丢弃；仅主实例有数据，备实例或采样失败时为空（NaN）。",
+      "title": "连接与订阅",
+      "description": "设备连接数与 transport 共享订阅数。共享订阅数应恒等于 transport 的连接数。",
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "conduit-prometheus"
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 17
+        "y": 20,
+        "w": 12,
+        "h": 8
       },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "emqx_connections_count",
+          "legendFormat": "连接数",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "emqx_live_connections_count",
+          "legendFormat": "活跃连接",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "emqx_subscriptions_shared_count",
+          "legendFormat": "共享订阅",
+          "refId": "C",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
             "spanNulls": false,
-            "showPoints": "never"
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "丢弃（条/秒）",
+      "description": "应全部为 0。queue_full 是会话队列满（transport 取得太慢）；no_subscribers 是无人订阅（transport 未连上）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_dropped[1m]))",
+          "legendFormat": "丢弃合计",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_delivery_dropped_queue_full[1m]))",
+          "legendFormat": "会话队列满",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(emqx_messages_dropped_no_subscribers[1m]))",
+          "legendFormat": "无订阅者",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "3. transport：按连接",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "各连接收取速率（条/秒）",
+      "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (rate(conduit_transport_session_sent[1m]) >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:条/秒",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "各连接会话队列（mqueue）",
+      "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (conduit_transport_session_mqueue_len >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max(conduit_transport_session_mqueue_max >= 0)",
+          "legendFormat": "上限",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "队列水位 %"
+              "options": "上限"
             },
             "properties": [
               {
-                "id": "unit",
-                "value": "percent"
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
               },
               {
-                "id": "custom.axisPlacement",
-                "value": "right"
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
@@ -535,6 +1370,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
+          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max"
@@ -544,1147 +1380,177 @@
           "mode": "multi",
           "sort": "desc"
         }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_mqueue_len",
-          "legendFormat": "队列深度"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_mqueue_len / conduit_transport_session_mqueue_max * 100",
-          "legendFormat": "队列水位 %"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Redis 上行流",
-      "description": "流长度持续上升说明入库慢于接入；lag 与 pending 的指标名未经实际验证。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 17
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_stream_length{key=\"conduit:stream:up\"}",
-          "legendFormat": "流长度"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_stream_group_lag",
-          "legendFormat": "消费组 lag（{{group}}）"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_stream_group_messages_pending",
-          "legendFormat": "待确认（{{group}}）"
-        }
-      ]
-    },
-    {
-      "id": 25,
-      "type": "timeseries",
-      "title": "EMQX 在途窗口占用",
-      "description": "会话当前未确认的在途消息数（inflight）与窗口上限（max_inflight，本项目固化为 1024）。在途长时间贴着上限且不下降，说明 transport 提交变慢或投递停滞；transport 攒批 64 小于窗口，正常应明显低于上限。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 25
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_inflight",
-          "legendFormat": "在途数"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_inflight_max",
-          "legendFormat": "窗口上限"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "type": "row",
-      "title": "3. 丢弃与错误",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 33
-      },
-      "panels": []
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "EMQX 丢弃（条/秒）",
-      "description": "队列满丢弃大于 0 即有数据丢失；指标名未经实际验证。 「会话队列溢出丢弃」来自 transport 会话监控（累计值取 rate），大于 0 是真实的数据丢失，需设备侧重发补回。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 34
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(emqx_messages_dropped[1m])",
-          "legendFormat": "消息丢弃"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(emqx_delivery_dropped_queue_full[1m])",
-          "legendFormat": "队列满丢弃（mqueue_dropped）"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_transport_session_mqueue_dropped[1m])",
-          "legendFormat": "会话队列溢出丢弃（transport 监控）"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "type": "timeseries",
-      "title": "死信与拒绝",
-      "description": "后两项来自 conduit-server 的 /internal/metrics。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 34
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_stream_length{key=\"conduit:stream:dead\"}",
-          "legendFormat": "死信流长度"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (reason) (rate(conduit_pipeline_dead_total[5m]))",
-          "legendFormat": "新增死信/秒 {{reason}}"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (reason,source) (rate(conduit_pipeline_rejected_fields_total[5m]))",
-          "legendFormat": "拒绝测点/秒 {{reason}} {{source}}"
-        }
-      ]
-    },
-    {
-      "id": 26,
-      "type": "timeseries",
-      "title": "transport 会话监控自身健康（连续失败次数）",
-      "description": "transport 经 EMQX REST API 采样会话的连续失败次数，正常为 0。持续大于 0 说明监控本身哑了（API 不可达、key 失效等），此时本页所有 conduit_transport_session_* 曲线都不可信（采样失败时数据指标置为 NaN）。备实例上该值同样为 NaN，是设计如此，不是故障。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 42
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_poll_failures",
-          "legendFormat": "连续失败次数"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "type": "row",
-      "title": "4. 延迟",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 50
-      },
-      "panels": []
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Redis 命令平均耗时（秒/次）",
-      "description": "appendfsync always 下每次写都等刷盘，XADD 平均耗时直接反映 fsync 代价。应用目前没有 PUBACK / 批处理的 Timer 指标，本次不新增埋点，故此处用 Redis 侧耗时代替。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 51
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xadd\"}[1m]) / rate(redis_commands_total{cmd=\"xadd\"}[1m])",
-          "legendFormat": "XADD"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xack\"}[1m]) / rate(redis_commands_total{cmd=\"xack\"}[1m])",
-          "legendFormat": "XACK"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xreadgroup\"}[1m]) / rate(redis_commands_total{cmd=\"xreadgroup\"}[1m])",
-          "legendFormat": "XREADGROUP"
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "type": "timeseries",
-      "title": "transport 活动线程与 HTTP 请求（占位对照）",
-      "description": "transport 目前没有自定义 Timer，列出线程数作基本健康对照。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 51
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "jvm_threads_live_threads{job=\"conduit-transport\"}",
-          "legendFormat": "{{instance}} 线程数"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "type": "row",
-      "title": "5. 服务资源",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 59
-      },
-      "panels": []
-    },
-    {
-      "id": 129,
-      "type": "timeseries",
-      "title": "CPU 合计（宿主机，含全部容器）",
-      "description": "宿主机整机 CPU 占用（核）。这是真正的总量——包含 EMQX、PostgreSQL、InfluxDB 等没有 exporter、因而不出现在「分项」图里的容器。分项图只覆盖 JVM 服务与 Redis，两者之差即未覆盖部分。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 60
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "已用（核）",
-          "refId": "A"
-        },
-        {
-          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "总核数",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 130,
-      "type": "timeseries",
-      "title": "内存合计（宿主机已用）",
-      "description": "宿主机整机内存。这是真正的总量——包含没有 exporter 的容器。swap 已用大于 0 说明物理内存已经吃紧（2026-10-28 曾因 Java 服务无容器内存上限而把 swap 占满）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 60
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
-          "legendFormat": "已用",
-          "refId": "A"
-        },
-        {
-          "expr": "node_memory_MemTotal_bytes",
-          "legendFormat": "总量",
-          "refId": "B"
-        },
-        {
-          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
-          "legendFormat": "swap 已用",
-          "refId": "C"
-        }
-      ]
-    },
-    {
-      "id": 13,
-      "type": "timeseries",
-      "title": "服务 CPU 分项（核）",
-      "description": "各服务自身上报的 CPU 占用（核）。JVM 服务用 Micrometer 的 process_cpu_usage，Redis 用 redis_cpu_*。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 68
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "process_cpu_usage{job=~\"conduit-server|conduit-transport\"}",
-          "legendFormat": "{{job}} {{instance}}",
-          "refId": "A"
-        },
-        {
-          "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
-          "legendFormat": "redis",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "type": "timeseries",
-      "title": "服务内存 分项",
-      "description": "JVM 服务用 jvm_memory_used_bytes（堆 + 非堆之和，不含堆外与 JVM 自身开销，因此小于容器 RSS）；Redis 用 redis_memory_used_bytes。\n容器内存上限见 .env 的 SERVER_MEM_LIMIT / TRANSPORT_MEM_LIMIT 等，JVM 堆上限按该值的 75% 自动计算（MaxRAMPercentage=75）。\n\n**未覆盖 EMQX、PostgreSQL、InfluxDB。** EMQX 的 emqx_vm_cpu_use / emqx_vm_used_memory 是**宿主机**的 CPU 与内存，不是 EMQX 进程自身（实测 emqx_vm_total_memory 与 node_memory_MemTotal_bytes 完全相等，而 EMQX 容器实际仅占约 630 MiB），用它们会把宿主机数据误标成服务数据，故不采用。宿主机整体视图见「6. 宿主机」一组。\n要获得逐容器的 CPU/内存，需启用 metrics-cadvisor profile（镜像在 gcr.io，部分网络不可达）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 68
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum(jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"}) by (job, instance)",
-          "legendFormat": "{{job}} {{instance}}",
-          "refId": "A"
-        },
-        {
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "redis",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 27,
-      "type": "timeseries",
-      "title": "EMQX 会话堆占用（连接进程）",
-      "description": "transport 会话监控取得的 EMQX 会话进程堆大小。它与 EMQX 的单连接进程堆限共享同一上限（EMQX_CONNECTION_MAX_HEAP_SIZE，实际按 1.5 倍触发，即 384MB）：mqueue 积压驻留在该堆内，逼近上限会被 EMQX 强杀会话。 这些 transport 会话指标只在主实例上有值，备实例（以及采样失败时）恒为 NaN（图中为空），这是设计如此（避免显示陈旧值），不是故障。 本图数据来自 transport 监控，不依赖 cadvisor。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 84
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "conduit_transport_session_heap_bytes",
-          "legendFormat": "会话进程堆"
-        }
-      ]
-    },
-    {
-      "id": 15,
-      "type": "row",
-      "title": "6. 宿主机",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 92
-      },
-      "panels": []
-    },
-    {
-      "id": 16,
-      "type": "timeseries",
-      "title": "可用内存",
-      "description": "压测机总可用内存很紧，接近 0 会触发换页或 OOM。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 93
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "node_memory_MemAvailable_bytes",
-          "legendFormat": "MemAvailable"
-        }
-      ]
-    },
-    {
-      "id": 17,
-      "type": "timeseries",
-      "title": "根分区可用空间",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 93
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
-          "legendFormat": "/ 可用"
-        }
-      ]
-    },
-    {
-      "id": 18,
-      "type": "timeseries",
-      "title": "磁盘 I/O",
-      "description": "忙碌占比接近 1 说明磁盘已饱和（常见于 appendfsync always）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 93
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(node_disk_written_bytes_total[1m]))",
-          "legendFormat": "写入 B/s"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(node_disk_read_bytes_total[1m]))",
-          "legendFormat": "读取 B/s"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max(rate(node_disk_io_time_seconds_total[1m]))",
-          "legendFormat": "磁盘忙碌占比（1=饱和）"
-        }
-      ]
-    },
-    {
-      "id": 19,
-      "type": "row",
-      "title": "7. JVM",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 101
-      },
-      "panels": []
-    },
-    {
-      "id": 20,
-      "type": "timeseries",
-      "title": "堆占用",
-      "description": "server 的序列来自 /internal/metrics。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 102
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (job,instance) (jvm_memory_used_bytes{area=\"heap\"})",
-          "legendFormat": "{{job}} {{instance}} 已用"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (job,instance) (jvm_memory_max_bytes{area=\"heap\"})",
-          "legendFormat": "{{job}} {{instance}} 上限"
-        }
-      ]
-    },
-    {
-      "id": 21,
-      "type": "timeseries",
-      "title": "GC 暂停（秒/秒）",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 102
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "spanNulls": false,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (job,instance) (rate(jvm_gc_pause_seconds_sum[1m]))",
-          "legendFormat": "{{job}} {{instance}}"
-        }
-      ]
+      }
     },
     {
       "id": 22,
-      "type": "row",
-      "title": "8. Redis",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 110
+      "type": "timeseries",
+      "title": "各连接在途窗口",
+      "description": "已推给 transport、尚未收到 PUBACK 的消息数，上限为 EMQX max_inflight。持续顶满说明 transport 回确认的速度跟不上。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
       },
-      "panels": []
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (conduit_transport_session_inflight >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max(conduit_transport_session_inflight_max >= 0)",
+          "legendFormat": "上限",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "上限"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     },
     {
       "id": 23,
       "type": "timeseries",
-      "title": "命令吞吐与内存",
-      "description": "",
+      "title": "各连接会话进程堆",
+      "description": "EMQX 里每条 transport 连接进程的堆。实际强杀线是配置值的 1.5 倍（256MB 配置在 384MB 处被杀，见红色虚线）。",
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "conduit-prometheus"
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 111
+        "x": 8,
+        "y": 37,
+        "w": 8,
+        "h": 8
       },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (conduit_transport_session_heap_bytes >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "bytes",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
             "spanNulls": false,
-            "showPoints": "never"
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 402653184
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
@@ -1693,6 +1559,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
+          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max"
@@ -1702,51 +1569,68 @@
           "mode": "multi",
           "sort": "desc"
         }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_processed_total[1m])",
-          "legendFormat": "命令/秒"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "内存占用（字节）"
-        }
-      ]
+      }
     },
     {
       "id": 24,
       "type": "timeseries",
-      "title": "AOF",
-      "description": "延迟 fsync 增长说明刷盘跟不上，是 appendfsync always 为瓶颈的直接证据。AOF 指标名未经实际验证。",
+      "title": "会话监控取数失败",
+      "description": "transport 经 EMQX REST API 采样会话指标，连续失败次数。非 0 时上面几张图的数据不可信。",
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "conduit-prometheus"
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 111
+        "x": 16,
+        "y": 37,
+        "w": 8,
+        "h": 8
       },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (client) (conduit_transport_session_poll_failures >= 0)",
+          "legendFormat": "{{client}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
             "spanNulls": false,
-            "showPoints": "never"
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
@@ -1755,6 +1639,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
+          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max"
@@ -1764,33 +1649,2294 @@
           "mode": "multi",
           "sort": "desc"
         }
+      }
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "4. Redis 总线",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "上行流与消费组积压",
+      "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 12,
+        "h": 8
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "conduit-prometheus"
           },
-          "expr": "redis_aof_current_size_bytes",
-          "legendFormat": "AOF 当前大小"
+          "expr": "redis_stream_length{stream=\"conduit:stream:up\"}",
+          "legendFormat": "流长度",
+          "refId": "A",
+          "range": true
         },
         {
-          "refId": "B",
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "conduit-prometheus"
           },
-          "expr": "rate(redis_aof_delayed_fsync[1m])",
-          "legendFormat": "延迟 fsync/秒"
+          "expr": "sum(redis_stream_group_lag)",
+          "legendFormat": "消费组 lag",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(redis_stream_group_messages_pending)",
+          "legendFormat": "待确认 pending",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Redis 单线程 CPU（%）",
+      "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 46,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
+          "legendFormat": "Redis 主线程",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "命令吞吐（次/秒）",
+      "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (cmd) (rate(redis_commands_total{cmd=~\"xadd|evalsha|xack|xreadgroup|mget|hmget\"}[1m]))",
+          "legendFormat": "{{cmd}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:次/秒",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "命令平均耗时",
+      "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 54,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xadd\"}[1m]) / rate(redis_commands_total{cmd=\"xadd\"}[1m])",
+          "legendFormat": "xadd",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"evalsha\"}[1m]) / rate(redis_commands_total{cmd=\"evalsha\"}[1m])",
+          "legendFormat": "evalsha",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xack\"}[1m]) / rate(redis_commands_total{cmd=\"xack\"}[1m])",
+          "legendFormat": "xack",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xreadgroup\"}[1m]) / rate(redis_commands_total{cmd=\"xreadgroup\"}[1m])",
+          "legendFormat": "xreadgroup",
+          "refId": "D",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "内存与 AOF",
+      "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 54,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "已用内存",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "redis_aof_current_size_bytes",
+          "legendFormat": "AOF 大小",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "row",
+      "title": "5. 流水线：server",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "每批各阶段平均耗时",
+      "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"total\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"total\"}[1m])",
+          "legendFormat": "total",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"influx\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"influx\"}[1m])",
+          "legendFormat": "influx",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"latest\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"latest\"}[1m])",
+          "legendFormat": "latest",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"ack\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"ack\"}[1m])",
+          "legendFormat": "ack",
+          "refId": "D",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"identity\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"identity\"}[1m])",
+          "legendFormat": "identity",
+          "refId": "E",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"decode\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"decode\"}[1m])",
+          "legendFormat": "decode",
+          "refId": "F",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "每批条数",
+      "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 63,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(conduit_pipeline_batch_size_sum[1m]) / rate(conduit_pipeline_batch_size_count[1m])",
+          "legendFormat": "平均",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max(conduit_pipeline_batch_size_max)",
+          "legendFormat": "最大",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "端到端延迟",
+      "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 63,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "死信与测点拒绝",
+      "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "redis_stream_length{stream=\"conduit:stream:dead\"} or on() vector(0)",
+          "legendFormat": "死信流长度",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (reason) (rate(conduit_pipeline_dead_total[5m])) or on() vector(0)",
+          "legendFormat": "死信/秒 {{reason}}",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (reason, source) (rate(conduit_pipeline_rejected_fields_total[5m])) or on() vector(0)",
+          "legendFormat": "测点被拒/秒 {{reason}} {{source}}",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": "row",
+      "title": "6. InfluxDB",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "写入请求（次/秒）",
+      "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (status) (rate(http_requests_total{job=\"influxdb\",path=\"/api/v3/write_lp\"}[1m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:次/秒",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "写入耗时",
+      "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+          "legendFormat": "P99",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "InfluxDB CPU（核）",
+      "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 80,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
+          "legendFormat": "InfluxDB",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "落盘（对象存储）操作耗时",
+      "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 88,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, op) (rate(object_store_op_duration_seconds_bucket{job=\"influxdb\"}[5m])))",
+          "legendFormat": "P99 {{op}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "查询耗时",
+      "description": "历史曲线等查询请求的耗时分位数。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 88,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
+          "legendFormat": "P99",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 42,
+      "type": "row",
+      "title": "7. 资源",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "CPU 合计（核）",
+      "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 97,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "已用",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "总核数",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "总核数"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "各服务 CPU（核，堆叠）",
+      "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 97,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (job, instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
+          "legendFormat": "{{instance}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
+          "legendFormat": "redis",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
+          "legendFormat": "influxdb",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "clamp_min((1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu)) - (sum(process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count) or vector(0)) - (sum(rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])) or vector(0)) - (sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m])) or vector(0)), 0)",
+          "legendFormat": "其余（主要是 EMQX）",
+          "refId": "D",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "内存合计",
+      "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 105,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "已用",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "总量",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+          "legendFormat": "swap 已用",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "各服务内存",
+      "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 105,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum by (instance) (jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"})",
+          "legendFormat": "{{instance}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "redis",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 47,
+      "type": "timeseries",
+      "title": "负载",
+      "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 105,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_load1",
+          "legendFormat": "load1",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_load5",
+          "legendFormat": "load5",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
+          "legendFormat": "核数",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 48,
+      "type": "timeseries",
+      "title": "磁盘 I/O",
+      "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 113,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(node_disk_written_bytes_total[1m]))",
+          "legendFormat": "写入",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "sum(rate(node_disk_read_bytes_total[1m]))",
+          "legendFormat": "读取",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 49,
+      "type": "timeseries",
+      "title": "根分区可用空间",
+      "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 113,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
+          "legendFormat": "可用",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 50,
+      "type": "timeseries",
+      "title": "磁盘忙碌占比",
+      "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "conduit-prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 113,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "expr": "max(rate(node_disk_io_time_seconds_total[1m]))",
+          "legendFormat": "忙碌占比",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "line",
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 55,
+      "type": "row",
+      "title": "8. JVM",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 121,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 51,
+          "type": "timeseries",
+          "title": "堆占用",
+          "description": "各 JVM 服务的堆已用与上限。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 122,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "conduit-prometheus"
+              },
+              "expr": "sum by (instance) (jvm_memory_used_bytes{area=\"heap\"})",
+              "legendFormat": "{{instance}} 已用",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "conduit-prometheus"
+              },
+              "expr": "sum by (instance) (jvm_memory_max_bytes{area=\"heap\"})",
+              "legendFormat": "{{instance}} 上限",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 52,
+          "type": "timeseries",
+          "title": "GC 暂停（秒/秒）",
+          "description": "每秒中用于 GC 暂停的秒数。持续高于 0.1 说明 GC 压力大。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 122,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "conduit-prometheus"
+              },
+              "expr": "sum by (instance) (rate(jvm_gc_pause_seconds_sum[1m]))",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 53,
+          "type": "timeseries",
+          "title": "线程数",
+          "description": "各 JVM 服务的活动线程数。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 130,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "conduit-prometheus"
+              },
+              "expr": "jvm_threads_live_threads",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 54,
+          "type": "timeseries",
+          "title": "进程 CPU（核）",
+          "description": "各 JVM 服务进程占用的核数。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "conduit-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 130,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "conduit-prometheus"
+              },
+              "expr": "sum by (instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         }
       ]
     }
-  ],
-  "templating": {
-    "list": []
-  },
-  "annotations": {
-    "list": []
-  }
+  ]
 }

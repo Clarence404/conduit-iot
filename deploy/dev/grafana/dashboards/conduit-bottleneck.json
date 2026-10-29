@@ -992,2803 +992,2809 @@
       "id": 16,
       "type": "row",
       "title": "2. 接入：EMQX",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
         "y": 19,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 17,
-      "type": "timeseries",
-      "title": "连接与订阅",
-      "description": "设备连接数与 transport 共享订阅数。共享订阅数应恒等于 transport 的连接数。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 20,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 17,
+          "type": "timeseries",
+          "title": "连接与订阅",
+          "description": "设备连接数与 transport 共享订阅数。共享订阅数应恒等于 transport 的连接数。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "emqx_connections_count",
-          "legendFormat": "连接数",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 20,
+            "w": 12,
+            "h": 8
           },
-          "expr": "emqx_live_connections_count",
-          "legendFormat": "活跃连接",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "emqx_subscriptions_shared_count",
-          "legendFormat": "共享订阅",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "emqx_connections_count",
+              "legendFormat": "连接数",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "emqx_live_connections_count",
+              "legendFormat": "活跃连接",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "emqx_subscriptions_shared_count",
+              "legendFormat": "共享订阅",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 18,
-      "type": "timeseries",
-      "title": "丢弃（条/秒）",
-      "description": "应全部为 0。queue_full 是会话队列满（transport 取得太慢）；no_subscribers 是无人订阅（transport 未连上）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 20,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 18,
+          "type": "timeseries",
+          "title": "丢弃（条/秒）",
+          "description": "应全部为 0。queue_full 是会话队列满（transport 取得太慢）；no_subscribers 是无人订阅（transport 未连上）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(emqx_messages_dropped[1m]))",
-          "legendFormat": "丢弃合计",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 12,
+            "y": 20,
+            "w": 12,
+            "h": 8
           },
-          "expr": "sum(rate(emqx_delivery_dropped_queue_full[1m]))",
-          "legendFormat": "会话队列满",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(emqx_messages_dropped_no_subscribers[1m]))",
-          "legendFormat": "无订阅者",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix:条/秒",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(emqx_messages_dropped[1m]))",
+              "legendFormat": "丢弃合计",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(emqx_delivery_dropped_queue_full[1m]))",
+              "legendFormat": "会话队列满",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(emqx_messages_dropped_no_subscribers[1m]))",
+              "legendFormat": "无订阅者",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:条/秒",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
         }
-      }
+      ]
     },
     {
       "id": 19,
       "type": "row",
       "title": "3. transport：按连接",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 20,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 20,
-      "type": "timeseries",
-      "title": "各连接收取速率（条/秒）",
-      "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 29,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 20,
+          "type": "timeseries",
+          "title": "各连接收取速率（条/秒）",
+          "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (client) (rate(conduit_transport_session_sent[1m]) >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix:条/秒",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 0,
+            "y": 21,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (client) (rate(conduit_transport_session_sent[1m]) >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 21,
-      "type": "timeseries",
-      "title": "各连接会话队列（mqueue）",
-      "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 29,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (client) (conduit_transport_session_mqueue_len >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max(conduit_transport_session_mqueue_max >= 0)",
-          "legendFormat": "上限",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "上限"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:条/秒",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
                 }
               },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 22,
-      "type": "timeseries",
-      "title": "各连接在途窗口",
-      "description": "已推给 transport、尚未收到 PUBACK 的消息数，上限为 EMQX max_inflight。持续顶满说明 transport 回确认的速度跟不上。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 37,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (client) (conduit_transport_session_inflight >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max(conduit_transport_session_inflight_max >= 0)",
-          "legendFormat": "上限",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "上限"
             },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "各连接会话队列（mqueue）",
+          "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 21,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (client) (conduit_transport_session_mqueue_len >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(conduit_transport_session_mqueue_max >= 0)",
+              "legendFormat": "上限",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
                 }
               },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": [
               {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
+                "matcher": {
+                  "id": "byName",
+                  "options": "上限"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 22,
+          "type": "timeseries",
+          "title": "各连接在途窗口",
+          "description": "已推给 transport、尚未收到 PUBACK 的消息数，上限为 EMQX max_inflight。持续顶满说明 transport 回确认的速度跟不上。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 29,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (client) (conduit_transport_session_inflight >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(conduit_transport_session_inflight_max >= 0)",
+              "legendFormat": "上限",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
                 }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "上限"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
               }
             ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 23,
-      "type": "timeseries",
-      "title": "各连接会话进程堆",
-      "description": "EMQX 里每条 transport 连接进程的堆。实际强杀线是配置值的 1.5 倍（256MB 配置在 384MB 处被杀，见红色虚线）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 37,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 23,
+          "type": "timeseries",
+          "title": "各连接会话进程堆",
+          "description": "EMQX 里每条 transport 连接进程的堆。实际强杀线是配置值的 1.5 倍（256MB 配置在 384MB 处被杀，见红色虚线）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (client) (conduit_transport_session_heap_bytes >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+          "gridPos": {
+            "x": 8,
+            "y": 29,
+            "w": 8,
+            "h": 8
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
               },
-              {
-                "color": "red",
-                "value": 402653184
+              "expr": "sum by (client) (conduit_transport_session_heap_bytes >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 402653184
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 24,
-      "type": "timeseries",
-      "title": "会话监控取数失败",
-      "description": "transport 经 EMQX REST API 采样会话指标，连续失败次数。非 0 时上面几张图的数据不可信。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 37,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 24,
+          "type": "timeseries",
+          "title": "会话监控取数失败",
+          "description": "transport 经 EMQX REST API 采样会话指标，连续失败次数。非 0 时上面几张图的数据不可信。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (client) (conduit_transport_session_poll_failures >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+          "gridPos": {
+            "x": 16,
+            "y": 29,
+            "w": 8,
+            "h": 8
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
               },
-              {
-                "color": "red",
-                "value": 1
+              "expr": "sum by (client) (conduit_transport_session_poll_failures >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 25,
-      "type": "timeseries",
-      "title": "各连接进程信箱",
-      "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 45,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 25,
+          "type": "timeseries",
+          "title": "各连接进程信箱",
+          "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (client) (conduit_transport_session_mailbox_len >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "dashed"
+          "gridPos": {
+            "x": 0,
+            "y": 37,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (client) (conduit_transport_session_mailbox_len >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
               },
-              {
-                "color": "yellow",
-                "value": 300
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 300
+                  },
+                  {
+                    "color": "red",
+                    "value": 800
+                  }
+                ]
               },
-              {
-                "color": "red",
-                "value": 800
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 26,
-      "type": "timeseries",
-      "title": "各连接进程忙碌度（reductions/秒）",
-      "description": "每条连接进程每秒的 Erlang 工作量。一个进程同一时刻只能跑在一个调度器上，单连接时 recon 实测约 500～600 万/秒即顶满单核（这正是改用共享订阅的原因）。4 条连接下实测 8,000 条/秒每条约 90 万、16,000 条/秒每条约 200 万，离上限尚远——现在的墙在 VM 整机 CPU。若有人把连接数改回 1，这张图会立刻冲向上限。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 45,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 26,
+          "type": "timeseries",
+          "title": "各连接进程忙碌度（reductions/秒）",
+          "description": "每条连接进程每秒的 Erlang 工作量。一个进程同一时刻只能跑在一个调度器上，单连接时 recon 实测约 500～600 万/秒即顶满单核（这正是改用共享订阅的原因）。4 条连接下实测 8,000 条/秒每条约 90 万、16,000 条/秒每条约 200 万，离上限尚远——现在的墙在 VM 整机 CPU。若有人把连接数改回 1，这张图会立刻冲向上限。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (client) (rate(conduit_transport_session_reductions[2m]) >= 0)",
-          "legendFormat": "{{client}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "dashed"
+          "gridPos": {
+            "x": 12,
+            "y": 37,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (client) (rate(conduit_transport_session_reductions[2m]) >= 0)",
+              "legendFormat": "{{client}}",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
               },
-              {
-                "color": "yellow",
-                "value": 3000000
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 3000000
+                  },
+                  {
+                    "color": "red",
+                    "value": 4500000
+                  }
+                ]
               },
-              {
-                "color": "red",
-                "value": 4500000
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
         }
-      }
+      ]
     },
     {
       "id": 27,
       "type": "row",
       "title": "4. Redis 总线",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 21,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 28,
-      "type": "timeseries",
-      "title": "上行流与消费组积压",
-      "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 54,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 28,
+          "type": "timeseries",
+          "title": "上行流与消费组积压",
+          "description": "流长度按 MAXLEN（默认 100 万）裁剪，满了属正常。lag 是尚未被消费组读取的条数，pending 是已读未确认的条数——持续增长即流水线跟不上。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "redis_stream_length{stream=\"conduit:stream:up\"}",
-          "legendFormat": "流长度",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 22,
+            "w": 12,
+            "h": 8
           },
-          "expr": "sum(redis_stream_group_lag)",
-          "legendFormat": "消费组 lag",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(redis_stream_group_messages_pending)",
-          "legendFormat": "待确认 pending",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 29,
-      "type": "timeseries",
-      "title": "Redis 单线程 CPU（%）",
-      "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 54,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
-          "legendFormat": "Redis 主线程",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
               },
-              {
-                "color": "red",
-                "value": 90
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 30,
-      "type": "timeseries",
-      "title": "命令吞吐（次/秒）",
-      "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 62,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cmd) (rate(redis_commands_total{cmd=~\"xadd|evalsha|xack|xreadgroup|mget|hmget\"}[1m]))",
-          "legendFormat": "{{cmd}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix:次/秒",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+              "expr": "redis_stream_length{stream=\"conduit:stream:up\"}",
+              "legendFormat": "流长度",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(redis_stream_group_lag)",
+              "legendFormat": "消费组 lag",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(redis_stream_group_messages_pending)",
+              "legendFormat": "待确认 pending",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 31,
-      "type": "timeseries",
-      "title": "命令平均耗时",
-      "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 62,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xadd\"}[1m]) / rate(redis_commands_total{cmd=\"xadd\"}[1m])",
-          "legendFormat": "xadd",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"evalsha\"}[1m]) / rate(redis_commands_total{cmd=\"evalsha\"}[1m])",
-          "legendFormat": "evalsha",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xack\"}[1m]) / rate(redis_commands_total{cmd=\"xack\"}[1m])",
-          "legendFormat": "xack",
-          "refId": "C",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xreadgroup\"}[1m]) / rate(redis_commands_total{cmd=\"xreadgroup\"}[1m])",
-          "legendFormat": "xreadgroup",
-          "refId": "D",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 32,
-      "type": "timeseries",
-      "title": "内存与 AOF",
-      "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 62,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 29,
+          "type": "timeseries",
+          "title": "Redis 单线程 CPU（%）",
+          "description": "主线程占一个核的百分比，90% 以上即饱和。2026-10-29 实测 12,000 条/秒时峰值 91%，其中最新值脚本（EVALSHA）占 59%。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "已用内存",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 12,
+            "y": 22,
+            "w": 12,
+            "h": 8
           },
-          "expr": "redis_aof_current_size_bytes",
-          "legendFormat": "AOF 大小",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "100 * (rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m]))",
+              "legendFormat": "Redis 主线程",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 90
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
+        {
+          "id": 30,
+          "type": "timeseries",
+          "title": "命令吞吐（次/秒）",
+          "description": "主要命令的调用频率。evalsha 主要是最新值脚本，经同批合并后应远少于入库条数。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 30,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (cmd) (rate(redis_commands_total{cmd=~\"xadd|evalsha|xack|xreadgroup|mget|hmget\"}[1m]))",
+              "legendFormat": "{{cmd}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:次/秒",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+        {
+          "id": 31,
+          "type": "timeseries",
+          "title": "命令平均耗时",
+          "description": "每次调用的平均耗时。xreadgroup 含阻塞等待，数值大不代表慢。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 30,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xadd\"}[1m]) / rate(redis_commands_total{cmd=\"xadd\"}[1m])",
+              "legendFormat": "xadd",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_commands_duration_seconds_total{cmd=\"evalsha\"}[1m]) / rate(redis_commands_total{cmd=\"evalsha\"}[1m])",
+              "legendFormat": "evalsha",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xack\"}[1m]) / rate(redis_commands_total{cmd=\"xack\"}[1m])",
+              "legendFormat": "xack",
+              "refId": "C",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_commands_duration_seconds_total{cmd=\"xreadgroup\"}[1m]) / rate(redis_commands_total{cmd=\"xreadgroup\"}[1m])",
+              "legendFormat": "xreadgroup",
+              "refId": "D",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 32,
+          "type": "timeseries",
+          "title": "内存与 AOF",
+          "description": "Redis 已用内存与 AOF 文件大小。appendfsync always：每次写入都刷盘。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 30,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_memory_used_bytes",
+              "legendFormat": "已用内存",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_aof_current_size_bytes",
+              "legendFormat": "AOF 大小",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "id": 33,
       "type": "row",
       "title": "5. 流水线：server",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 22,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 34,
-      "type": "timeseries",
-      "title": "每批各阶段平均耗时",
-      "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 71,
-        "w": 12,
-        "h": 9
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 34,
+          "type": "timeseries",
+          "title": "每批各阶段平均耗时",
+          "description": "入库吞吐 ≈ 每批条数 ÷ 每批耗时。influx 主要是在等 WAL 刷盘（与批大小几乎无关）；latest 与条数成正比。注意 total、influx、latest、ack 只统计含属性数据的批，identity 与 decode 统计全部批（含大量只有上下线事件的微批），不能直接相加。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"total\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"total\"}[1m])",
-          "legendFormat": "total",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 23,
+            "w": 12,
+            "h": 9
           },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"influx\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"influx\"}[1m])",
-          "legendFormat": "influx",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"latest\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"latest\"}[1m])",
-          "legendFormat": "latest",
-          "refId": "C",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"ack\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"ack\"}[1m])",
-          "legendFormat": "ack",
-          "refId": "D",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"identity\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"identity\"}[1m])",
-          "legendFormat": "identity",
-          "refId": "E",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"decode\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"decode\"}[1m])",
-          "legendFormat": "decode",
-          "refId": "F",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"total\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"total\"}[1m])",
+              "legendFormat": "total",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"influx\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"influx\"}[1m])",
+              "legendFormat": "influx",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"latest\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"latest\"}[1m])",
+              "legendFormat": "latest",
+              "refId": "C",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"ack\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"ack\"}[1m])",
+              "legendFormat": "ack",
+              "refId": "D",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"identity\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"identity\"}[1m])",
+              "legendFormat": "identity",
+              "refId": "E",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_stage_seconds_sum{stage=\"decode\"}[1m]) / rate(conduit_pipeline_stage_seconds_count{stage=\"decode\"}[1m])",
+              "legendFormat": "decode",
+              "refId": "F",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 35,
-      "type": "timeseries",
-      "title": "每批条数",
-      "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 71,
-        "w": 6,
-        "h": 9
-      },
-      "targets": [
         {
+          "id": 35,
+          "type": "timeseries",
+          "title": "每批条数",
+          "description": "流水线每次从总线读到的条数（含上下线事件微批）。批越大，每批的固定开销摊得越薄。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(conduit_pipeline_batch_size_sum[1m]) / rate(conduit_pipeline_batch_size_count[1m])",
-          "legendFormat": "平均",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 12,
+            "y": 23,
+            "w": 6,
+            "h": 9
           },
-          "expr": "max(conduit_pipeline_batch_size_max)",
-          "legendFormat": "最大",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(conduit_pipeline_batch_size_sum[1m]) / rate(conduit_pipeline_batch_size_count[1m])",
+              "legendFormat": "平均",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(conduit_pipeline_batch_size_max)",
+              "legendFormat": "最大",
+              "refId": "B",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 36,
-      "type": "timeseries",
-      "title": "端到端延迟",
-      "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 18,
-        "y": 71,
-        "w": 6,
-        "h": 9
-      },
-      "targets": [
         {
+          "id": 36,
+          "type": "timeseries",
+          "title": "端到端延迟",
+          "description": "从 transport 收到到入库并更新最新值的耗时分位数。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "P50",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 18,
+            "y": 23,
+            "w": 6,
+            "h": 9
           },
-          "expr": "histogram_quantile(0.95, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "P95",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "P99",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.5, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+              "legendFormat": "P50",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.95, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+              "legendFormat": "P95",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.99, sum(rate(conduit_pipeline_ingest_latency_seconds_bucket[5m])) by (le))",
+              "legendFormat": "P99",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 37,
-      "type": "timeseries",
-      "title": "死信与测点拒绝",
-      "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 80,
-        "w": 24,
-        "h": 7
-      },
-      "targets": [
         {
+          "id": 37,
+          "type": "timeseries",
+          "title": "死信与测点拒绝",
+          "description": "应全部为 0。从未发生时这些计数器根本不存在，此处按 0 显示。按原因分列，见 DeadReason。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "redis_stream_length{stream=\"conduit:stream:dead\"} or on() vector(0)",
-          "legendFormat": "死信流长度",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 24,
+            "h": 7
           },
-          "expr": "sum by (reason) (rate(conduit_pipeline_dead_total[5m])) or on() vector(0)",
-          "legendFormat": "死信/秒 {{reason}}",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (reason, source) (rate(conduit_pipeline_rejected_fields_total[5m])) or on() vector(0)",
-          "legendFormat": "测点被拒/秒 {{reason}} {{source}}",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_stream_length{stream=\"conduit:stream:dead\"} or on() vector(0)",
+              "legendFormat": "死信流长度",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (reason) (rate(conduit_pipeline_dead_total[5m])) or on() vector(0)",
+              "legendFormat": "死信/秒 {{reason}}",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (reason, source) (rate(conduit_pipeline_rejected_fields_total[5m])) or on() vector(0)",
+              "legendFormat": "测点被拒/秒 {{reason}} {{source}}",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
         }
-      }
+      ]
     },
     {
       "id": 38,
       "type": "row",
       "title": "6. InfluxDB",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 87,
+        "y": 23,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 39,
-      "type": "timeseries",
-      "title": "写入请求（次/秒）",
-      "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 88,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 39,
+          "type": "timeseries",
+          "title": "写入请求（次/秒）",
+          "description": "流水线的写入请求按结果分列，status 非 ok 即异常（resource_exhausted 常见于请求过大或扫描超限）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (status) (rate(http_requests_total{job=\"influxdb\",path=\"/api/v3/write_lp\"}[1m]))",
-          "legendFormat": "{{status}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix:次/秒",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (status) (rate(http_requests_total{job=\"influxdb\",path=\"/api/v3/write_lp\"}[1m]))",
+              "legendFormat": "{{status}}",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:次/秒",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 40,
-      "type": "timeseries",
-      "title": "写入耗时",
-      "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 88,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 40,
+          "type": "timeseries",
+          "title": "写入耗时",
+          "description": "单次写入请求耗时分位数。主要是等 WAL 刷盘（默认 1 秒间隔，平均等半秒）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
-          "legendFormat": "P50",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 8,
+            "y": 24,
+            "w": 8,
+            "h": 8
           },
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
-          "legendFormat": "P99",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+              "legendFormat": "P50",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/write_lp\"}[5m])) by (le))",
+              "legendFormat": "P99",
+              "refId": "B",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 41,
-      "type": "timeseries",
-      "title": "InfluxDB CPU（核）",
-      "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 88,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 41,
+          "type": "timeseries",
+          "title": "InfluxDB CPU（核）",
+          "description": "运行时全部工作线程的忙碌时间之和。没有 cadvisor 时，这是拿到 InfluxDB 自身 CPU 的唯一途径。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
-          "legendFormat": "InfluxDB",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 16,
+            "y": 24,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
+              "legendFormat": "InfluxDB",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 42,
-      "type": "timeseries",
-      "title": "落盘（对象存储）操作耗时",
-      "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 96,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 42,
+          "type": "timeseries",
+          "title": "落盘（对象存储）操作耗时",
+          "description": "parquet 落盘等对象存储操作的耗时分位数。后台落盘与写入争抢资源时，写入耗时会跟着抬升。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, op) (rate(object_store_op_duration_seconds_bucket{job=\"influxdb\"}[5m])))",
-          "legendFormat": "P99 {{op}}",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le, op) (rate(object_store_op_duration_seconds_bucket{job=\"influxdb\"}[5m])))",
+              "legendFormat": "P99 {{op}}",
+              "refId": "A",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 43,
-      "type": "timeseries",
-      "title": "查询耗时",
-      "description": "历史曲线等查询请求的耗时分位数。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 96,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 43,
+          "type": "timeseries",
+          "title": "查询耗时",
+          "description": "历史曲线等查询请求的耗时分位数。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
-          "legendFormat": "P50",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 12,
+            "y": 32,
+            "w": 12,
+            "h": 8
           },
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
-          "legendFormat": "P99",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
+              "legendFormat": "P50",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"influxdb\",path=\"/api/v3/query_sql\"}[5m])) by (le))",
+              "legendFormat": "P99",
+              "refId": "B",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
         }
-      }
+      ]
     },
     {
       "id": 44,
       "type": "row",
       "title": "7. 资源",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 24,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 45,
-      "type": "timeseries",
-      "title": "CPU 合计（核）",
-      "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 105,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 45,
+          "type": "timeseries",
+          "title": "CPU 合计（核）",
+          "description": "整机已用核数与总核数。已用接近总核数即到硬件墙。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "已用",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 25,
+            "w": 12,
+            "h": 8
           },
-          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "总核数",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "总核数"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu))",
+              "legendFormat": "已用",
+              "refId": "A",
+              "range": true
             },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "count(count(node_cpu_seconds_total) by (cpu))",
+              "legendFormat": "总核数",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
                 }
               },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": [
               {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
+                "matcher": {
+                  "id": "byName",
+                  "options": "总核数"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 46,
+          "type": "timeseries",
+          "title": "各服务 CPU（核，堆叠）",
+          "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 25,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (job, instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
+              "legendFormat": "redis",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
+              "legendFormat": "influxdb",
+              "refId": "C",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "clamp_min((1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu)) - (sum(process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count) or vector(0)) - (sum(rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])) or vector(0)) - (sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m])) or vector(0)), 0)",
+              "legendFormat": "其余（主要是 EMQX）",
+              "refId": "D",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 30,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
                 }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 46,
-      "type": "timeseries",
-      "title": "各服务 CPU（核，堆叠）",
-      "description": "已统一换算成核数。EMQX 没有自身 CPU 指标（emqx_vm_cpu_use 是整机的，不能用），「其余」= 整机已用 − 已知服务，主要是 EMQX，还包括 Prometheus、Grafana 等观测组件，属近似值。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 105,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            },
+            "overrides": []
           },
-          "expr": "sum by (job, instance) (process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count)",
-          "legendFormat": "{{instance}}",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])",
-          "legendFormat": "redis",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m]))",
-          "legendFormat": "influxdb",
-          "refId": "C",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "clamp_min((1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m]))) * count(count(node_cpu_seconds_total) by (cpu)) - (sum(process_cpu_usage{job=~\"conduit-server|conduit-transport\"} * on(job, instance) system_cpu_count) or vector(0)) - (sum(rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])) or vector(0)) - (sum(rate(tokio_worker_total_busy_duration_seconds_total{job=\"influxdb\"}[1m])) or vector(0)), 0)",
-          "legendFormat": "其余（主要是 EMQX）",
-          "refId": "D",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 30,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 47,
-      "type": "timeseries",
-      "title": "内存合计",
-      "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 113,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 47,
+          "type": "timeseries",
+          "title": "内存合计",
+          "description": "整机已用内存与 swap。swap 持续增长说明内存不足。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
-          "legendFormat": "已用",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 0,
+            "y": 33,
+            "w": 8,
+            "h": 8
           },
-          "expr": "node_memory_MemTotal_bytes",
-          "legendFormat": "总量",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
-          "legendFormat": "swap 已用",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+              "legendFormat": "已用",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_memory_MemTotal_bytes",
+              "legendFormat": "总量",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+              "legendFormat": "swap 已用",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 48,
-      "type": "timeseries",
-      "title": "各服务内存",
-      "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 113,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (instance) (jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"})",
-          "legendFormat": "{{instance}}",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "redis",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 49,
-      "type": "timeseries",
-      "title": "负载",
-      "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 113,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 48,
+          "type": "timeseries",
+          "title": "各服务内存",
+          "description": "JVM 服务的已用内存（堆 + 非堆）与 Redis。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "node_load1",
-          "legendFormat": "load1",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+          "gridPos": {
+            "x": 8,
+            "y": 33,
+            "w": 8,
+            "h": 8
           },
-          "expr": "node_load5",
-          "legendFormat": "load5",
-          "refId": "B",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "count(count(node_cpu_seconds_total) by (cpu))",
-          "legendFormat": "核数",
-          "refId": "C",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (instance) (jvm_memory_used_bytes{job=~\"conduit-server|conduit-transport\"})",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_memory_used_bytes",
+              "legendFormat": "redis",
+              "refId": "B",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 50,
-      "type": "timeseries",
-      "title": "磁盘 I/O",
-      "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 121,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(node_disk_written_bytes_total[1m]))",
-          "legendFormat": "写入",
-          "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(node_disk_read_bytes_total[1m]))",
-          "legendFormat": "读取",
-          "refId": "B",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "color": {
-            "mode": "palette-classic"
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 51,
-      "type": "timeseries",
-      "title": "根分区可用空间",
-      "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 121,
-        "w": 6,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 49,
+          "type": "timeseries",
+          "title": "负载",
+          "description": "1 / 5 分钟平均负载与核数。负载持续高于核数即 CPU 不够用。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
-          "legendFormat": "可用",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 16,
+            "y": 33,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_load1",
+              "legendFormat": "load1",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_load5",
+              "legendFormat": "load5",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "count(count(node_cpu_seconds_total) by (cpu))",
+              "legendFormat": "核数",
+              "refId": "C",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 52,
-      "type": "timeseries",
-      "title": "磁盘忙碌占比",
-      "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 18,
-        "y": 121,
-        "w": 6,
-        "h": 8
-      },
-      "targets": [
         {
+          "id": 50,
+          "type": "timeseries",
+          "title": "磁盘 I/O",
+          "description": "写入、读取字节速率与最忙磁盘的忙碌占比（1 = 满）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(rate(node_disk_io_time_seconds_total[1m]))",
-          "legendFormat": "忙碌占比",
-          "refId": "A",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": false,
-            "drawStyle": "line",
-            "axisSoftMin": 0,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          "gridPos": {
+            "x": 0,
+            "y": 41,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(node_disk_written_bytes_total[1m]))",
+              "legendFormat": "写入",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(rate(node_disk_read_bytes_total[1m]))",
+              "legendFormat": "读取",
+              "refId": "B",
+              "range": true
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
               }
-            ]
+            },
+            "overrides": []
           },
-          "color": {
-            "mode": "palette-classic"
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
           }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
+        {
+          "id": 51,
+          "type": "timeseries",
+          "title": "根分区可用空间",
+          "description": "低于 10% 时 InfluxDB 落盘与 Redis AOF 都有风险。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 41,
+            "w": 6,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
+              "legendFormat": "可用",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+        {
+          "id": 52,
+          "type": "timeseries",
+          "title": "磁盘忙碌占比",
+          "description": "最忙磁盘的 I/O 时间占比，持续接近 1 即磁盘饱和。",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 18,
+            "y": 41,
+            "w": 6,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(rate(node_disk_io_time_seconds_total[1m]))",
+              "legendFormat": "忙碌占比",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "spanNulls": false,
+                "drawStyle": "line",
+                "axisSoftMin": 0,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "id": 57,
@@ -3797,7 +3803,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 25,
         "w": 24,
         "h": 1
       },
@@ -3813,7 +3819,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 130,
+            "y": 26,
             "w": 12,
             "h": 8
           },
@@ -3896,7 +3902,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 130,
+            "y": 26,
             "w": 12,
             "h": 8
           },
@@ -3969,7 +3975,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 138,
+            "y": 34,
             "w": 12,
             "h": 8
           },
@@ -4042,7 +4048,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 138,
+            "y": 34,
             "w": 12,
             "h": 8
           },

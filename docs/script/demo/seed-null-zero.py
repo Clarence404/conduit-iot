@@ -1,6 +1,6 @@
 """在 VM Docker 宿主机执行：创建专用缺测/零值历史演示，不删除其他设备数据。
 
-python3 tools/demo/seed-null-zero.py
+python3 docs/script/demo/seed-null-zero.py
 沿用运行容器配置，不打印密码/token；设备禁用，防止模拟器以后填平缺口。
 历史为显式合成测试夹具，直接写入 InfluxDB，不伪造在线状态或最新值。
 """

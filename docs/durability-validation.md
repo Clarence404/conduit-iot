@@ -106,11 +106,11 @@ always 单连接吞吐约下降 80%，16 连接约下降 60%。当前演示负�
 
 ## 复现入口
 
-工具位于 [`tools/durability`](../tools/durability)：
+工具位于 [`docs/script/durability`](script/durability)：
 
 1. 在可中断的专用虚拟机启动 `compose.yml`；控制程序跨机器运行时将 `TEST_BIND_ADDR` 设为虚拟机私网地址。测试 Broker 无应用鉴权，只在测试网开放。
-2. 控制机使用 Python 3.12，执行 `pip install -r tools/durability/requirements.txt`；通过环境变量 `CONDUIT_SSH_PASSWORD` 提供密码，使用已核验的 SSH ED25519 公钥 base64 字段传给 `--host-key`。
-3. `python tools/durability/verify.py process --host <vm> --host-key <verified-key> --rounds 3`。
+2. 控制机使用 Python 3.12，执行 `pip install -r docs/script/durability/requirements.txt`；通过环境变量 `CONDUIT_SSH_PASSWORD` 提供密码，使用已核验的 SSH ED25519 公钥 base64 字段传给 `--host-key`。
+3. `python docs/script/durability/verify.py process --host <vm> --host-key <verified-key> --rounds 3`。
 4. 在明确允许整台虚拟机中断后，以 `guest-reset` 替代 `process`，并加 `--expected-machine-id <verified-machine-id>`。该模式会立即重启整台客户机，不能与业务或基准同时运行。
-5. 故障测试全部结束后，在虚拟机运行 `sh tools/durability/benchmark.sh`。脚本输出 CSV；故障脚本输出观测结果并保存 JSON，不以“发现丢数”作为程序异常退出。
+5. 故障测试全部结束后，在虚拟机运行 `sh docs/script/durability/benchmark.sh`。脚本输出 CSV；故障脚本输出观测结果并保存 JSON，不以“发现丢数”作为程序异常退出。
 6. 测试结束停止测试容器；命名卷和结果保留用于检查。正式服务应恢复为四个 healthy、Explorer running，`/health` 与 Explorer HTTP 200。

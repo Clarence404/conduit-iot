@@ -16,6 +16,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.Mqtt5RetainHandling;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAckReasonCode;
+import com.hivemq.client.mqtt.mqtt5.message.unsubscribe.unsuback.Mqtt5UnsubAckReasonCode;
+import com.hivemq.client.mqtt.mqtt5.message.unsubscribe.unsuback.Mqtt5UnsubAck;
 import dev.conduit.common.bus.MessageBus;
 import dev.conduit.common.bus.PublishResult;
 import dev.conduit.common.message.MessageType;
@@ -51,6 +53,10 @@ import java.util.function.BooleanSupplier;
  *
  * <p>每次 start 打开一个独立的 {@link Session}（客户端、投递线程、状态标志），stop 关闭它，可反复调用。
  * 不使用 HiveMQ 自动重连：意外断线或会话被接管时置 needsRestart，由选主协调器确认仍持锁后重新 start。
+ *
+ * <p>一个实例对应主实例的一条连接。配置 connections > 1 时主实例创建多个实例、改用共享订阅分摊投递，
+ * 第 index 条的 clientId 由 {@link MqttTransportProperties#clientIdOf} 给出；上下线事件只由第 0 条订阅；
+ * 第 0 条在共享模式下还会退订旧版留下的非共享过滤器（见 {@link #retireLegacySubscription}）。
  */
 public class MqttProtocolAdapter implements ProtocolAdapter {
 
@@ -70,6 +76,10 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     private final MessageBus bus;
     private final Clock clock;
     private final Duration initialBackoff;
+    /** 本实例是主实例的第几条连接（从 0 开始）。 */
+    private final int index;
+    /** 本条连接的 clientId，见 {@link MqttTransportProperties#clientIdOf}。 */
+    private final String clientId;
     private final AtomicReference<Session> current = new AtomicReference<>();
     private final ConcurrentHashMap<String, Long> missingTimestampWarnings = new ConcurrentHashMap<>();
     /** 延迟提交的触发器：只负责把 flush 投回会话的投递线程，自身不做业务。 */
@@ -104,20 +114,53 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     private record Pending(Mqtt5Publish publish, ParsedTopic topic, RawMessage message) {
     }
 
+    /** 第 0 条连接（单连接部署与测试沿用）。 */
     public MqttProtocolAdapter(MqttTransportProperties props, MessageBus bus, Clock clock) {
-        this(props, bus, clock, Duration.ofSeconds(1));
+        this(props, bus, clock, 0);
+    }
+
+    /** 主实例的第 index 条连接。 */
+    public MqttProtocolAdapter(MqttTransportProperties props, MessageBus bus, Clock clock, int index) {
+        this(props, bus, clock, Duration.ofSeconds(1), index);
     }
 
     MqttProtocolAdapter(MqttTransportProperties props, MessageBus bus, Clock clock, Duration initialBackoff) {
+        this(props, bus, clock, initialBackoff, 0);
+    }
+
+    MqttProtocolAdapter(MqttTransportProperties props, MessageBus bus, Clock clock, Duration initialBackoff,
+                        int index) {
+        if (index < 0 || index >= props.connections()) {
+            throw new IllegalArgumentException("connection index " + index + " out of range [0, "
+                    + props.connections() + ")");
+        }
         this.props = props;
         this.bus = bus;
         this.clock = clock;
         this.initialBackoff = initialBackoff;
+        this.index = index;
+        this.clientId = props.clientIdOf(index);
     }
 
+    /** 选主日志里的适配器名；多连接时带序号，便于看出是哪一条断了。 */
     @Override
     public String name() {
-        return "mqtt";
+        return props.shared() ? "mqtt-" + index : "mqtt";
+    }
+
+    /** 本条连接的 clientId。 */
+    public String clientId() {
+        return clientId;
+    }
+
+    /** 设备上行的订阅过滤器：共享模式下加 $share/{组}/ 前缀，由 EMQX 在各连接间分摊。 */
+    String deviceTopicFilter() {
+        return props.shared() ? "$share/" + props.sharedGroup() + "/" + DEVICE_TOPIC_FILTER : DEVICE_TOPIC_FILTER;
+    }
+
+    /** 是否订阅上下线事件：只由第 0 条订阅，否则每条连接各收一份、重复 K 次。 */
+    boolean subscribesPresence() {
+        return index == 0;
     }
 
     /**
@@ -135,7 +178,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
             throw new IllegalStateException("MQTT adapter start is no longer valid");
         }
         Mqtt5ClientBuilder builder = MqttClient.builder().useMqttVersion5()
-                .identifier(props.clientId())
+                .identifier(clientId)
                 .serverHost(props.host())
                 .serverPort(props.port())
                 .addDisconnectedListener(context -> onDisconnected(s, context));
@@ -165,6 +208,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
                 throw new IllegalStateException("MQTT adapter start is no longer valid");
             }
             requireGranted(await(s, subscribe(client), SUBSCRIBE_TIMEOUT));
+            retireLegacySubscription(s, client);
             s.ready = true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -186,8 +230,8 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
             abandon(s);
             throw new IllegalStateException("MQTT adapter was stopped while connecting to " + endpoint());
         }
-        log.info("MQTT connected to {} as {} (session expiry {} s), subscribed to {}", endpoint(), props.clientId(),
-                props.sessionExpirySeconds(), DEVICE_TOPIC_FILTER);
+        log.info("MQTT connected to {} as {} (session expiry {} s), subscribed to {}{}", endpoint(), clientId,
+                props.sessionExpirySeconds(), deviceTopicFilter(), subscribesPresence() ? " and presence events" : "");
     }
 
     /** 停止当前连接：置停止标志、有界等待断开、关闭投递线程；未 ACK 的消息留在 EMQX 会话中，下次 start 时重投。 */
@@ -196,7 +240,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         Session s = current.getAndSet(null);
         if (s != null) {
             close(s);
-            log.info("MQTT adapter stopped ({} as {})", endpoint(), props.clientId());
+            log.info("MQTT adapter stopped ({} as {})", endpoint(), clientId);
         }
     }
 
@@ -329,7 +373,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         Throwable cause = context.getCause();
         if (isSessionTakenOver(cause)) {
             log.warn("MQTT session {} on {} was taken over by another connection with the same client id",
-                    props.clientId(), endpoint());
+                    clientId, endpoint());
         } else {
             log.warn("MQTT connection to {} lost (source={}): {}", endpoint(), context.getSource(),
                     cause == null ? "no cause" : cause.getMessage());
@@ -355,17 +399,48 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     }
 
     /**
-     * 订阅设备上行 topic（当前仍用普通订阅与单活多备；共享订阅的阻塞前提（磁盘持久会话拒绝共享订阅）已随其关闭而消失，留作后续评估）及 EMQX 的上下线系统 topic，均为 QoS 1。
-     * 设备 topic 不接收保留消息（DO_NOT_SEND）：否则每次重启都会以新的 receivedAt 重放，让离线设备复活。
+     * 订阅设备上行 topic（多连接时为共享订阅，见 {@link #deviceTopicFilter}），第 0 条连接另订阅 EMQX 的上下线系统 topic，
+     * 均为 QoS 1。设备 topic 不接收保留消息（DO_NOT_SEND）：否则每次重启都会以新的 receivedAt 重放，让离线设备复活。
      */
     CompletableFuture<Mqtt5SubAck> subscribe(Mqtt5AsyncClient client) {
-        return client.subscribeWith()
-                .addSubscription().topicFilter(DEVICE_TOPIC_FILTER).qos(MqttQos.AT_LEAST_ONCE)
-                .retainHandling(Mqtt5RetainHandling.DO_NOT_SEND).applySubscription()
+        var builder = client.subscribeWith()
+                .addSubscription().topicFilter(deviceTopicFilter()).qos(MqttQos.AT_LEAST_ONCE)
+                .retainHandling(Mqtt5RetainHandling.DO_NOT_SEND).applySubscription();
+        if (!subscribesPresence()) {
+            return builder.send();
+        }
+        return builder
                 .addSubscription().topicFilter(CONNECTED_TOPIC_FILTER).qos(MqttQos.AT_LEAST_ONCE).applySubscription()
                 .addSubscription().topicFilter(DISCONNECTED_TOPIC_FILTER).qos(MqttQos.AT_LEAST_ONCE)
                 .applySubscription()
                 .send();
+    }
+
+    /**
+     * 共享模式下由第 0 条连接退订旧版留下的非共享过滤器 {@link #DEVICE_TOPIC_FILTER}。
+     *
+     * <p>为什么需要：升级前的单连接部署在 EMQX 里留有 clientId 为 {@code conduit-transport}、挂着该非共享订阅的
+     * 持久会话（保留 24 小时）。第 0 条沿用这个 clientId 接管它，于是会话里排队的消息照常补发、不丢；
+     * 但若不退订，这条连接会继续通过非共享订阅收到<b>全部</b>上行，等于又回到单连接扛全量，共享订阅形同虚设。
+     * 退订只影响此后新消息的路由，已在会话队列里的消息照常投递。
+     *
+     * <p>全新安装时没有这条订阅，EMQX 回 NO_SUBSCRIPTIONS_EXISTED，视为成功。其他原因码视为失败并抛出，
+     * 由选主协调器重试——宁可连不上，也不能带着一条全量的非共享订阅静默运行。
+     */
+    private void retireLegacySubscription(Session s, Mqtt5AsyncClient client)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        if (!props.shared() || index != 0) {
+            return;
+        }
+        Mqtt5UnsubAck ack = await(s, client.unsubscribeWith().topicFilter(DEVICE_TOPIC_FILTER).send(),
+                SUBSCRIBE_TIMEOUT);
+        Mqtt5UnsubAckReasonCode code = ack.getReasonCodes().get(0);
+        if (code == Mqtt5UnsubAckReasonCode.SUCCESS) {
+            log.info("Retired legacy non-shared subscription {} on {}", DEVICE_TOPIC_FILTER, clientId);
+        } else if (code != Mqtt5UnsubAckReasonCode.NO_SUBSCRIPTIONS_EXISTED) {
+            throw new IllegalStateException("Failed to retire legacy subscription " + DEVICE_TOPIC_FILTER
+                    + " on " + clientId + ": " + code);
+        }
     }
 
     /**

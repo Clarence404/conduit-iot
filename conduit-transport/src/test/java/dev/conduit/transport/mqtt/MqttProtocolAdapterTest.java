@@ -65,7 +65,7 @@ class MqttProtocolAdapterTest {
         when(publish.getTopic()).thenReturn(MqttTopic.of("conduit/pk1/dk1/up/property"));
         when(publish.getPayloadAsBytes()).thenReturn(new byte[]{1});
         var props = new MqttTransportProperties("localhost", 1883, "conduit-transport-ut",
-                null, null, 86400, "conduit-", 1, Duration.ofMillis(5));
+                null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
         adapter = new MqttProtocolAdapter(props, bus,
                 Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
     }
@@ -247,7 +247,7 @@ class MqttProtocolAdapterTest {
 
         FakeConnectAdapter(MessageBus bus) {
             super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", 1, Duration.ofMillis(5)), bus, Clock.systemUTC(), Duration.ofMillis(1));
+                    "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport"), bus, Clock.systemUTC(), Duration.ofMillis(1));
         }
 
         @Override
@@ -289,7 +289,7 @@ class MqttProtocolAdapterTest {
 
         AckCapturingAdapter(MessageBus bus) {
             super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", 1, Duration.ofMillis(5)), bus, Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
+                    "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport"), bus, Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
         }
 
         @Override
@@ -555,7 +555,7 @@ class MqttProtocolAdapterTest {
 
         BatchAckAdapter(MessageBus bus, int batchSize, List<String> events) {
             super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", batchSize, Duration.ofSeconds(30)), bus,
+                    "conduit-", batchSize, Duration.ofSeconds(30), 1, "conduit-transport"), bus,
                     Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
             this.events = events;
         }
@@ -604,7 +604,7 @@ class MqttProtocolAdapterTest {
     /** 按指定批参数构造被测适配器；其余依赖沿用测试类已有的 mock。 */
     private MqttProtocolAdapter adapterWithBatch(int batchSize, Duration batchDelay) {
         var p = new MqttTransportProperties("localhost", 1883, "conduit-transport-ut",
-                null, null, 86400L, "conduit-", batchSize, batchDelay);
+                null, null, 86400L, "conduit-", batchSize, batchDelay, 1, "conduit-transport");
         return new MqttProtocolAdapter(p, bus, Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC),
                 Duration.ofMillis(1));
     }
@@ -633,7 +633,7 @@ class MqttProtocolAdapterTest {
             closedPort = socket.getLocalPort();
         }
         var props = new MqttTransportProperties("127.0.0.1", closedPort, "conduit-transport-ut",
-                null, null, 86400, "conduit-", 1, Duration.ofMillis(5));
+                null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
         MqttProtocolAdapter unreachable = new MqttProtocolAdapter(props, bus, Clock.systemUTC());
 
         assertThatThrownBy(unreachable::start)

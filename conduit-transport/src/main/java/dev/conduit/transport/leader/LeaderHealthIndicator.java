@@ -1,6 +1,7 @@
 package dev.conduit.transport.leader;
 
 import dev.conduit.transport.monitor.SessionMonitor;
+import dev.conduit.transport.monitor.SessionMonitorGroup;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 
@@ -16,10 +17,15 @@ import java.util.Map;
 public class LeaderHealthIndicator implements HealthIndicator {
 
     private final LeaderElection election;
-    private final SessionMonitor monitor;
+    private final SessionMonitorGroup monitor;
 
-    /** monitor 为 null 表示会话监控已关闭，此时行为与引入监控之前一致。 */
+    /** 单连接便捷构造；monitor 为 null 表示会话监控已关闭，此时行为与引入监控之前一致。 */
     public LeaderHealthIndicator(LeaderElection election, SessionMonitor monitor) {
+        this(election, monitor == null ? null : SessionMonitorGroup.single(monitor));
+    }
+
+    /** 多连接：monitor 汇总主实例各条连接的会话；为 null 表示会话监控已关闭。 */
+    public LeaderHealthIndicator(LeaderElection election, SessionMonitorGroup monitor) {
         this.election = election;
         this.monitor = monitor;
     }

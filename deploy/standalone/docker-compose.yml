@@ -170,6 +170,8 @@ services:
       # 攒批写入总线：batch-size 不得大于 EMQX 的 EMQX_MAX_INFLIGHT，且窗口应为批的若干倍（默认 512/64）
       TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-64}
       TRANSPORT_BUS_BATCH_DELAY: ${TRANSPORT_BUS_BATCH_DELAY:-5ms}
+      # 主实例连接 EMQX 的条数（共享订阅分摊投递），1 即退回单连接；见 transport 的 application.yml
+      TRANSPORT_MQTT_CONNECTIONS: ${TRANSPORT_MQTT_CONNECTIONS:-4}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083
       # 监控的堆限阈值与 EMQX 的连接进程堆限取同一个 .env 变量，调整时两者天然一致
       CONDUIT_TRANSPORT_MONITOR_HEAP_LIMIT: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}

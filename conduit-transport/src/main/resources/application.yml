@@ -16,8 +16,14 @@ conduit:
     mqtt:
       host: ${EMQX_HOST:localhost}
       port: ${EMQX_PORT:1883}
-      # 所有 transport 实例共用同一 clientId：EMQX 按 clientId 为离线的订阅端排队，新主实例接管同一会话
+      # 所有 transport 实例共用同一组 clientId：EMQX 按 clientId 为离线的订阅端排队，新主实例接管同一组会话
       client-id: ${TRANSPORT_CLIENT_ID:conduit-transport}
+      # 主实例连接 EMQX 的条数。EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程单核封顶
+      # （2026-10-29 recon 实测 9000 条/秒时已顶在单调度器上限、信箱持续增长直至被强杀）。多于 1 条时改用
+      # 共享订阅 $share/{shared-group}/...，把投递分散到多个连接进程。第 0 条沿用 client-id 接管旧会话，
+      # 第 i 条为 client-id-i。设为 1 即退回改动前的单连接普通订阅（回退开关）。
+      connections: ${TRANSPORT_MQTT_CONNECTIONS:4}
+      shared-group: conduit-transport
       # 与 EMQX 持久会话消息保留期（durable_sessions.message_retention_period，默认 1 天）一致
       session-expiry-seconds: 86400
       # 微批写入总线：单线程投递下，每条一次 XADD 的持续上限实测约 1230 条/秒，

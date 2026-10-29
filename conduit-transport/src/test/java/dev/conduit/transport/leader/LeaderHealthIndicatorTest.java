@@ -2,6 +2,7 @@ package dev.conduit.transport.leader;
 
 import dev.conduit.transport.leader.LeaderElection.Role;
 import dev.conduit.transport.monitor.SessionMonitor;
+import dev.conduit.transport.monitor.SessionMonitorGroup;
 import dev.conduit.transport.monitor.SessionSnapshot;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.actuate.health.Health;
@@ -27,7 +28,7 @@ class LeaderHealthIndicatorTest {
 
     @Test
     void isUpWithoutMonitor() {
-        Health h = new LeaderHealthIndicator(election(), null).health();
+        Health h = new LeaderHealthIndicator(election(), (SessionMonitorGroup) null).health();
 
         assertThat(h.getStatus()).isEqualTo(Status.UP);
         assertThat(h.getDetails()).containsEntry("role", "LEADER").containsEntry("connected", true)

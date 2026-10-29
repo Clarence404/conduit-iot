@@ -12,6 +12,7 @@ import dev.conduit.transport.leader.RedisLeaderLock;
 import dev.conduit.transport.mqtt.MqttProtocolAdapter;
 import dev.conduit.transport.monitor.EmqxSessionClient;
 import dev.conduit.transport.monitor.SessionMonitor;
+import dev.conduit.transport.monitor.SessionMonitorGroup;
 import dev.conduit.transport.monitor.SessionMonitorProperties;
 import dev.conduit.transport.mqtt.MqttTransportProperties;
 import org.slf4j.Logger;
@@ -27,6 +28,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -48,10 +51,25 @@ public class TransportApplication {
         SpringApplication.run(TransportApplication.class, args);
     }
 
-    /** MQTT 协议适配器；何时连接由 {@link LeaderElection} 决定。 */
+    /**
+     * 主实例的 MQTT 连接：按 connections 创建对应数量的适配器，每个是一条独立连接；何时连接由
+     * {@link LeaderElection} 决定。多于一条时改用共享订阅，由 EMQX 把投递分散到这些连接进程上，
+     * 原因见 {@link MqttTransportProperties} 的 connections 说明。
+     */
     @Bean
-    MqttProtocolAdapter mqttProtocolAdapter(MqttTransportProperties props, MessageBus bus) {
-        return new MqttProtocolAdapter(props, bus, Clock.systemUTC());
+    MqttConnections mqttConnections(MqttTransportProperties props, MessageBus bus) {
+        List<MqttProtocolAdapter> adapters = new java.util.ArrayList<>(props.connections());
+        for (int i = 0; i < props.connections(); i++) {
+            adapters.add(new MqttProtocolAdapter(props, bus, Clock.systemUTC(), i));
+        }
+        return new MqttConnections(List.copyOf(adapters));
+    }
+
+    /**
+     * 主实例的全部 MQTT 连接。用持有者而不是直接声明 K 个 bean 或一个 List bean：Spring 对集合类型参数的
+     * 注入是「收集该元素类型的全部 bean」，一个 List 类型的 bean 会被绕过，行为不直观。
+     */
+    record MqttConnections(List<MqttProtocolAdapter> adapters) {
     }
 
     /** Redis 选主锁，实例 id 为 主机名-进程号-随机串。 */
@@ -60,19 +78,26 @@ public class TransportApplication {
         return new RedisLeaderLock(redis, props.key(), props.ttl(), RedisLeaderLock.newInstanceId());
     }
 
-    /** 选主协调器（SmartLifecycle，容器启动后开始抢锁，关闭时释放锁）。 */
+    /** 选主协调器（SmartLifecycle，容器启动后开始抢锁，关闭时释放锁）；主实例启动并维持全部连接。 */
     @Bean
-    LeaderElection leaderElection(LeaderLock lock, List<ProtocolAdapter> adapters, LeaderProperties props) {
-        return new LeaderElection(lock, adapters, props);
+    LeaderElection leaderElection(LeaderLock lock, MqttConnections connections, LeaderProperties props) {
+        return new LeaderElection(lock, List.<ProtocolAdapter>copyOf(connections.adapters()), props);
     }
 
     /** 会话监控；关闭时不注册，健康检查退回只看选主与连接状态。 */
     @Bean
     @ConditionalOnProperty(prefix = "conduit.transport.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
-    SessionMonitor sessionMonitor(SessionMonitorProperties props, MqttTransportProperties mqtt,
-                                  io.micrometer.core.instrument.MeterRegistry registry) {
-        return new SessionMonitor(new EmqxSessionClient(props, mqtt.clientId()),
-                props.stallSamples(), props.heapLimit().toBytes(), mqtt.batchSize(), registry);
+    SessionMonitorGroup sessionMonitor(SessionMonitorProperties props, MqttTransportProperties mqtt,
+                                       MqttConnections connections,
+                                       io.micrometer.core.instrument.MeterRegistry registry) {
+        Map<String, SessionMonitor> members = new LinkedHashMap<>();
+        for (MqttProtocolAdapter a : connections.adapters()) {
+            // 单连接时不加 client 标签，指标名与改动前一致，既有面板不受影响
+            members.put(a.clientId(), new SessionMonitor(new EmqxSessionClient(props, a.clientId()),
+                    props.stallSamples(), props.heapLimit().toBytes(), mqtt.batchSize(), registry,
+                    mqtt.shared() ? a.clientId() : null));
+        }
+        return new SessionMonitorGroup(members);
     }
 
     /**
@@ -82,7 +107,7 @@ public class TransportApplication {
     @Bean(destroyMethod = "shutdownNow")
     @ConditionalOnProperty(prefix = "conduit.transport.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
     ScheduledExecutorService sessionMonitorScheduler(SessionMonitorProperties props,
-                                                     SessionMonitor monitor,
+                                                     SessionMonitorGroup monitor,
                                                      LeaderElection election) {
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofPlatform().name("session-monitor").daemon().factory());
@@ -95,7 +120,7 @@ public class TransportApplication {
      * 单次轮询：主实例采样，非主实例重置监控状态。整体捕获 Throwable——scheduleWithFixedDelay
      * 的任务一旦抛出就会被永久取消且无日志，监控不能因一次意外而静默死亡。
      */
-    static void pollOnce(LeaderElection election, SessionMonitor monitor) {
+    static void pollOnce(LeaderElection election, SessionMonitorGroup monitor) {
         try {
             if (election.role() == Role.LEADER) {
                 monitor.sample();
@@ -109,7 +134,8 @@ public class TransportApplication {
 
     /** 健康检查组件 leader：显示角色、实例 id、连接状态与会话监控结论（监控关闭时为 null）。 */
     @Bean
-    LeaderHealthIndicator leaderHealthIndicator(LeaderElection election, ObjectProvider<SessionMonitor> monitor) {
+    LeaderHealthIndicator leaderHealthIndicator(LeaderElection election,
+                                                ObjectProvider<SessionMonitorGroup> monitor) {
         return new LeaderHealthIndicator(election, monitor.getIfAvailable());
     }
 }

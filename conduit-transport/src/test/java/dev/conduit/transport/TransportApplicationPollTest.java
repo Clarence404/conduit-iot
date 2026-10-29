@@ -3,6 +3,7 @@ package dev.conduit.transport;
 import dev.conduit.transport.leader.LeaderElection;
 import dev.conduit.transport.leader.LeaderElection.Role;
 import dev.conduit.transport.monitor.SessionMonitor;
+import dev.conduit.transport.monitor.SessionMonitorGroup;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -21,12 +22,12 @@ class TransportApplicationPollTest {
         SessionMonitor monitor = mock(SessionMonitor.class);
 
         when(election.role()).thenReturn(Role.LEADER);
-        TransportApplication.pollOnce(election, monitor);
+        TransportApplication.pollOnce(election, SessionMonitorGroup.single(monitor));
         verify(monitor).sample();
         verify(monitor, never()).reset();
 
         when(election.role()).thenReturn(Role.STANDBY);
-        TransportApplication.pollOnce(election, monitor);
+        TransportApplication.pollOnce(election, SessionMonitorGroup.single(monitor));
         verify(monitor).reset();
     }
 
@@ -36,9 +37,9 @@ class TransportApplicationPollTest {
         SessionMonitor monitor = mock(SessionMonitor.class);
         when(election.role()).thenReturn(Role.LEADER);
         doThrow(new NullPointerException("boom")).when(monitor).sample();
-        assertThatCode(() -> TransportApplication.pollOnce(election, monitor)).doesNotThrowAnyException();
+        assertThatCode(() -> TransportApplication.pollOnce(election, SessionMonitorGroup.single(monitor))).doesNotThrowAnyException();
 
         doThrow(new StackOverflowError()).when(monitor).sample();
-        assertThatCode(() -> TransportApplication.pollOnce(election, monitor)).doesNotThrowAnyException();
+        assertThatCode(() -> TransportApplication.pollOnce(election, SessionMonitorGroup.single(monitor))).doesNotThrowAnyException();
     }
 }

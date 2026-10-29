@@ -75,6 +75,19 @@ public class SessionMonitor {
      */
     public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
                           long heapLimitBytes, int batchSize, MeterRegistry registry) {
+        this(source, stallSamples, heapLimitBytes, batchSize, registry, null);
+    }
+
+    /**
+     * 多连接部署用：每条连接一个监控实例，仪表带 {@code client} 标签区分。
+     *
+     * <p>为什么必须带标签：Micrometer 按（名称, 标签）去重，同名无标签的仪表重复注册时返回已有的那个，
+     * 于是 K 个监控只有第一个的值能被看到，其余连接的停滞、丢弃全部隐身。
+     *
+     * @param client 本监控所盯会话的 clientId，作为 client 标签；为 null 时不加标签（单连接，与旧版指标一致）
+     */
+    public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
+                          long heapLimitBytes, int batchSize, MeterRegistry registry, String client) {
         this.source = source;
         this.stallSamples = stallSamples;
         this.heapLimitBytes = heapLimitBytes;
@@ -82,7 +95,11 @@ public class SessionMonitor {
         for (String name : GAUGE_NAMES) {
             AtomicReference<Double> ref = new AtomicReference<>(Double.NaN);
             gaugeValues.put(name, ref);
-            Gauge.builder(name, ref, AtomicReference::get).register(registry);
+            Gauge.Builder<AtomicReference<Double>> b = Gauge.builder(name, ref, AtomicReference::get);
+            if (client != null) {
+                b = b.tag("client", client);
+            }
+            b.register(registry);
         }
     }
 

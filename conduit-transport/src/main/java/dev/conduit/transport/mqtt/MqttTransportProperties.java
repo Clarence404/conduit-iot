@@ -19,6 +19,16 @@ import java.time.Duration;
  *                             窗口远大于批时提交当前批的同时下一批已在途，深度为 窗口/批（实测 1024/64 优于 32/32）
  * @param batchDelay           攒批的最长等待：不足 batchSize 时最多等这么久也要提交，
  *                             直接体现为 PUBACK 的最坏额外延迟
+ * @param connections          主实例连接 EMQX 的条数，默认 4，必须 ≥ 1。
+ *                             为什么要多条：EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程
+ *                             单核封顶（2026-10-29 recon 实测 9,000 条/秒时该进程已顶在单调度器上限，
+ *                             信箱持续增长直至 mailbox_overflow 被强杀）。多于 1 条时改用共享订阅
+ *                             $share/{sharedGroup}/...，由 EMQX 把投递分散到这些连接进程上。
+ *                             第 0 条沿用 clientId（接管旧会话、补发其中排队的消息后退订旧的非共享过滤器），
+ *                             第 i 条为 clientId-i；上下线事件只由第 0 条订阅，避免重复 K 次。
+ *                             为 1 时与改动前完全一致（旧 clientId、普通订阅、不退订），即回退开关。
+ *                             见 docs/superpowers/specs/2026-10-29-conduit-transport-shared-subscription-design.md
+ * @param sharedGroup          共享订阅组名（connections > 1 时生效）
  */
 @ConfigurationProperties(prefix = "conduit.transport.mqtt")
 public record MqttTransportProperties(
@@ -30,11 +40,30 @@ public record MqttTransportProperties(
         @DefaultValue("86400") long sessionExpirySeconds,
         @DefaultValue("conduit-") String ownClientPrefix,
         @DefaultValue("64") int batchSize,
-        @DefaultValue("5ms") Duration batchDelay) {
+        @DefaultValue("5ms") Duration batchDelay,
+        @DefaultValue("4") int connections,
+        @DefaultValue("conduit-transport") String sharedGroup) {
 
     public MqttTransportProperties {
         if (batchSize < 1) {
             throw new IllegalArgumentException("conduit.transport.mqtt.batch-size must be >= 1");
         }
+        if (connections < 1) {
+            // 0 条连接意味着主实例什么都不订阅、消息全部堆在 EMQX，必须在启动时就失败
+            throw new IllegalArgumentException("conduit.transport.mqtt.connections must be >= 1");
+        }
+    }
+
+    /** 是否使用共享订阅：多于一条连接时才需要由 EMQX 在连接之间分摊。 */
+    public boolean shared() {
+        return connections > 1;
+    }
+
+    /**
+     * 第 index 条连接的 clientId：第 0 条沿用 clientId 以接管旧会话，其余加序号后缀。
+     * 必须保留 clientId 的前缀——transport 超级用户鉴权要求以 conduit- 开头。
+     */
+    public String clientIdOf(int index) {
+        return index == 0 ? clientId : clientId + "-" + index;
     }
 }

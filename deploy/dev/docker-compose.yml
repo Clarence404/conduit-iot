@@ -129,6 +129,11 @@ services:
       # 在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 mailbox_overflow 强杀
       # （2026-10-28 实测：配 1024 时负载下必然被杀，且先于队列溢出与堆超限发生）
       EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-512}
+      # transport 多连接共享订阅的分发策略：同一设备（发布方 clientid）的消息固定投给同一条订阅连接，
+      # 保住单设备内的顺序。下游其实不依赖顺序（最新值按 ts 比较、InfluxDB 幂等、在线状态有 since 守护），
+      # 但保序几乎没有成本。默认 round_robin 会把同一设备的相邻消息拆到不同连接上。
+      # 注意键在 mqtt 下而不是 broker 下（EMQX 5.10 实测 `emqx ctl conf show mqtt`）；写成 EMQX_BROKER__... 会被静默忽略。
+      EMQX_MQTT__SHARED_SUBSCRIPTION_STRATEGY: hash_clientid
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录
       EMQX_NODE__NAME: emqx@127.0.0.1

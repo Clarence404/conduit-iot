@@ -6,10 +6,25 @@
 于是系统的真实容量天花板测不出来——测到的是负载端的极限。
 改为多进程后每个进程独立持有一批设备与各自的 paho 事件循环，绕开 GIL。
 
-两个子命令：
+三个子命令：
   provision --devices N        经 REST 建压测产品与 N 台设备，明文密钥存入 devices.json
+  refresh                      重置 devices.json 里全部设备的密钥并回写（**每次压测前必跑**，见下）
   run --devices N --rate R --seconds S [--workers W]
                                以 N 条 MQTT 连接按每设备每秒 R 条发布，统计吞吐与 PUBACK 时延
+
+**必须先 refresh，否则测出来的全是废数据。** 压测产品带物模型，于是演示模拟器会把它
+当成演示产品接管：`SIM_TENANTS=*` 让它扫描所有租户的物模型产品，并给每个产品的前
+`SIM_MAX_DEVICES_PER_PRODUCT` 台设备重置密钥（压测机上是 100）。被重置的那些设备在
+devices.json 里的密钥就失效了。
+
+失效的方式极其隐蔽：paho 的 `connect()` 只发起 TCP，CONNACK 在网络线程里才到，
+所以鉴权被拒**不会抛异常**——脚本照样报「连接数 600」「客户端错误 0」，而那 100 台的
+publish 全部堆进 paho 本地队列、一条也发不出去，断开时静默丢弃。
+
+2026-10-29 实测后果：名义目标 10,000/秒实际只喂进 8,333，而 EMQX 恰好收到 8,334。
+由此误判出一道并不存在的「约 8,300 条/秒入口天花板」，并写进了测试报告与架构决定。
+特征是**接入量永远恰好是名义目标的 5/6**——真正的容量上限是绝对值，不会随你给多少而
+按比例变化。看到固定比值，先查负载端。
 
 口径提醒：客户端只能证明「平台已持久接收」（PUBACK），**不能证明已入库**。
 过载时 EMQX 会先 PUBACK 再丢弃订阅端队列中的消息，不带消息 id 的设备无从得知。
@@ -110,6 +125,35 @@ def provision(count):
     print(f'完成：{len(devices)} 台，密钥已存入 {DEVICES_FILE.name}（不在版本控制内）')
 
 
+def refresh():
+    """重置 devices.json 中全部设备的密钥并回写，抵消演示模拟器的密钥接管。
+
+    每次压测前都要跑：模拟器可能已经重置过其中一部分设备的密钥（见模块说明），
+    而这种失效在运行时是静默的。重置是幂等的，重复跑无害。
+    """
+    cfg = load_config()
+    api = Api(cfg['api'])
+    api.login(cfg['admin_username'], cfg['admin_password'])
+    devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8'))
+    t0, failed = time.time(), []
+    for i, d in enumerate(devices):
+        try:
+            s = api.call('POST', f'/devices/{d["deviceKey"]}/reset-secret')
+            d['secret'] = s['deviceSecret']
+        except Exception as e:
+            failed.append((d['deviceKey'], str(e)[:80]))
+        if (i + 1) % 100 == 0:
+            print(f'  已重置 {i + 1}/{len(devices)} 台  ({time.time() - t0:.0f}s)')
+    DEVICES_FILE.write_text(json.dumps(devices), encoding='utf-8')
+    if failed:
+        # 不静默跳过：任何一台失败都会让后续测量少喂一份负载，必须让人看见
+        print(f'**{len(failed)} 台重置失败**，这些设备会在压测中静默鉴权失败：')
+        for k, e in failed[:10]:
+            print(f'  {k}: {e}')
+        raise SystemExit('密钥未全部刷新，先解决上面的失败再压测。')
+    print(f'完成：{len(devices)} 台密钥已全部刷新')
+
+
 def _worker(devices, host, port, rate, seconds, out):
     """一个发压进程：持有自己那批设备的连接，独立运行 paho 事件循环。
 
@@ -119,6 +163,17 @@ def _worker(devices, host, port, rate, seconds, out):
     sent = acked = errors = 0
     lat = []
     pending = {}
+    # CONNACK 成功的客户端 id 集合。paho 的 connect() 只发起 TCP，鉴权被拒不会抛异常，
+    # 所以必须等 CONNACK 才知道这条连接到底能不能用——否则失败的设备会静默地一条都发不出去。
+    accepted = set()
+    refused = {}
+
+    def on_conn(client, userdata, flags, reason, *a):
+        code = getattr(reason, 'value', reason)
+        if code == 0:
+            accepted.add(id(client))
+        else:
+            refused[id(client)] = str(reason)
 
     def on_pub(client, userdata, mid, *a):
         nonlocal acked
@@ -128,7 +183,7 @@ def _worker(devices, host, port, rate, seconds, out):
             if len(lat) < 50000:
                 lat.append((time.time() - t) * 1000)
 
-    clients = []
+    opened = []
     for d in devices:
         cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=d['deviceKey'], protocol=mqtt.MQTTv5)
         cl.username_pw_set(d['deviceKey'], d['secret'])
@@ -136,15 +191,24 @@ def _worker(devices, host, port, rate, seconds, out):
         # 把服务端的瓶颈伪装成客户端的。压测要测服务端上限，所以放宽并禁用本地丢弃。
         cl.max_inflight_messages_set(1000)
         cl.max_queued_messages_set(0)
+        cl.on_connect = on_conn
         cl.on_publish = on_pub
         try:
             cl.connect(host, port, keepalive=60)
             cl.loop_start()
-            clients.append((cl, d))
+            opened.append((cl, d))
         except Exception:
             errors += 1
+
+    # 等 CONNACK 到齐（最多 10 秒），只把鉴权通过的连接纳入发压
+    deadline_conn = time.time() + 10
+    while time.time() < deadline_conn and len(accepted) + len(refused) < len(opened):
+        time.sleep(0.1)
+    clients = [(cl, d) for cl, d in opened if id(cl) in accepted]
+    rejected = [d['deviceKey'] for cl, d in opened if id(cl) not in accepted]
     if not clients:
-        out.put({'sent': 0, 'acked': 0, 'errors': errors, 'lat': [], 'conns': 0})
+        out.put({'sent': 0, 'acked': 0, 'errors': errors, 'lat': [], 'conns': 0,
+                 'rejected': rejected, 'reasons': sorted(set(refused.values()))})
         return
 
     interval = 1.0 / rate
@@ -177,7 +241,8 @@ def _worker(devices, host, port, rate, seconds, out):
             cl.disconnect()
         except Exception:
             pass
-    out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients)})
+    out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
+             'rejected': rejected, 'reasons': sorted(set(refused.values()))})
 
 
 def run(count, rate, seconds, workers):
@@ -204,7 +269,16 @@ def run(count, rate, seconds, workers):
     acked = sum(r['acked'] for r in res)
     errors = sum(r['errors'] for r in res)
     conns = sum(r['conns'] for r in res)
+    rejected = [k for r in res for k in r.get('rejected', [])]
     lat = sorted(x for r in res for x in r['lat'])
+    if rejected:
+        # 绝不把「部分设备没连上」当成可以接受的噪声：少一台就少喂一份负载，
+        # 而实际供给低于名义目标会让人把「供给不足」误读成「系统到顶」。
+        print(f'\n**{len(rejected)} / {len(devices)} 台设备未通过鉴权，本次结果作废。**')
+        print(f'   原因：{"; ".join(sorted({x for r in res for x in r.get("reasons", [])})) or "未收到 CONNACK"}')
+        print(f'   示例：{", ".join(rejected[:5])}')
+        print('   多半是演示模拟器重置了这些设备的密钥，先跑 `loadgen.py refresh` 再压测。')
+        raise SystemExit(2)
     qt = lambda f: lat[min(len(lat) - 1, int(len(lat) * f))] if lat else 0.0
     print('\n===== 结果 =====')
     print(f'进程数 / 连接数 : {len(procs)} / {conns}')
@@ -222,6 +296,7 @@ if __name__ == '__main__':
     sub = ap.add_subparsers(dest='cmd', required=True)
     pp = sub.add_parser('provision')
     pp.add_argument('--devices', type=int, required=True)
+    sub.add_parser('refresh')
     rp = sub.add_parser('run')
     rp.add_argument('--devices', type=int, required=True)
     rp.add_argument('--rate', type=float, required=True, help='每台设备每秒发布条数')
@@ -230,5 +305,7 @@ if __name__ == '__main__':
     a = ap.parse_args()
     if a.cmd == 'provision':
         provision(a.devices)
+    elif a.cmd == 'refresh':
+        refresh()
     else:
         run(a.devices, a.rate, a.seconds, a.workers)

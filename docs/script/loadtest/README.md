@@ -9,7 +9,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `loadgen.py` | 多进程 MQTT 发压器：建设备、按速率发布、统计 PUBACK 时延 |
+| `loadgen.py` | 多进程 MQTT 发压器：建设备、刷新密钥、按速率发布、统计 PUBACK 时延 |
 | `capacity_test.py` | 容量测试：逐级加压，找积压不增长的最大稳态速率 |
 | `remote.py` | 压测机远程助手：SSH 执行、上传、查 Prometheus |
 | `config.example.json` | 配置模板 |
@@ -27,6 +27,30 @@ python loadgen.py provision --devices 600   # 建 600 台压测设备，密钥�
 ```
 
 `provision` 是幂等的：产品已存在则复用，重复执行只会继续建设备。
+
+## 每次压测前必须先刷新密钥
+
+```bash
+python loadgen.py refresh
+```
+
+**不跑这一步，测出来的是废数据。** 压测产品带物模型，演示模拟器会把它当成演示产品
+接管：`SIM_TENANTS=*` 使其扫描所有租户的物模型产品，并给每个产品的前
+`SIM_MAX_DEVICES_PER_PRODUCT` 台设备重置密钥（压测机上是 100）。被重置的设备在
+`devices.json` 里的密钥随即失效。
+
+失效的方式极其隐蔽——paho 的 `connect()` 只发起 TCP，CONNACK 在网络线程里才到，
+**鉴权被拒不会抛异常**。脚本照样报「连接数 600」「客户端错误 0」，而那 100 台的
+publish 全部堆进本地队列、一条也发不出去，断开时静默丢弃。
+
+2026-10-29 为此付出过代价：名义目标 10,000/秒实际只喂进 8,333，EMQX 恰好收到 8,334，
+于是被当成「约 8,300 条/秒的入口天花板」写进了测试报告与架构决定（见该日报告的更正）。
+
+**识别特征：接入量永远恰好是名义目标的某个固定比例**（当时是 5/6）。真正的容量上限
+是一个绝对值，不会随你给多少而按比例缩放。看到固定比值，先查负载端。
+
+现在 `run` 会等 CONNACK 到齐，只要有设备未通过鉴权就直接报错退出（退出码 2），
+不会再把结果算出来。
 
 ## 跑一次容量测试
 
@@ -49,6 +73,27 @@ python loadgen.py run --devices 600 --rate 16.7 --seconds 120 --workers 28
 `--workers` 默认取 CPU 核数。
 
 ## 读数的口径（最重要的一节）
+
+### 速率证明不了不丢，计数才行
+
+**合格的判据是计数守恒，不是速率峰值。** 过载时 EMQX 先 PUBACK 再丢弃，入库 TPS
+看着照样不低，但消息已经少了一截。一次合格的容量测试要比对五个独立口径，全部相等：
+
+| 口径 | 来源 |
+|---|---|
+| 客户端 publish 次数 | loadgen 的「实际发送」 |
+| 客户端 PUBACK 数 | loadgen 的「已确认」 |
+| EMQX 接收数 | `emqx_messages_received` 的**计数差**（不是 rate） |
+| 流水线入库数 | `conduit_pipeline_processed_total{type="property"}` 的计数差 |
+| **InfluxDB 实际行数** | 直接 SQL `count(1)`，不经过应用的内存计数器，最有分量 |
+
+同时要求：`emqx_messages_dropped` 增量为 0、死信增量为 0、EMQX 失效日志
+（`mailbox_overflow` / `maximum heap size` / `mqueue_is_full`）为 0。
+
+截取失效日志必须按**本档起始时刻**锚定（`docker logs --since <VM 的 RFC3339 时刻>`），
+用 `--since 12m` 会把上一档过载的日志数进来，把合格的档位误判成不合格。
+
+### PUBACK 的含义
 
 **客户端只能证明「平台已持久接收」（PUBACK），不能证明已入库。**
 

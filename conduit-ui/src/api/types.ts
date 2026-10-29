@@ -217,6 +217,25 @@ export interface PlatformOverview {
   deviceCount: number
   onlineCount: number | null
   topTenants: TenantStat[]
+  throughput: ThroughputView
+}
+
+/**
+ * server 本进程的入库吞吐，**进程重启即归零**，多实例时各实例互不相同。
+ * ingestTps / peakTps 在采样不足（进程刚启动不到两个采样周期）时为 null，
+ * 表示「还不知道」，与真实的 0（确实没有流量）是两回事，界面上必须区分显示。
+ */
+export interface ThroughputView {
+  /** 最近 windowSeconds 秒的平均入库条数/秒；未知为 null */
+  ingestTps: number | null
+  /** 本进程启动以来的最高速率；未知为 null */
+  peakTps: number | null
+  /** 本进程启动以来累计写入时序库的属性消息条数 */
+  ingestTotal: number
+  /** 本进程启动以来累计死信条数 */
+  deadTotal: number
+  /** 速率的统计窗口长度（秒） */
+  windowSeconds: number
 }
 
 /** 租户（平台租户列表项与操作结果）；adminCount 含已禁用的租户管理员 */

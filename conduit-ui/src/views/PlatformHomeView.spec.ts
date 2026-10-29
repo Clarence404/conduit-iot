@@ -1,4 +1,4 @@
-/** PlatformHomeView 组件测试：4 个指标卡的数值与副文、在线相关为 null 时显示「—」、点击租户卡与租户行进入租户管理（带筛选）、每 30 秒刷新 */
+/** PlatformHomeView 组件测试：4 个指标卡的数值与副文、实时吞吐一行（速率未知与真实零的区分）、在线相关为 null 时显示「—」、点击租户卡与租户行进入租户管理（带筛选）、每 30 秒刷新 */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
@@ -22,6 +22,7 @@ function overview(patch: Partial<PlatformOverview> = {}): PlatformOverview {
       { code: 'east', name: '验收租户（华东）', deviceCount: 150, onlineCount: 80 },
       { code: 'default', name: 'Default', deviceCount: 50, onlineCount: 20 },
     ],
+    throughput: { ingestTps: 1234.5, peakTps: 2780, ingestTotal: 1234567, deadTotal: 0, windowSeconds: 60 },
     ...patch,
   }
 }
@@ -149,5 +150,37 @@ describe('PlatformHomeView', () => {
     await settle()
     expect(router.currentRoute.value.name).toBe('tenants')
     wrapper.unmount()
+  })
+
+  it('renders the throughput row', async () => {
+    const { wrapper } = await mountView()
+
+    expect(tile(wrapper, 'tps')).toContain('1,234.5')
+    expect(tile(wrapper, 'tps')).toContain('近 60 秒平均')
+    expect(tile(wrapper, 'peak')).toContain('2,780')
+    expect(tile(wrapper, 'ingested')).toContain('1,234,567')
+    expect(tile(wrapper, 'dead')).toContain('0')
+  })
+
+  it('tells "sampling" apart from a real zero rate', async () => {
+    // 采样不足：速率为 null，显示「—」并说明还取不到速率，绝不能显示成 0
+    vi.mocked(platformApi.overview).mockResolvedValue(
+      overview({ throughput: { ingestTps: null, peakTps: null, ingestTotal: 0, deadTotal: 0, windowSeconds: 60 } }),
+    )
+    const { wrapper } = await mountView()
+
+    expect(tile(wrapper, 'tps')).toContain('—')
+    expect(tile(wrapper, 'tps')).toContain('采样中')
+    expect(tile(wrapper, 'tps')).not.toContain('近 60 秒平均')
+  })
+
+  it('shows a real zero rate as 0', async () => {
+    vi.mocked(platformApi.overview).mockResolvedValue(
+      overview({ throughput: { ingestTps: 0, peakTps: 120, ingestTotal: 900, deadTotal: 0, windowSeconds: 60 } }),
+    )
+    const { wrapper } = await mountView()
+
+    expect(tile(wrapper, 'tps')).toContain('0')
+    expect(tile(wrapper, 'tps')).toContain('近 60 秒平均')
   })
 })

@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 平台概况集成测试：各计数与数据库一致（共享库，按当时的库内数量比较）；设备最多的租户最多 5 个、按设备数降序；租户用户 403。 */
+/** 平台概况集成测试：各计数与数据库一致（共享库，按当时的库内数量比较）；设备最多的租户最多 5 个、按设备数降序；带本进程吞吐；租户用户 403。 */
 class PlatformOverviewApiIT extends IntegrationTestBase {
 
     private int count(String sql) {
@@ -42,6 +42,11 @@ class PlatformOverviewApiIT extends IntegrationTestBase {
         assertThat((Integer) JsonPath.read(body, "$.productCount")).isEqualTo(count("select count(*) from product"));
         assertThat((Integer) JsonPath.read(body, "$.deviceCount")).isEqualTo(count("select count(*) from device"));
         assertThat((Object) JsonPath.read(body, "$.onlineCount")).isNotNull();
+
+        // 吞吐是本进程口径：累计值一定有；速率在采样不足时为 null，这里只断言字段存在、类型正确
+        assertThat((Integer) JsonPath.read(body, "$.throughput.ingestTotal")).isNotNegative();
+        assertThat((Integer) JsonPath.read(body, "$.throughput.deadTotal")).isNotNegative();
+        assertThat((Integer) JsonPath.read(body, "$.throughput.windowSeconds")).isPositive();
 
         List<Integer> top = JsonPath.read(body, "$.topTenants[*].deviceCount");
         assertThat(top).hasSizeBetween(1, 5);

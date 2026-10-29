@@ -39,5 +39,5 @@ logs/
 .superpowers/
 
 # 压测工具的本地配置与设备密钥（含凭据，不入库）
-tools/loadtest/config.json
-tools/loadtest/devices.json
+docs/script/config.json
+docs/script/devices.json

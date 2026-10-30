@@ -34,7 +34,8 @@ scrape_configs:
       username: "__EMQX_API_KEY__"
       password: "__EMQX_API_SECRET__"
     static_configs:
-      - targets: ["emqx:18083"]
+      # 默认是同一 compose 网络内的 emqx；拆分部署（EMQX 在另一台主机）时由 EMQX_METRICS_TARGET 指向那台主机
+      - targets: ["__EMQX_METRICS_TARGET__"]
 
   - job_name: node
     static_configs:

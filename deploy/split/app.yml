@@ -1,0 +1,45 @@
+# 拆分部署 · 应用主机：叠加在独立部署包之上，EMQX 改用另一台主机（见 emqx/），本机不再启动 emqx。
+# 用法（在 deploy/standalone 目录，沿用该目录的 .env，并在其中补上 EMQX_REMOTE_HOST 等，见 ../split/README.md）：
+#   docker compose -f docker-compose.yml -f ../split/app.yml up -d
+# 需要 Docker Compose 2.24.4 及以上（!override 语法）。
+services:
+  # 本机不启动 EMQX：放进一个不会被启用的 profile
+  emqx:
+    profiles: ["local-emqx"]
+
+  conduit-transport:
+    environment:
+      EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      EMQX_PORT: ${MQTT_PORT:-1883}
+      CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
+    # 原定义依赖本机的 emqx（service_healthy）；EMQX 在远端，由 transport 自己重连等待
+    depends_on: !override
+      redis:
+        condition: service_healthy
+      conduit-server:
+        condition: service_healthy
+
+  conduit-transport-2:
+    environment:
+      EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      EMQX_PORT: ${MQTT_PORT:-1883}
+      CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
+    depends_on: !override
+      redis:
+        condition: service_healthy
+      conduit-server:
+        condition: service_healthy
+
+  simulator:
+    environment:
+      MQTT_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+    depends_on: !override
+      conduit-server:
+        condition: service_healthy
+      conduit-transport:
+        condition: service_started
+
+  prometheus:
+    environment:
+      EMQX_METRICS_TARGET: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}:${EMQX_DASHBOARD_PORT:-18083}

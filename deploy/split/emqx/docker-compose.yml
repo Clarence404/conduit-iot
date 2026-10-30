@@ -1,0 +1,28 @@
+# 拆分部署 · EMQX 主机：只运行 EMQX，其余服务在应用主机上（见 ../app.yml 与 ../README.md）。
+# EMQX 的定义只在 ../../dev/docker-compose.yml（ulimits、内存持久会话、共享订阅策略、配置模板挂载等），这里以 extends 引用；
+# 挂载路径按 dev 文件所在目录解析，所以本机要有完整的 deploy/ 目录。插值用本目录的 .env，并执行 dev 文件的必填检查。
+# 用法：cp .env.example .env 并填写，然后 docker compose up -d
+name: conduit-emqx
+
+services:
+  emqx:
+    extends:
+      file: ../../dev/docker-compose.yml
+      service: emqx
+    environment:
+      # 连接进程信箱上限（EMQX 默认 1000）。transport 的在途消息堆在其连接进程信箱里，
+      # 本值必须显著大于 EMQX_MAX_INFLIGHT，否则负载下 transport 连接被 mailbox_overflow 强杀；
+      # 连接进程堆上限（EMQX_CONNECTION_MAX_HEAP_SIZE）仍是兜底，不随本值上调
+      EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-1000}
+
+  # 本机 CPU / 内存（profile metrics，默认不启动）。开放 9100 端口供应用主机上的 Prometheus 按需抓取；
+  # 默认未接入看板：看板的整机面板不按主机区分，混入后会把两台机器的 CPU 合并计算
+  node-exporter:
+    extends:
+      file: ../../dev/docker-compose.yml
+      service: node-exporter
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${NODE_EXPORTER_PORT:-9100}:9100"
+
+volumes:
+  emqx-data:

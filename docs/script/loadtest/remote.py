@@ -66,7 +66,7 @@ def prom(expr, c=None):
     会被解析成空格，直接拼进 GET 查询串会把表达式拆坏（实测踩过）。
     """
     enc = urllib.parse.quote(expr, safe='')
-    rc, o = run(f"docker exec conduit-prometheus-1 wget -qO- --post-data='query={enc}' "
+    rc, o = run(f"docker exec conduit-prometheus wget -qO- --post-data='query={enc}' "
                 f"'http://localhost:9090/api/v1/query' 2>/dev/null", timeout=200, c=c)
     try:
         d = json.loads(o.strip())

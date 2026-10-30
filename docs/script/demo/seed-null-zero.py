@@ -18,7 +18,7 @@ def container_env(container):
     return dict(x.split('=', 1) for x in lines if '=' in x)
 
 
-env = container_env('conduit-conduit-server-1')
+env = container_env('conduit-server')
 base = 'http://127.0.0.1:8091'
 token = None
 
@@ -60,7 +60,7 @@ if device is None:
     device = api('POST', '/api/v1/devices', {'productKey': pk, 'name': name})['device']
 dk = device['deviceKey']
 api('PUT', f'/api/v1/devices/{dk}', {'name': name, 'status': 'DISABLED'})
-tenant_id = subprocess.check_output(['docker', 'exec', 'conduit-postgres-1', 'psql',
+tenant_id = subprocess.check_output(['docker', 'exec', 'conduit-postgres', 'psql',
     '-U', 'conduit', '-d', 'conduit', '-Atc', "select id from tenant where code='default'"], text=True).strip()
 end = int(time.time() // 60) * 60000
 start = end - 3600000

@@ -7,6 +7,8 @@ name: conduit
 
 services:
   postgres:
+    # 固定容器名：只有一个实例的服务不带 -1 后缀，可多实例的（transport）按序号命名；排查命令在各部署包通用
+    container_name: conduit-postgres
     image: postgres:16.8
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-conduit}
@@ -23,6 +25,7 @@ services:
     restart: unless-stopped
 
   redis:
+    container_name: conduit-redis
     image: redis:7.4.2
     # 写命令回复前刷盘；保持重写期间也 fsync，避免已确认的总线消息只留在页缓存。
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always", "--no-appendfsync-on-rewrite", "no"]
@@ -37,6 +40,7 @@ services:
     restart: unless-stopped
 
   influxdb:
+    container_name: conduit-influxdb
     image: influxdb:3.12.0-core
     # 启动时由 INFLUX_TOKEN 生成离线管理员 token 文件（只有库里还没有管理员 token 时才生效），再启动服务
     # --disable-authz 中的 metrics：让 Prometheus 免 token 抓取运行指标。InfluxDB 3 Core 只有管理员 token（能写能删整个库），
@@ -73,6 +77,7 @@ services:
     restart: unless-stopped
 
   influxdb-explorer:
+    container_name: conduit-influxdb-explorer
     # InfluxDB 3 官方图形界面（InfluxDB 3 Explorer），预置连接到本编排的 InfluxDB 与 telemetry 库。
     # admin 模式可管理库与 token；它本身没有登录，只应在可信网络中暴露（端口按 BIND_ADDR 绑定）。
     image: influxdata/influxdb3-ui:1.11.0
@@ -172,6 +177,7 @@ services:
   # 全部设 mem_limit：压测机可用内存很紧，监控栈只在需要观测时才开，且不得失控吃内存。
 
   prometheus:
+    container_name: conduit-prometheus
     profiles: ["metrics"]
     image: prom/prometheus:v3.5.0
     # 抓取配置里含 EMQX API key，所以像 emqx 一样启动时由模板渲染到容器内 /tmp，不把凭据写进挂载的文件
@@ -206,6 +212,7 @@ services:
     restart: unless-stopped
 
   grafana:
+    container_name: conduit-grafana
     profiles: ["metrics"]
     image: grafana/grafana:11.6.1
     # 口令为空时拒绝启动：Grafana 空口令会回落到默认口令 admin，而端口可能对内网开放
@@ -231,6 +238,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
+    container_name: conduit-node-exporter
     # 宿主机 CPU / 内存 / 磁盘 I/O。只在 compose 网络内被抓取，不对外开端口
     profiles: ["metrics"]
     image: prom/node-exporter:v1.9.1
@@ -242,6 +250,7 @@ services:
     restart: unless-stopped
 
   cadvisor:
+    container_name: conduit-cadvisor
     # 每容器 CPU / 内存。需要只读挂载宿主机的 cgroup 与 docker 目录。
     # 单独放在 metrics-cadvisor profile 下：镜像托管在 gcr.io，部分网络环境不可达
     # （压测机实测 connection refused），而 profile 内任一镜像拉取失败会让整组都起不来。
@@ -264,6 +273,7 @@ services:
     restart: unless-stopped
 
   redis-exporter:
+    container_name: conduit-redis-exporter
     # Redis ops、AOF、内存，以及上行流与死信流的长度 / 消费组积压
     profiles: ["metrics"]
     image: oliver006/redis_exporter:v1.74.0

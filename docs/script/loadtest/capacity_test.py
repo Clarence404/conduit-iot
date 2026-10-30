@@ -96,7 +96,7 @@ def main():
     c = remote.connect()
     try:
         if not a.keep_simulator:
-            remote.run("docker stop conduit-simulator-1 >/dev/null 2>&1", timeout=300, c=c)
+            remote.run("docker stop conduit-simulator >/dev/null 2>&1", timeout=300, c=c)
             time.sleep(10)
         rows = [one_level(c, t, a.devices, a.seconds) for t in a.levels]
 
@@ -118,7 +118,7 @@ def main():
               f'{"（压力测试必须核对此项）" if o.strip() != "0" else ""}')
     finally:
         if not a.keep_simulator:
-            remote.run("docker start conduit-simulator-1 >/dev/null 2>&1", timeout=300, c=c)
+            remote.run("docker start conduit-simulator >/dev/null 2>&1", timeout=300, c=c)
         c.close()
 
 

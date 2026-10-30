@@ -68,6 +68,8 @@ services:
 
   # Demo mailbox: invitation emails are delivered here; replace SMTP config for production.
   mailpit:
+    # 固定容器名：只有一个实例的服务不带 -1 后缀，可多实例的（transport）按序号命名；排查命令在各部署包通用
+    container_name: conduit-mailpit
     image: axllent/mailpit:v1.27.4
     environment:
       MP_DATABASE: /data/mailpit.db
@@ -78,6 +80,7 @@ services:
     restart: unless-stopped
 
   conduit-server:
+    container_name: conduit-server
     build:
       context: ../..
       dockerfile: deploy/standalone/docker/java.Dockerfile
@@ -147,6 +150,7 @@ services:
   # transport 单活多备（V0.2-R）：两个实例经 Redis 锁 conduit:transport:leader 选主，只有主实例连接 EMQX；
   # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个内存持久会话
   conduit-transport: &transport
+    container_name: conduit-transport-1
     build:
       context: ../..
       dockerfile: deploy/standalone/docker/java.Dockerfile
@@ -192,13 +196,13 @@ services:
   # 日志写到共享卷的子目录，避免两个进程滚动同一个日志文件
   conduit-transport-2:
     <<: *transport
-    # 固定容器名：默认名会带副本序号成为 conduit-conduit-transport-2-1，与第一个 transport 的 -1 并列时易误读
-    container_name: conduit-conduit-transport-2
+    container_name: conduit-transport-2
     environment:
       <<: *transport-env
       CONDUIT_LOG_DIR: /var/log/conduit/transport-2
 
   conduit-web:
+    container_name: conduit-web
     build:
       context: ../..
       dockerfile: deploy/standalone/docker/web.Dockerfile
@@ -214,6 +218,7 @@ services:
   # 演示模拟器（默认启动）：自动创建「三相电表（演示）」产品与设备并按间隔上报；
   # SIM_PLATFORM_PASSWORD 非空时再模拟 SIM_TENANTS 中各租户有物模型的产品（会重置这些设备的密钥）
   simulator:
+    container_name: conduit-simulator
     build:
       context: ../..
       dockerfile: deploy/standalone/docker/java.Dockerfile

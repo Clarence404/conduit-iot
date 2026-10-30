@@ -66,7 +66,7 @@ docker compose --profile metrics up -d          # 可选：观测栈
 
 ```bash
 # 应用主机：transport 主实例已连上远端 EMQX（leader.connected = true）
-docker exec conduit-conduit-transport-1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
+docker exec conduit-transport-1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
 # EMQX 主机：transport 的 4 条共享订阅与模拟器设备都在
 docker exec conduit-emqx emqx ctl broker stats | grep -E "^connections.count|subscriptions.shared.count"
 ```

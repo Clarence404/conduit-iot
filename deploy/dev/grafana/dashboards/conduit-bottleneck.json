@@ -1322,7 +1322,7 @@
           "id": 19,
           "type": "timeseries",
           "title": "设备鉴权（次/秒）",
-          "description": "通过与被拒的鉴权次数。被拒持续不为 0 说明有设备密钥失效或配置错误——2026-10-29 曾有 100 台压测设备的密钥被模拟器重置，连接全部被拒，而发压脚本当时并不报错，只能从这里看出来。",
+          "description": "通过与被拒的鉴权次数。被拒持续不为 0 说明有设备密钥失效或配置错误——2026-10-29 曾有 100 台压测设备的密钥被模拟器重置，连接全部被拒，而发压脚本当时并不报错，只能从这里看出来。「拒绝·原因」来自 server，只在不为 0 时出现：wrong_secret 密钥错、unknown_device 设备不存在、device_disabled 设备已禁用、tenant_disabled 租户已停用、client_id_mismatch clientId 与用户名不一致、transport_rejected transport 口令或 clientId 前缀不对、missing_credentials 缺少用户名或密码。EMQX 被拒数大于 server 各原因之和时，多出的部分是回调超时或 server 不可达。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -1352,6 +1352,16 @@
               "expr": "sum(rate(emqx_authentication_failure[1m]))",
               "legendFormat": "被拒",
               "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (reason) (rate(conduit_mqtt_auth_total{result=\"deny\"}[1m])) > 0",
+              "legendFormat": "拒绝·{{reason}}",
+              "refId": "C",
               "range": true
             }
           ],

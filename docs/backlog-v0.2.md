@@ -214,7 +214,7 @@
 
 详见 [设备数阶梯报告](test-reports/2026-10-30-device-ladder-split.md)。
 
-- **【已立项排查】EMQX 鉴权回调的 HTTP 长连接偶发「半开」**（所有者 2026-10-30 决定立项）。
+- **【已查明，见 [排查报告](test-reports/2026-10-30-auth-timeout-investigation.md)】EMQX 鉴权回调的 HTTP 长连接偶发「半开」**（所有者 2026-10-30 决定立项）。**根因不是连接半开**：宿主机 CPU 紧张 → VM 短暂冻结 → vmxnet3 接收环来不及补充 → VMware 在宿主侧丢入站包（`pkts rx OOB` 128 累计约 40 万）→ TCP 重传退避超过 EMQX 5 秒鉴权超时。宿主机清理后同场景（接收环 1024）零丢包、零鉴权失败。待定：接收环调 4096 的对照（需人为压满宿主机 CPU）、鉴权超时是否放宽。以下为立项时的记录。
   - 现象：拆分部署（EMQX 与 server 分机）下，闲置数分钟后的第一批设备建连中，EMQX 的 8 条鉴权长连接里有 1 条请求全部超时
     （`http_connector_do_request_failed, reason: timeout`，5 秒），这些设备被判未授权；server 端没有收到这些请求
     （`conduit_mqtt_auth_total` 只有放行、没有拒绝）。约 10 秒后 EMQX 判定该连接为僵尸并重建

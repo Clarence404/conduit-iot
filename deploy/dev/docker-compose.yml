@@ -97,6 +97,8 @@ services:
     # 官方镜像；Conduit 的配置模板与 ACL 从本目录 emqx/ 只读挂载（不再烘焙进自定义镜像）。
     # 启动时把模板中的鉴权回调地址与内部 token 渲染成 /opt/emqx/etc/base.hocon，再以前台方式启动 EMQX
     image: ${EMQX_IMAGE:-emqx/emqx:5.10.5}
+    # 固定容器名：所有部署包（dev / standalone / split）的 EMQX 都叫 conduit-emqx，排查命令通用（docker exec conduit-emqx ...）
+    container_name: conduit-emqx
     # 每条 MQTT 连接占一个文件描述符。Docker 默认软限制 1024，约 1,000 台设备时 EMQX 即报 emfile，
     # 内置 Mnesia 打不开日志文件而整节点崩溃，设备重连又再次打满，形成反复重启（2026-10-30 实测 900 台压测触发）
     ulimits:

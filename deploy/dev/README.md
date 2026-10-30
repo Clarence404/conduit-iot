@@ -27,4 +27,4 @@ docker compose ps       # 5 个服务均为 running，其中 4 个 healthy（Exp
 2. 旧 `.env` 在开发机的 `deploy/.env` 或宿主机的 `/opt/conduit/.env`。复制为本目录的 `.env`（多余的变量会被忽略），下列值必须原样保留：`POSTGRES_PASSWORD`、`INFLUX_TOKEN`、`INFLUX_EXPLORER_SESSION_KEY`、`CONDUIT_INTERNAL_TOKEN`、`EMQX_DASHBOARD_PASSWORD`，以及各端口与 `CONDUIT_AUTH_URL`。PostgreSQL 与 InfluxDB 只在数据卷首次启动时应用口令与 token，所以换成新值会导致已有数据无法访问。确认 `CONDUIT_AUTH_URL` 指向开发机。
 3. 1Panel 用户：先删除旧编排（不要删除数据卷），再导入本目录。
 4. 在本目录执行 `docker compose up -d`，然后用 `docker volume ls` 检查没有出现新的 `conduit_*` 数据卷。
-5. 旧的自定义 EMQX 镜像 `conduit-emqx` 不再使用，可以删除。
+5. 旧的自定义 EMQX **镜像** `conduit-emqx` 不再使用，可以删除（现在 EMQX 的**容器名**也叫 `conduit-emqx`，删镜像时别删错）。

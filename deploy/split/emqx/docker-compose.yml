@@ -1,16 +1,16 @@
-# 拆分部署 · EMQX 主机（IOT-MQTT）：只运行 EMQX，其余服务在应用主机上（见 ../app 与 ../README.md）。
+# 拆分部署 · EMQX 主机：只运行 EMQX，其余服务在应用主机上（见 ../app 与 ../README.md）。
 # EMQX 的定义只在 ../../dev/docker-compose.yml（文件描述符上限、内存持久会话、共享订阅策略、配置模板挂载等），这里以 extends 引用；
 # 挂载路径按 dev 文件所在目录解析，所以本机要有完整的 deploy/ 目录。插值用本目录的 .env，并执行 dev 文件的必填检查。
 # 用法：cp .env.example .env 并填写，然后 docker compose up -d
-# Compose 项目名只允许小写，所以项目名为 iot-mqtt，容器名为 IOT-MQTT
-name: iot-mqtt
+# 项目名 conduit-emqx（不用 conduit：EMQX 主机上可能留有旧单机部署的 conduit_* 数据卷，同名项目会复用其中的旧 EMQX 数据）；
+# 容器名 conduit-emqx 继承自 dev 文件
+name: conduit-emqx
 
 services:
   emqx:
     extends:
       file: ../../dev/docker-compose.yml
       service: emqx
-    container_name: IOT-MQTT
     # 容器网络命名空间内的连接队列：大批设备同时（重）连时，内核默认 4096 的半连接/全连接队列会先满
     sysctls:
       net.core.somaxconn: ${EMQX_SOMAXCONN:-4096}
@@ -32,7 +32,6 @@ services:
     extends:
       file: ../../dev/docker-compose.yml
       service: node-exporter
-    container_name: IOT-MQTT-node-exporter
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${NODE_EXPORTER_PORT:-9100}:9100"
 

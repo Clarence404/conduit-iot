@@ -7,7 +7,7 @@
 
 | 主机 | 目录 | Compose 项目 / 容器 | 服务 |
 |---|---|---|---|
-| EMQX 主机 | `deploy/split/emqx` | 项目 `iot-mqtt`，容器 `IOT-MQTT` | EMQX；可选 node-exporter（`--profile metrics`） |
+| EMQX 主机 | `deploy/split/emqx` | 项目 `conduit-emqx`，容器 `conduit-emqx` | EMQX；可选 node-exporter（`--profile metrics`） |
 | 应用主机 | `deploy/split/app` | 项目 `conduit` | PostgreSQL、Redis、InfluxDB、InfluxDB Explorer、Mailpit、conduit-server、两个 transport（一主一备）、conduit-web、模拟器；可选观测栈 Prometheus / Grafana / node-exporter / redis-exporter（`--profile metrics`） |
 
 两边都不复制服务定义：`emqx/` 以 `extends` 引用 `deploy/dev` 的 emqx，`app/` 以 `extends` 逐个引用 `deploy/standalone` 的服务，
@@ -37,8 +37,8 @@ cd deploy/split/emqx
 cp .env.example .env
 # 必改：CONDUIT_AUTH_URL=http://<应用主机地址>:8091；四个口令与应用主机一致
 docker compose up -d
-docker exec IOT-MQTT emqx ctl status            # 运行中
-docker exec IOT-MQTT emqx ctl conf show mqtt    # 回读：max_inflight = 65535、max_mqueue_len = infinity
+docker exec conduit-emqx emqx ctl status            # 运行中
+docker exec conduit-emqx emqx ctl conf show mqtt    # 回读：max_inflight = 65535、max_mqueue_len = infinity
 ```
 
 配置模板与 ACL 从 `deploy/dev/emqx/` 只读挂载，需对容器内 emqx 用户（uid 1000）可读（`chmod -R a+r deploy`）。
@@ -68,7 +68,7 @@ docker compose --profile metrics up -d          # 可选：观测栈
 # 应用主机：transport 主实例已连上远端 EMQX（leader.connected = true）
 docker exec conduit-conduit-transport-1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
 # EMQX 主机：transport 的 4 条共享订阅与模拟器设备都在
-docker exec IOT-MQTT emqx ctl broker stats | grep -E "^connections.count|subscriptions.shared.count"
+docker exec conduit-emqx emqx ctl broker stats | grep -E "^connections.count|subscriptions.shared.count"
 ```
 
 ## 容量参数
@@ -88,13 +88,13 @@ EMQX 主机按所有者要求（2026-10-30）取 EMQX 5.10.5 接受的最大值�
 只要求批大小不超过 EMQX 的在途窗口。
 
 **代价**：关掉强杀、队列不限之后，过载不再表现为「单条连接被杀、丢一部分消息」，而是积压持续增长直到 EMQX 整个节点内存耗尽、
-所有设备一起断开。压测时盯 EMQX 主机的内存（`docker stats IOT-MQTT`）。transport 会话监控的「队列水位」告警也不会触发：
+所有设备一起断开。压测时盯 EMQX 主机的内存（`docker stats conduit-emqx`）。transport 会话监控的「队列水位」告警也不会触发：
 队列不限时 EMQX REST 接口报告的 `mqueue_max` 为 0（实测），监控在上限为 0 时跳过该项。
 
 ## 观测
 
 应用主机的 Prometheus 经 `EMQX_METRICS_TARGET`（由 `EMQX_REMOTE_HOST` 自动拼出）抓取远端 EMQX，看板的 EMQX 面板照常可用。
-看板上的整机 CPU / 内存面板只反映应用主机；EMQX 主机的资源用 `docker stats IOT-MQTT` 或其上的 node-exporter 另看
+看板上的整机 CPU / 内存面板只反映应用主机；EMQX 主机的资源用 `docker stats conduit-emqx` 或其上的 node-exporter 另看
 （未接入看板：整机面板不按主机区分，混入后会把两台机器的 CPU 合并计算）。
 
 ## 一台 EMQX 只对应一套 Conduit

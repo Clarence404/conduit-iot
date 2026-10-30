@@ -112,7 +112,7 @@ def main():
                 cap = r
         print(f'\n可持续稳态容量：{cap["target"]:,} 条/秒' if cap
               else '\n未得出容量：所有档位要么超容量、要么负载端没打满')
-        rc, o = remote.run("docker logs --since 20m conduit-emqx-1 2>&1 | "
+        rc, o = remote.run("docker logs --since 20m conduit-emqx 2>&1 | "
                            "grep -icE 'check_oom_shutdown|maximum heap size|mqueue_is_full'", timeout=300, c=c)
         print(f'期间 EMQX 失效事件：{o.strip()} 次'
               f'{"（压力测试必须核对此项）" if o.strip() != "0" else ""}')

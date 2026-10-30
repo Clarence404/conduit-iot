@@ -310,9 +310,14 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         else:
             refused[id(client)] = str(reason)
 
-    def on_disc(client, *a):
+    disc_reasons, disc_times = {}, []
+
+    def on_disc(client, userdata=None, flags=None, reason=None, *a):
         if not closing and id(client) in accepted:
             dropped.add(id(client))
+            key = str(reason)
+            disc_reasons[key] = disc_reasons.get(key, 0) + 1
+            disc_times.append(time.time())
 
     def on_pub(client, userdata, mid, *a):
         nonlocal acked
@@ -394,8 +399,17 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     heap = [(t0 + random.random() * interval, i) for i in range(len(clients))]
     heapq.heapify(heap)
     deadline = t0 + seconds
+    # 本进程事件循环的停顿：两次循环之间隔太久说明发压端自己卡住（不读连接时 PUBACK 堆在套接字里，
+    # EMQX 发不出去，send_timeout 到期就会主动断开这条连接）
+    prev_iter, max_gap, max_gap_at, gaps_over_1s = t0, 0.0, None, 0
     while time.time() < deadline:
         now = time.time()
+        gap = now - prev_iter
+        prev_iter = now
+        if gap > max_gap:
+            max_gap, max_gap_at = gap, now
+        if gap > 1:
+            gaps_over_1s += 1
         while heap and heap[0][0] <= now:
             due, i = heapq.heappop(heap)
             heapq.heappush(heap, (due + interval, i))
@@ -431,7 +445,10 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
              'rejected': rejected, 'reasons': sorted(set(refused.values())),
              'connect_seconds': connect_seconds, 'disconnects': len(dropped), 'first_rejected': len(retry),
-             't_connected': t0, 't_load_end': t_load_end})
+             't_connected': t0, 't_load_end': t_load_end,
+             'disc_reasons': disc_reasons, 'disc_first': min(disc_times) if disc_times else None,
+             'disc_last': max(disc_times) if disc_times else None,
+             'max_loop_gap_s': round(max_gap, 3), 'max_loop_gap_at': max_gap_at, 'loop_gaps_over_1s': gaps_over_1s})
 
 
 def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, connect_timeout=120,
@@ -481,6 +498,14 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
         'reasons': sorted({x for r in res for x in r.get('reasons', [])}),
         'disconnects': sum(r.get('disconnects', 0) for r in res),
         'first_rejected': sum(r.get('first_rejected', 0) for r in res),
+        # 诊断：掉线原因（paho 给出的断开原因码）与各进程事件循环的最长停顿
+        'disc_reasons': {k: sum(r.get('disc_reasons', {}).get(k, 0) for r in res)
+                         for k in {k for r in res for k in r.get('disc_reasons', {})}},
+        'disc_first': min((r['disc_first'] for r in res if r.get('disc_first')), default=None),
+        'disc_last': max((r['disc_last'] for r in res if r.get('disc_last')), default=None),
+        'max_loop_gap_s': max((r.get('max_loop_gap_s', 0) for r in res), default=0),
+        'loop_gaps': [(round(r.get('max_loop_gap_s', 0), 2), r.get('max_loop_gap_at'), r.get('loop_gaps_over_1s', 0),
+                       r.get('disconnects', 0)) for r in res],
         'connect_seconds': max((r.get('connect_seconds', 0) for r in res), default=0),
         'p50_ms': qt(.5), 'p95_ms': qt(.95), 'p99_ms': qt(.99), 'max_ms': round(lat[-1], 1) if lat else None,
         't_start': t0, 't_end': t_end,

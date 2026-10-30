@@ -10,8 +10,9 @@
 | 文件 | 作用 |
 |---|---|
 | `loadgen.py` | 多进程 MQTT 发压器：建设备、刷新密钥、按速率发布、统计 PUBACK 时延 |
+| `ladder.py` | 阶梯压测：逐档加设备、按守恒与稳定性判据自动判定；支持多台电脑一起发压 |
 | `capacity_test.py` | 容量测试：逐级加压，找积压不增长的最大稳态速率 |
-| `remote.py` | 压测机远程助手：SSH 执行、上传、查 Prometheus |
+| `remote.py` | 压测机远程助手：SSH 执行、上传、查 Prometheus、数 InfluxDB 行数、数 EMQX 日志 |
 | `config.example.json` | 配置模板 |
 | `LOADGEN.md` | 发压器的设计说明（为什么是多进程） |
 
@@ -76,6 +77,56 @@ publish 全部堆进本地队列、一条也发不出去，断开时静默丢弃
 
 现在 `run` 会等 CONNACK 到齐，只要有设备未通过鉴权就直接报错退出（退出码 2），
 不会再把结果算出来。
+
+## 阶梯压测（推荐）
+
+```bash
+python ladder.py run --plan 2000,5000,8000,10000,12000,15000,18000,20000 --rate 1 --hold 300
+```
+
+每台设备每秒 1 条，逐档加设备；每档全部设备连上后稳态保持 `--hold` 秒，停止后等 30 秒排空，再自动判定，
+首个不合格的档位即停。结果（每档一个 JSON）与 `summary.md` 写在 `results/<开始时间>/`（不入库，见 `.gitignore`）。
+
+**判据**（任一不满足即不合格）：
+
+1. 全部设备通过鉴权。首次被拒的设备会像真实设备一样 2 秒后重连一次，重连后仍被拒才算；首次被拒数照实列出。
+2. 守恒：客户端收到 PUBACK 的条数 = InfluxDB 中压测产品在本档时间窗的**实际行数**，EMQX 丢弃与死信均为 0。
+   压测产品只有发压器在报（模拟器默认排除它），所以行数就是真值；不用 Prometheus 中两个计数器相减——两端抓取时刻不同，
+   且「入库」含模拟器流量，实测会差几百条。
+3. 运行中没有设备掉线（按设备去重）。
+4. PUBACK 时延 p99 ≤ 1 秒（`--p99-limit`）。时延是在全部已确认消息中等概率抽样的，不是只看开头。
+5. 稳态结束时总线积压（lag + 待确认）与 transport 会话队列都不超过 5 秒的流量——超过说明入库跟不上、在越堆越多。
+6. EMQX 日志中没有连接被强杀 / 队列满 / emfile，也没有过载告警（`alarm_is_activated`，如 `runq_overload`）。
+
+EMQX 与应用分机部署（`deploy/split`）时，在 `config.json` 中加 `"emqx_docker": "tcp://<EMQX 主机>:2375"`，
+`ssh.env_file` 指向应用主机上部署包的 `.env`（读 InfluxDB token，就地使用、不回传）。
+
+### 多台电脑一起发压
+
+单台电脑发压时，发压程序与被测服务常抢同一台物理机的 CPU 和内存（本地 VM 压测实测宿主机可用内存降到 330 MB），
+测到的会是发压机的上限。把负载分到几台电脑上：
+
+1. 每台电脑：装 Python 3 与 `pip install paho-mqtt`；拷入本目录，以及 `config.json`、`devices.json`
+   （含设备密钥，私下传递，不要提交或发到公开渠道）。`config.json` 的 `mqtt_host` 填这台电脑能连到的 EMQX 地址。
+   EMQX 跑在某台电脑的 VMware NAT 网络里时，别的电脑连不进去：在那台电脑的 VMware「虚拟网络编辑器 → NAT 设置 → 端口转发」
+   把宿主机 1883 转发到 EMQX 虚拟机的 1883，并在宿主机防火墙放行；或把 EMQX 虚拟机改为桥接网卡。
+2. `devices.json` 至少要有 n × ceil(最大档位 / n) 台：`python loadgen.py provision --devices <台数>`（在任一台上建好再分发）。
+3. 各电脑用**同一组** `--plan` / `--rate` / `--hold` / `--start-at`，各给不同的 `--shard`。第 k 台用 devices.json 中
+   第 (k-1) × ceil(最大档位 / n) 台起的一段，互不重叠：
+
+   ```bash
+   python ladder.py run --plan 2000,5000,10000 --rate 1 --hold 300 --start-at 15:00 --shard 1/3
+   python ladder.py run --plan 2000,5000,10000 --rate 1 --hold 300 --start-at 15:00 --shard 2/3   # 第二台
+   python ladder.py run --plan 2000,5000,10000 --rate 1 --hold 300 --start-at 15:00 --shard 3/3   # 第三台
+   ```
+
+   各机按约定时刻同步换档（第 k 档在开始时刻 + k ×（建连预留 120 + hold + 间隔 60）秒开始），所以各电脑时钟要准
+   （Windows 默认的网络对时即可）。多机模式只发压、不判定。
+4. 结束后把各电脑的 `results/<时间>/` 目录拷到一台能 SSH 到应用主机的电脑上，合并判定：
+
+   ```bash
+   python ladder.py check results-a results-b results-c
+   ```
 
 ## 跑一次容量测试
 

@@ -44,3 +44,4 @@ docs/script/loadtest/devices.json
 
 # Hive 多智能体工作台每次打开工作区自动生成的协作文件，不属于项目
 .hive/
+docs/script/loadtest/results/

@@ -182,6 +182,22 @@ def refresh():
     print(f'完成：{len(devices)} 台密钥已全部刷新')
 
 
+LAT_SAMPLES = 50000
+
+
+def _sample(lat, n, value):
+    """时延蓄水池抽样：在已确认的 n 条里等概率保留 LAT_SAMPLES 个。
+
+    只留前 5 万个会让高档位（每秒上万条）的分位数只反映开头几秒，正好错过积压形成之后的长尾。
+    """
+    if len(lat) < LAT_SAMPLES:
+        lat.append(value)
+    else:
+        j = random.randrange(n)
+        if j < LAT_SAMPLES:
+            lat[j] = value
+
+
 def _worker(devices, host, port, rate, seconds, out):
     """一个发压进程：持有自己那批设备的连接，独立运行 paho 事件循环。
 
@@ -208,8 +224,7 @@ def _worker(devices, host, port, rate, seconds, out):
         t = pending.pop((id(client), mid), None)
         if t is not None:
             acked += 1
-            if len(lat) < 50000:
-                lat.append((time.time() - t) * 1000)
+            _sample(lat, acked, (time.time() - t) * 1000)
 
     opened = []
     for d in devices:
@@ -285,6 +300,8 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     import select
     sent = acked = errors = 0
     lat, pending, accepted, refused = [], {}, set(), {}
+    # 运行中掉线的设备（按设备去重；收尾时主动断开的不算）
+    dropped, closing = set(), False
 
     def on_conn(client, userdata, flags, reason, *a):
         code = getattr(reason, 'value', reason)
@@ -293,13 +310,16 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         else:
             refused[id(client)] = str(reason)
 
+    def on_disc(client, *a):
+        if not closing and id(client) in accepted:
+            dropped.add(id(client))
+
     def on_pub(client, userdata, mid, *a):
         nonlocal acked
         t = pending.pop((id(client), mid), None)
         if t is not None:
             acked += 1
-            if len(lat) < 50000:
-                lat.append((time.time() - t) * 1000)
+            _sample(lat, acked, (time.time() - t) * 1000)
 
     opened = []
 
@@ -330,6 +350,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         cl.max_inflight_messages_set(1000)
         cl.max_queued_messages_set(0)
         cl.on_connect = on_conn
+        cl.on_disconnect = on_disc
         cl.on_publish = on_pub
         try:
             cl.connect(host, port, keepalive=60)
@@ -346,6 +367,24 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             for cl, _ in opened:
                 cl.loop_misc()
             last_misc = time.time()
+    # 首次被拒的设备像真实设备一样 2 秒后重连一次：EMQX 到 server 的鉴权长连接偶发「半开」，请求超时、
+    # 被判未授权，约 10 秒后 EMQX 自行重建连接（2026-10-30 实测，原因未查明）。首次被拒数照实上报。
+    retry = [(cl, d) for cl, d in opened if id(cl) not in accepted]
+    if retry:
+        time.sleep(2)
+        for cl, _ in retry:
+            refused.pop(id(cl), None)
+            try:
+                cl.reconnect()
+            except Exception:
+                pass
+        deadline_conn = time.time() + connect_timeout
+        while time.time() < deadline_conn and any(id(cl) not in accepted and id(cl) not in refused for cl, _ in retry):
+            pump(0.05)
+            if time.time() - last_misc > 1:
+                for cl, _ in opened:
+                    cl.loop_misc()
+                last_misc = time.time()
     clients = [(cl, d) for cl, d in opened if id(cl) in accepted]
     rejected = [d['deviceKey'] for cl, d in opened if id(cl) not in accepted]
     connect_seconds = time.time() - t_start
@@ -355,7 +394,6 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     heap = [(t0 + random.random() * interval, i) for i in range(len(clients))]
     heapq.heapify(heap)
     deadline = t0 + seconds
-    disconnects = 0
     while time.time() < deadline:
         now = time.time()
         while heap and heap[0][0] <= now:
@@ -378,12 +416,13 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         pump(min(0.05, max(0.0, heap[0][0] - time.time())) if heap else 0.05)
         if now - last_misc > 1:
             for cl, _ in clients:
-                if cl.loop_misc() != 0:
-                    disconnects += 1
+                cl.loop_misc()   # 保活心跳与超时检测；掉线经 on_disconnect 记入 dropped
             last_misc = now
+    t_load_end = time.time()
     end = time.time() + 2
     while time.time() < end:
         pump(0.05)
+    closing = True
     for cl, _ in opened:
         try:
             cl.disconnect()
@@ -391,21 +430,26 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             pass
     out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
              'rejected': rejected, 'reasons': sorted(set(refused.values())),
-             'connect_seconds': connect_seconds, 'disconnects': disconnects})
+             'connect_seconds': connect_seconds, 'disconnects': len(dropped), 'first_rejected': len(retry),
+             't_connected': t0, 't_load_end': t_load_end})
 
 
-def run(count, rate, seconds, workers, fleet=False, connect_rate=200.0, connect_timeout=120):
-    """多进程发压。workers 默认取 CPU 核数（fleet 模式按每进程约 2,500 台），每进程均分设备。
+def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, connect_timeout=120,
+            offset=0, per_process=2500, quiet=False):
+    """多进程发压并返回汇总结果（不打印结论、不退出），供 run() 与 ladder.py 调用。
 
-    fleet=True 用单事件循环的 _fleet_worker，适合海量低频设备（如 2 万台每 10 秒一条）；
-    connect_rate 为每个进程每秒新建连接数。
+    使用 devices.json 中 [offset, offset+count) 这一段设备——多台发压机各取不相交的一段，同一台设备不会被两处同时登录。
+    workers 默认取 CPU 核数；fleet 模式默认每 per_process 台一个进程（每台每秒 1 条时宜取 1,000，单进程才跟得上）。
+    fleet=True 用单事件循环的 _fleet_worker，适合海量设备；connect_rate 为每个进程每秒新建连接数。
+
+    :return: dict，含 sent / acked / errors / conns / rejected / disconnects / 时延分位（毫秒）/ 起止时间（epoch 秒）
     """
     cfg = load_config()
-    devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8'))[:count]
+    devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8'))[offset:offset + count]
     if len(devices) < count:
-        raise SystemExit(f'devices.json 只有 {len(devices)} 台，不足 {count} 台；先跑 provision')
+        raise SystemExit(f'devices.json 从第 {offset} 台起只有 {len(devices)} 台，不足 {count} 台；先跑 provision')
     if fleet:
-        workers = workers or max(1, -(-count // 2500))
+        workers = workers or max(1, -(-count // per_process))
     workers = workers or min(os.cpu_count() or 4, count)
     chunks = [devices[i::workers] for i in range(workers)]
     out = mp.Queue()
@@ -417,39 +461,64 @@ def run(count, rate, seconds, workers, fleet=False, connect_rate=200.0, connect_
     else:
         procs = [mp.Process(target=_worker, args=(ch, host, port, rate, seconds, out), daemon=True)
                  for ch in chunks if ch]
-    print(f'{len(devices)} 台设备 × {rate}/秒 = 目标 {len(devices) * rate:,.0f}/秒，'
-          f'{len(procs)} 个进程，持续 {seconds} 秒')
+    if not quiet:
+        print(f'{len(devices)} 台设备 × {rate}/秒 = 目标 {len(devices) * rate:,.0f}/秒，'
+              f'{len(procs)} 个进程，持续 {seconds} 秒')
     t0 = time.time()
     for p in procs:
         p.start()
     res = [out.get() for _ in procs]
     for p in procs:
         p.join(timeout=30)
-    el = time.time() - t0
-    sent = sum(r['sent'] for r in res)
-    acked = sum(r['acked'] for r in res)
-    errors = sum(r['errors'] for r in res)
-    conns = sum(r['conns'] for r in res)
-    rejected = [k for r in res for k in r.get('rejected', [])]
+    t_end = time.time()
     lat = sorted(x for r in res for x in r['lat'])
+    qt = lambda f: round(lat[min(len(lat) - 1, int(len(lat) * f))], 1) if lat else None
+    return {
+        'devices': len(devices), 'offset': offset, 'rate': rate, 'seconds': seconds, 'processes': len(procs),
+        'sent': sum(r['sent'] for r in res), 'acked': sum(r['acked'] for r in res),
+        'errors': sum(r['errors'] for r in res), 'conns': sum(r['conns'] for r in res),
+        'rejected': [k for r in res for k in r.get('rejected', [])],
+        'reasons': sorted({x for r in res for x in r.get('reasons', [])}),
+        'disconnects': sum(r.get('disconnects', 0) for r in res),
+        'first_rejected': sum(r.get('first_rejected', 0) for r in res),
+        'connect_seconds': max((r.get('connect_seconds', 0) for r in res), default=0),
+        'p50_ms': qt(.5), 'p95_ms': qt(.95), 'p99_ms': qt(.99), 'max_ms': round(lat[-1], 1) if lat else None,
+        't_start': t0, 't_end': t_end,
+        # 全部进程都建连完成、开始发压的时刻，与最后一个进程停止发压的时刻：判定时只看这段稳态
+        't_load_start': max((r.get('t_connected', t0) for r in res), default=t0),
+        't_load_end': max((r.get('t_load_end', t_end) for r in res), default=t_end),
+    }
+
+
+def run(count, rate, seconds, workers, fleet=False, connect_rate=200.0, connect_timeout=120,
+        offset=0, per_process=2500, result_file=None):
+    """命令行 run：发压一次并打印结果；有设备未通过鉴权时以退出码 2 结束。"""
+    r = execute(count, rate, seconds, workers, fleet, connect_rate, connect_timeout, offset, per_process)
+    if result_file:
+        pathlib.Path(result_file).write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding='utf-8')
+    el = r['t_end'] - r['t_start']
+    sent, acked, errors, conns, rejected = r['sent'], r['acked'], r['errors'], r['conns'], r['rejected']
+    procs = range(r['processes'])
+    devices = range(r['devices'])
     if rejected:
         # 绝不把「部分设备没连上」当成可以接受的噪声：少一台就少喂一份负载，
         # 而实际供给低于名义目标会让人把「供给不足」误读成「系统到顶」。
         print(f'\n**{len(rejected)} / {len(devices)} 台设备未通过鉴权，本次结果作废。**')
-        print(f'   原因：{"; ".join(sorted({x for r in res for x in r.get("reasons", [])})) or "未收到 CONNACK"}')
+        print(f'   原因：{"; ".join(r["reasons"]) or "未收到 CONNACK"}')
         print(f'   示例：{", ".join(rejected[:5])}')
         print('   多半是演示模拟器重置了这些设备的密钥，先跑 `loadgen.py refresh` 再压测。')
         raise SystemExit(2)
-    qt = lambda f: lat[min(len(lat) - 1, int(len(lat) * f))] if lat else 0.0
+    ms = lambda v: f'{v:.1f}ms' if v is not None else '-'
     print('\n===== 结果 =====')
     print(f'进程数 / 连接数 : {len(procs)} / {conns}')
     if fleet:
-        print(f'建连耗时        : 最慢进程 {max(r["connect_seconds"] for r in res):.0f} 秒')
-        print(f'运行中断线      : {sum(r["disconnects"] for r in res)} 次')
+        print(f'建连耗时        : 最慢进程 {r["connect_seconds"]:.0f} 秒')
+        print(f'运行中掉线      : {r["disconnects"]} 台')
+        print(f'首次鉴权被拒    : {r["first_rejected"]} 台（已重连一次）')
     print(f'目标速率        : {len(devices) * rate:,.0f}/秒')
     print(f'实际发送        : {sent:,} 条，平均 {sent / el:,.0f}/秒')
     print(f'已确认 (PUBACK) : {acked:,} 条，平均 {acked / el:,.0f}/秒  （未确认 {sent - acked:,}）')
-    print(f'PUBACK 时延     : p50 {qt(.5):.1f}ms  p95 {qt(.95):.1f}ms  p99 {qt(.99):.1f}ms  max {lat[-1] if lat else 0:.1f}ms')
+    print(f'PUBACK 时延     : p50 {ms(r["p50_ms"])}  p95 {ms(r["p95_ms"])}  p99 {ms(r["p99_ms"])}  max {ms(r["max_ms"])}')
     print(f'客户端错误      : {errors}')
     print('\n注意：PUBACK 只表示 EMQX 已接收，不表示已入库。过载时 EMQX 会先确认再丢弃，')
     print('      真实入库能力请以服务端的 conduit_pipeline_processed_total 为准。')
@@ -470,10 +539,14 @@ if __name__ == '__main__':
     rp.add_argument('--fleet', action='store_true', help='海量低频设备模式：单事件循环驱动数千连接')
     rp.add_argument('--connect-rate', type=float, default=200.0, help='fleet 模式每进程每秒建连数')
     rp.add_argument('--connect-timeout', type=int, default=120, help='fleet 模式建连后等 CONNACK 的秒数')
+    rp.add_argument('--offset', type=int, default=0, help='从 devices.json 第几台开始取（多台发压机各取不相交的一段）')
+    rp.add_argument('--per-process', type=int, default=2500, help='fleet 模式每个进程负责的设备数')
+    rp.add_argument('--result-file', help='把结果另存为 JSON')
     a = ap.parse_args()
     if a.cmd == 'provision':
         provision(a.devices, a.concurrency)
     elif a.cmd == 'refresh':
         refresh()
     else:
-        run(a.devices, a.rate, a.seconds, a.workers, a.fleet, a.connect_rate, a.connect_timeout)
+        run(a.devices, a.rate, a.seconds, a.workers, a.fleet, a.connect_rate, a.connect_timeout,
+            a.offset, a.per_process, a.result_file)

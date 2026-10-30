@@ -10,6 +10,10 @@
     "host": "<压测机地址>",
     "port": 22,
     "username": "<SSH 用户名>",
-    "password": "<SSH 口令>"
-  }
+    "password": "<SSH 口令>",
+    "env_file": "/opt/conduit-loadtest/deploy/split/app/.env",
+    "_env_file_说明": "应用主机上部署包 .env 的路径，ladder.py check 从中就地读取 InfluxDB token（不回传）"
+  },
+  "emqx_docker": "tcp://<EMQX 主机地址>:2375",
+  "_emqx_docker_说明": "EMQX 与应用分机部署（deploy/split）时，ladder.py check 经应用主机上的 docker CLI 读 EMQX 日志；同机部署删掉此项"
 }

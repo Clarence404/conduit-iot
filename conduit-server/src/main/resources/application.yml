@@ -1,5 +1,12 @@
 server:
   port: 8080
+  tomcat:
+    # EMQX 的鉴权回调走 8 条 HTTP 长连接（pool_size 8、每条最多 100 个流水线请求），空闲时 EMQX 不主动关闭。
+    # Tomcat 默认空闲约 20 秒或同一连接满 100 个请求即关闭连接；EMQX 恰好在关闭瞬间复用这条连接时，请求发不出去，
+    # EMQX 不重试、直接判设备未授权（2026-10-30 压测实测：http_connector_do_request_failed, reason: closing）。
+    # 故放长空闲时限、取消单连接请求数上限，让连接只由 EMQX 一侧决定何时断开。
+    keep-alive-timeout: 30m
+    max-keep-alive-requests: -1
 
 spring:
   application:

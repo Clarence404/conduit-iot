@@ -84,7 +84,14 @@ publish 全部堆进本地队列、一条也发不出去，断开时静默丢弃
 python ladder.py run --plan 2000,5000,8000,10000,12000,15000,18000,20000 --rate 1 --hold 300
 ```
 
-每台设备每秒 1 条，逐档加设备；每档全部设备连上后稳态保持 `--hold` 秒，停止后等 30 秒排空，再自动判定，
+另一种用法是**设备数固定、逐档提速**，专测消息吞吐（接入 QPS / 入库 TPS），计划见
+[`2026-10-30-qps-tps-1k-devices-test-plan.md`](../../superpowers/plans/2026-10-30-qps-tps-1k-devices-test-plan.md)：
+
+```bash
+python ladder.py run --devices 1000 --rate-plan 2,5,8,10,12,15,18,20 --hold 300
+```
+
+上面第一条命令是每台设备每秒 1 条，逐档加设备；每档全部设备连上后稳态保持 `--hold` 秒，停止后等 30 秒排空，再自动判定，
 首个不合格的档位即停。结果（每档一个 JSON）与 `summary.md` 写在 `results/<开始时间>/`（不入库，见 `.gitignore`）。
 
 **判据**（任一不满足即不合格）：
@@ -97,6 +104,8 @@ python ladder.py run --plan 2000,5000,8000,10000,12000,15000,18000,20000 --rate 
 4. PUBACK 时延 p99 ≤ 1 秒（`--p99-limit`）。时延是在全部已确认消息中等概率抽样的，不是只看开头。
 5. 稳态结束时总线积压（lag + 待确认）与 transport 会话队列都不超过 5 秒的流量——超过说明入库跟不上、在越堆越多。
 6. EMQX 日志中没有连接被强杀 / 队列满 / emfile，也没有过载告警（`alarm_is_activated`，如 `runq_overload`）。
+7. 发压机 CPU 平均不超过 85%（Windows 上每档用自带 `typeperf` 自动采样）。发压机与被测 VM 同在一台物理机时，超过即说明测到的是
+   物理机的上限，本档判为「结果不可信」并停止。
 
 EMQX 与应用分机部署（`deploy/split`）时，在 `config.json` 中加 `"emqx_docker": "tcp://<EMQX 主机>:2375"`，
 `ssh.env_file` 指向应用主机上部署包的 `.env`（读 InfluxDB token，就地使用、不回传）。

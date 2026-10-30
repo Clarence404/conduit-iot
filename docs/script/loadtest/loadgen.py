@@ -7,10 +7,11 @@
 改为多进程后每个进程独立持有一批设备与各自的 paho 事件循环，绕开 GIL。
 
 三个子命令：
-  provision --devices N        经 REST 建压测产品与 N 台设备，明文密钥存入 devices.json
+  provision --devices N        经 REST 建压测产品并把设备补齐到 N 台，明文密钥存入 devices.json
   refresh                      重置 devices.json 里全部设备的密钥并回写（**每次压测前必跑**，见下）
-  run --devices N --rate R --seconds S [--workers W]
-                               以 N 条 MQTT 连接按每设备每秒 R 条发布，统计吞吐与 PUBACK 时延
+  run --devices N --rate R --seconds S [--workers W] [--fleet]
+                               以 N 条 MQTT 连接按每设备每秒 R 条发布，统计吞吐与 PUBACK 时延；
+                               --fleet 为海量低频设备模式（如 --devices 20000 --rate 0.1）
 
 **必须先 refresh，否则测出来的全是废数据。** 压测产品带物模型，于是旧版演示模拟器会把它
 当成演示产品接管（2026-10-30 起模拟器默认以 SIM_EXCLUDE_PRODUCTS 排除「压测产品」）：`SIM_TENANTS=*` 让它扫描所有租户的物模型产品，并给每个产品的前
@@ -99,8 +100,14 @@ class Api:
         return s
 
 
-def provision(count):
-    """建压测产品、物模型与 N 台设备，密钥写入 devices.json。幂等：产品已存在则复用。"""
+def provision(count, concurrency=8):
+    """补齐压测产品与设备到 N 台，密钥写入 devices.json。幂等：产品已存在则复用，已有设备保留。
+
+    devices.json 中已有的设备不动，只新建差额（名称接着编号），多线程并发创建；
+    令牌 15 分钟过期，遇 401 自动重新登录。每建 500 台落盘一次，中断后重跑会接着补。
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
     cfg = load_config()
     api = Api(cfg['api'])
     api.login(cfg['admin_username'], cfg['admin_password'])
@@ -114,15 +121,36 @@ def provision(count):
         print(f'  已建产品 {p["productKey"]} 与 {len(PROPS)} 个测点')
     else:
         print(f'  复用已有产品 {p["productKey"]}')
-    devices, t0 = [], time.time()
-    for i in range(count):
-        d = api.call('POST', '/devices', {'productKey': p['productKey'], 'name': f'压测设备{i + 1:05d}'})
-        devices.append({'deviceKey': d['device']['deviceKey'], 'secret': d['deviceSecret'],
-                        'productKey': p['productKey']})
-        if (i + 1) % 100 == 0:
-            print(f'  已建 {i + 1}/{count} 台  ({time.time() - t0:.0f}s)')
-    DEVICES_FILE.write_text(json.dumps(devices), encoding='utf-8')
-    print(f'完成：{len(devices)} 台，密钥已存入 {DEVICES_FILE.name}（不在版本控制内）')
+    devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8')) if DEVICES_FILE.exists() else []
+    devices = [d for d in devices if d['productKey'] == p['productKey']]
+    need = count - len(devices)
+    if need <= 0:
+        print(f'devices.json 已有 {len(devices)} 台，不少于 {count} 台，无需新建')
+        return
+    lock = threading.Lock()
+
+    def call(method, path, body=None):
+        try:
+            return api.call(method, path, body)
+        except RuntimeError as e:
+            if '-> 401' not in str(e):
+                raise
+            with lock:
+                api.login(cfg['admin_username'], cfg['admin_password'])
+            return api.call(method, path, body)
+
+    def create(i):
+        d = call('POST', '/devices', {'productKey': p['productKey'], 'name': f'压测设备{i:05d}'})
+        return {'deviceKey': d['device']['deviceKey'], 'secret': d['deviceSecret'], 'productKey': p['productKey']}
+
+    start, t0 = len(devices) + 1, time.time()
+    with ThreadPoolExecutor(concurrency) as pool:
+        for n, d in enumerate(pool.map(create, range(start, start + need)), 1):
+            devices.append(d)
+            if n % 500 == 0 or n == need:
+                DEVICES_FILE.write_text(json.dumps(devices), encoding='utf-8')
+                print(f'  已建 {n}/{need} 台  ({time.time() - t0:.0f}s)')
+    print(f'完成：共 {len(devices)} 台，密钥已存入 {DEVICES_FILE.name}（不在版本控制内）')
 
 
 def refresh():
@@ -245,17 +273,150 @@ def _worker(devices, host, port, rate, seconds, out):
              'rejected': rejected, 'reasons': sorted(set(refused.values()))})
 
 
-def run(count, rate, seconds, workers):
-    """多进程发压。workers 默认取 CPU 核数，每进程均分设备。"""
+def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_timeout, out):
+    """海量低频设备的发压进程：单个事件循环驱动数千条连接，不为每条连接开线程。
+
+    _worker 给每条连接 loop_start()，每个客户端一个线程外加一对唤醒用的回环套接字（Windows 上
+    占用临时端口），几万台设备时线程、内存与端口都会先于服务端耗尽。这里改由本进程自己 select
+    所有连接的套接字并调用 loop_read / loop_write / loop_misc，publish 时 paho 会直接写出。
+    Windows 的 select 每次最多 512 个套接字，所以分组轮询。
+    """
+    import heapq
+    import select
+    sent = acked = errors = 0
+    lat, pending, accepted, refused = [], {}, set(), {}
+
+    def on_conn(client, userdata, flags, reason, *a):
+        code = getattr(reason, 'value', reason)
+        if code == 0:
+            accepted.add(id(client))
+        else:
+            refused[id(client)] = str(reason)
+
+    def on_pub(client, userdata, mid, *a):
+        nonlocal acked
+        t = pending.pop((id(client), mid), None)
+        if t is not None:
+            acked += 1
+            if len(lat) < 50000:
+                lat.append((time.time() - t) * 1000)
+
+    opened = []
+
+    def pump(timeout):
+        """轮询全部连接一次：可读的读、有待发数据的写。"""
+        socks = [(cl.socket(), cl) for cl, _ in opened]
+        socks = [(sk, cl) for sk, cl in socks if sk is not None]
+        if not socks:
+            time.sleep(timeout)
+            return
+        for i in range(0, len(socks), 500):
+            chunk = dict(socks[i:i + 500])
+            w = [sk for sk, cl in chunk.items() if cl.want_write()]
+            try:
+                r, w, _ = select.select(list(chunk), w, [], timeout if i == 0 else 0)
+            except OSError:
+                continue
+            for sk in r:
+                chunk[sk].loop_read(10)
+            for sk in w:
+                chunk[sk].loop_write()
+
+    # 按 connect_rate 匀速建连，边建边处理 CONNACK，避免几万台同时打到鉴权回调
+    t_start = time.time()
+    for n, d in enumerate(devices):
+        cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=d['deviceKey'], protocol=mqtt.MQTTv5)
+        cl.username_pw_set(d['deviceKey'], d['secret'])
+        cl.max_inflight_messages_set(1000)
+        cl.max_queued_messages_set(0)
+        cl.on_connect = on_conn
+        cl.on_publish = on_pub
+        try:
+            cl.connect(host, port, keepalive=60)
+            opened.append((cl, d))
+        except Exception:
+            errors += 1
+        lag = t_start + (n + 1) / connect_rate - time.time()
+        pump(max(0.0, lag))
+    deadline_conn = time.time() + connect_timeout
+    last_misc = 0.0
+    while time.time() < deadline_conn and len(accepted) + len(refused) < len(opened):
+        pump(0.05)
+        if time.time() - last_misc > 1:
+            for cl, _ in opened:
+                cl.loop_misc()
+            last_misc = time.time()
+    clients = [(cl, d) for cl, d in opened if id(cl) in accepted]
+    rejected = [d['deviceKey'] for cl, d in opened if id(cl) not in accepted]
+    connect_seconds = time.time() - t_start
+
+    interval = 1.0 / rate
+    t0 = time.time()
+    heap = [(t0 + random.random() * interval, i) for i in range(len(clients))]
+    heapq.heapify(heap)
+    deadline = t0 + seconds
+    disconnects = 0
+    while time.time() < deadline:
+        now = time.time()
+        while heap and heap[0][0] <= now:
+            due, i = heapq.heappop(heap)
+            heapq.heappush(heap, (due + interval, i))
+            cl, d = clients[i]
+            payload = json.dumps({'ts': int(now * 1000), 'params': {
+                'Ua': round(random.uniform(215, 235), 1),
+                'Ia': round(random.uniform(0, 60), 2),
+                'P': round(random.uniform(0, 800), 2)}})
+            try:
+                info = cl.publish(f'conduit/{d["productKey"]}/{d["deviceKey"]}/up/property', payload, qos=1)
+                if info.rc == 0:
+                    pending[(id(cl), info.mid)] = time.time()
+                    sent += 1
+                else:
+                    errors += 1
+            except Exception:
+                errors += 1
+        pump(min(0.05, max(0.0, heap[0][0] - time.time())) if heap else 0.05)
+        if now - last_misc > 1:
+            for cl, _ in clients:
+                if cl.loop_misc() != 0:
+                    disconnects += 1
+            last_misc = now
+    end = time.time() + 2
+    while time.time() < end:
+        pump(0.05)
+    for cl, _ in opened:
+        try:
+            cl.disconnect()
+        except Exception:
+            pass
+    out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
+             'rejected': rejected, 'reasons': sorted(set(refused.values())),
+             'connect_seconds': connect_seconds, 'disconnects': disconnects})
+
+
+def run(count, rate, seconds, workers, fleet=False, connect_rate=200.0, connect_timeout=120):
+    """多进程发压。workers 默认取 CPU 核数（fleet 模式按每进程约 2,500 台），每进程均分设备。
+
+    fleet=True 用单事件循环的 _fleet_worker，适合海量低频设备（如 2 万台每 10 秒一条）；
+    connect_rate 为每个进程每秒新建连接数。
+    """
     cfg = load_config()
     devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8'))[:count]
     if len(devices) < count:
         raise SystemExit(f'devices.json 只有 {len(devices)} 台，不足 {count} 台；先跑 provision')
+    if fleet:
+        workers = workers or max(1, -(-count // 2500))
     workers = workers or min(os.cpu_count() or 4, count)
     chunks = [devices[i::workers] for i in range(workers)]
     out = mp.Queue()
-    procs = [mp.Process(target=_worker, args=(ch, cfg['mqtt_host'], int(cfg['mqtt_port']), rate, seconds, out),
-                        daemon=True) for ch in chunks if ch]
+    host, port = cfg['mqtt_host'], int(cfg['mqtt_port'])
+    if fleet:
+        procs = [mp.Process(target=_fleet_worker,
+                            args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out),
+                            daemon=True) for ch in chunks if ch]
+    else:
+        procs = [mp.Process(target=_worker, args=(ch, host, port, rate, seconds, out), daemon=True)
+                 for ch in chunks if ch]
     print(f'{len(devices)} 台设备 × {rate}/秒 = 目标 {len(devices) * rate:,.0f}/秒，'
           f'{len(procs)} 个进程，持续 {seconds} 秒')
     t0 = time.time()
@@ -282,6 +443,9 @@ def run(count, rate, seconds, workers):
     qt = lambda f: lat[min(len(lat) - 1, int(len(lat) * f))] if lat else 0.0
     print('\n===== 结果 =====')
     print(f'进程数 / 连接数 : {len(procs)} / {conns}')
+    if fleet:
+        print(f'建连耗时        : 最慢进程 {max(r["connect_seconds"] for r in res):.0f} 秒')
+        print(f'运行中断线      : {sum(r["disconnects"] for r in res)} 次')
     print(f'目标速率        : {len(devices) * rate:,.0f}/秒')
     print(f'实际发送        : {sent:,} 条，平均 {sent / el:,.0f}/秒')
     print(f'已确认 (PUBACK) : {acked:,} 条，平均 {acked / el:,.0f}/秒  （未确认 {sent - acked:,}）')
@@ -295,17 +459,21 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     pp = sub.add_parser('provision')
-    pp.add_argument('--devices', type=int, required=True)
+    pp.add_argument('--devices', type=int, required=True, help='补齐到的总台数')
+    pp.add_argument('--concurrency', type=int, default=8)
     sub.add_parser('refresh')
     rp = sub.add_parser('run')
     rp.add_argument('--devices', type=int, required=True)
     rp.add_argument('--rate', type=float, required=True, help='每台设备每秒发布条数')
     rp.add_argument('--seconds', type=int, default=180)
     rp.add_argument('--workers', type=int, default=0, help='发压进程数，默认取 CPU 核数')
+    rp.add_argument('--fleet', action='store_true', help='海量低频设备模式：单事件循环驱动数千连接')
+    rp.add_argument('--connect-rate', type=float, default=200.0, help='fleet 模式每进程每秒建连数')
+    rp.add_argument('--connect-timeout', type=int, default=120, help='fleet 模式建连后等 CONNACK 的秒数')
     a = ap.parse_args()
     if a.cmd == 'provision':
-        provision(a.devices)
+        provision(a.devices, a.concurrency)
     elif a.cmd == 'refresh':
         refresh()
     else:
-        run(a.devices, a.rate, a.seconds, a.workers)
+        run(a.devices, a.rate, a.seconds, a.workers, a.fleet, a.connect_rate, a.connect_timeout)

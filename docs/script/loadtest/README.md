@@ -26,7 +26,28 @@ cp config.example.json config.json     # 填入压测机地址、租户管理员
 python loadgen.py provision --devices 600   # 建 600 台压测设备，密钥存入 devices.json
 ```
 
-`provision` 是幂等的：产品已存在则复用，重复执行只会继续建设备。
+`provision --devices N` 把设备**补齐到 N 台**：产品已存在则复用，`devices.json` 中已有的设备保留，只并发新建差额
+（`--concurrency`，默认 8），令牌过期自动重新登录，每 500 台落盘一次，中断后重跑会接着补。
+
+## 海量低频设备（fleet 模式）
+
+真实设备是每台隔几秒报一次（如 2 万台、每 10 秒一条），瓶颈在连接数而不是单连接速率，用 `--fleet`：
+
+```bash
+python loadgen.py run --devices 20000 --rate 0.1 --seconds 1800 --fleet
+```
+
+默认模式每条连接 `loop_start()` 一个线程，外加一对唤醒用的回环套接字（Windows 上占临时端口），几千台以上时发压机的
+线程、内存与端口会先于服务端耗尽。fleet 模式每个进程（默认每 2,500 台一个）用单个事件循环 select 全部连接，
+按 `--connect-rate`（每进程每秒，默认 200）匀速建连，`--connect-timeout`（默认 120 秒）内等齐 CONNACK。
+
+**Windows 发压机的临时端口默认只有 16,384 个**（`netsh int ipv4 show dynamicport tcp`），超过约 1.6 万条连接会建连失败。
+需以管理员身份扩大范围，压测后可改回默认：
+
+```bash
+netsh int ipv4 set dynamicport tcp start=10000 num=55535
+netsh int ipv4 set dynamicport tcp start=49152 num=16384
+```
 
 ## 每次压测前必须先刷新密钥
 

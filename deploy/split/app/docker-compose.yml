@@ -1,0 +1,118 @@
+# 拆分部署 · 应用主机：除 EMQX 外的全部服务。EMQX 在另一台主机（见 ../emqx），本文件不定义 emqx。
+# 每个服务以 extends 引用独立部署包 ../../standalone/docker-compose.yml 中的同名定义（构建方式、镜像、口令、内存上限、
+# 健康检查等全在那里），本文件只写拆分后不同的部分：连远端 EMQX，去掉对本机 emqx 的依赖。
+# 用法：cp .env.example .env 并填写，然后 docker compose up -d（观测栈再加 --profile metrics）
+# 项目名与数据卷和独立部署包相同（conduit_pg-data 等），从单机切换过来时数据沿用。需要 Docker Compose 2.24.4 及以上（!override）。
+name: conduit
+
+x-standalone: &standalone
+  file: ../../standalone/docker-compose.yml
+
+services:
+  # ───────────── 基础服务 ─────────────
+  postgres:
+    extends: { <<: *standalone, service: postgres }
+
+  redis:
+    extends: { <<: *standalone, service: redis }
+
+  influxdb:
+    extends: { <<: *standalone, service: influxdb }
+
+  influxdb-explorer:
+    extends: { <<: *standalone, service: influxdb-explorer }
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+  # 演示收件箱：邀请邮件投递到这里
+  mailpit:
+    extends: { <<: *standalone, service: mailpit }
+
+  # ───────────── 应用 ─────────────
+  # API 端口（API_PORT，默认 8091）必须能被 EMQX 主机访问：EMQX 每次设备连接都同步回调这里鉴权
+  conduit-server:
+    extends: { <<: *standalone, service: conduit-server }
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # transport 单活多备：主实例连远端 EMQX，会话监控也走远端的 REST API
+  conduit-transport:
+    extends: { <<: *standalone, service: conduit-transport }
+    environment:
+      EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      EMQX_PORT: ${MQTT_PORT:-1883}
+      CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
+    # 原定义依赖本机 emqx（service_healthy）；EMQX 在远端，由 transport 自己重连等待
+    depends_on: !override
+      redis:
+        condition: service_healthy
+      conduit-server:
+        condition: service_healthy
+
+  conduit-transport-2:
+    extends: { <<: *standalone, service: conduit-transport-2 }
+    environment:
+      EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      EMQX_PORT: ${MQTT_PORT:-1883}
+      CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
+    depends_on: !override
+      redis:
+        condition: service_healthy
+      conduit-server:
+        condition: service_healthy
+
+  conduit-web:
+    extends: { <<: *standalone, service: conduit-web }
+    depends_on:
+      - conduit-server
+
+  # 演示模拟器：设备连远端 EMQX
+  simulator:
+    extends: { <<: *standalone, service: simulator }
+    environment:
+      MQTT_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+    depends_on: !override
+      conduit-server:
+        condition: service_healthy
+      conduit-transport:
+        condition: service_started
+
+  # ───────────── 性能观测栈（profile metrics，默认不启动）─────────────
+  # node-exporter / cadvisor 只观测本机；EMQX 主机的资源要在那台机器上另看
+  prometheus:
+    extends: { <<: *standalone, service: prometheus }
+    environment:
+      # 抓取远端 EMQX 的指标
+      EMQX_METRICS_TARGET: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}:${EMQX_DASHBOARD_PORT:-18083}
+
+  grafana:
+    extends: { <<: *standalone, service: grafana }
+
+  node-exporter:
+    extends: { <<: *standalone, service: node-exporter }
+
+  cadvisor:
+    extends: { <<: *standalone, service: cadvisor }
+
+  redis-exporter:
+    extends: { <<: *standalone, service: redis-exporter }
+
+# extends 不带入顶层数据卷，这里按同名重新声明（项目名 conduit 下即 conduit_pg-data 等，与独立部署包共用）
+volumes:
+  pg-data:
+  redis-data:
+  influx3-data:
+  influx-explorer-data:
+  conduit-logs:
+  mailpit-data:
+  prometheus-data:
+  grafana-data:

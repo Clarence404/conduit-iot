@@ -1,4 +1,4 @@
-# 拆分部署 · EMQX 主机（IOT-MQTT）：只运行 EMQX，其余服务在应用主机上（见 ../app.yml 与 ../README.md）。
+# 拆分部署 · EMQX 主机（IOT-MQTT）：只运行 EMQX，其余服务在应用主机上（见 ../app 与 ../README.md）。
 # EMQX 的定义只在 ../../dev/docker-compose.yml（文件描述符上限、内存持久会话、共享订阅策略、配置模板挂载等），这里以 extends 引用；
 # 挂载路径按 dev 文件所在目录解析，所以本机要有完整的 deploy/ 目录。插值用本目录的 .env，并执行 dev 文件的必填检查。
 # 用法：cp .env.example .env 并填写，然后 docker compose up -d

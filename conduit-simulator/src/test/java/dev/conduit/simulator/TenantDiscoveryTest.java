@@ -149,7 +149,7 @@ class TenantDiscoveryTest {
     @Test
     void discoversOnlySelectedActiveTenantsEnabledDevicesAndSupportedProducts() {
         List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
-                TenantFilter.parse("east,off"), 2, Set.of("pk-demo"));
+                TenantFilter.parse("east,off"), 2, Set.of("pk-demo"), Set.of());
 
         assertThat(products).singleElement().satisfies(p -> {
             assertThat(p.tenantCode()).isEqualTo("east");
@@ -189,7 +189,7 @@ class TenantDiscoveryTest {
         westProductsFail = true;
 
         List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
-                TenantFilter.ALL, 100, Set.of("pk-demo"));
+                TenantFilter.ALL, 100, Set.of("pk-demo"), Set.of());
 
         assertThat(products).extracting(TenantDiscovery.DiscoveredProduct::productKey).containsExactly("pk-meter");
         assertThat(products.getFirst().devices()).hasSize(3);
@@ -204,7 +204,7 @@ class TenantDiscoveryTest {
         exitFails = true;
 
         List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
-                TenantFilter.ALL, 100, Set.of("pk-demo"));
+                TenantFilter.ALL, 100, Set.of("pk-demo"), Set.of());
 
         assertThat(products).extracting(TenantDiscovery.DiscoveredProduct::productKey)
                 .containsExactly("pk-meter", "pk-pv");
@@ -219,10 +219,22 @@ class TenantDiscoveryTest {
         secondLoginFails = true;
 
         List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
-                TenantFilter.ALL, 100, Set.of("pk-demo"));
+                TenantFilter.ALL, 100, Set.of("pk-demo"), Set.of());
 
         assertThat(products).extracting(TenantDiscovery.DiscoveredProduct::productKey).containsExactly("pk-meter");
         assertThat(calls).doesNotContain("POST /api/v1/platform/tenants/west/enter");
+    }
+
+    /** SIM_EXCLUDE_PRODUCTS 按名称或 productKey 排除产品：既不模拟，也不读物模型、不重置其设备密钥（否则会作废压测脚本持有的密钥）。 */
+    @Test
+    void excludedProductsAreSkippedBeforeAnySecretIsReset() {
+        List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
+                TenantFilter.ALL, 100, Set.of("pk-demo"), Set.of("10kV 进线电表", "pk-pv"));
+
+        assertThat(products).isEmpty();
+        assertThat(calls).doesNotContain("GET /api/v1/products/pk-meter/properties",
+                        "GET /api/v1/products/pk-pv/properties")
+                .noneMatch(c -> c.endsWith("/reset-secret"));
     }
 
     /** 某台设备重置密钥失败时只跳过该设备，已重置的设备保留。 */
@@ -231,7 +243,7 @@ class TenantDiscoveryTest {
         resetFailsFor = "d-3";
 
         List<TenantDiscovery.DiscoveredProduct> products = TenantDiscovery.discover(platformClient(),
-                TenantFilter.parse("east"), 100, Set.of("pk-demo"));
+                TenantFilter.parse("east"), 100, Set.of("pk-demo"), Set.of());
 
         assertThat(products).singleElement().satisfies(p ->
                 assertThat(p.devices()).extracting(DeviceCredentials::deviceKey).containsExactly("d-1", "d-4"));

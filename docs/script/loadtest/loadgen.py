@@ -12,8 +12,8 @@
   run --devices N --rate R --seconds S [--workers W]
                                以 N 条 MQTT 连接按每设备每秒 R 条发布，统计吞吐与 PUBACK 时延
 
-**必须先 refresh，否则测出来的全是废数据。** 压测产品带物模型，于是演示模拟器会把它
-当成演示产品接管：`SIM_TENANTS=*` 让它扫描所有租户的物模型产品，并给每个产品的前
+**必须先 refresh，否则测出来的全是废数据。** 压测产品带物模型，于是旧版演示模拟器会把它
+当成演示产品接管（2026-10-30 起模拟器默认以 SIM_EXCLUDE_PRODUCTS 排除「压测产品」）：`SIM_TENANTS=*` 让它扫描所有租户的物模型产品，并给每个产品的前
 `SIM_MAX_DEVICES_PER_PRODUCT` 台设备重置密钥（压测机上是 100）。被重置的那些设备在
 devices.json 里的密钥就失效了。
 

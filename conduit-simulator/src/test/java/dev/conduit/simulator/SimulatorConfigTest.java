@@ -72,6 +72,18 @@ class SimulatorConfigTest {
         assertThat(config.maxDevicesPerProduct()).isEqualTo(20);
     }
 
+    /** 默认排除压测脚本建的「压测产品」；可配成逗号分隔的名称或 productKey，配成空则不排除。 */
+    @Test
+    void excludedProductsDefaultToTheLoadTestProduct() {
+        assertThat(SimulatorConfig.fromEnv(Map.of("CONDUIT_ADMIN_PASSWORD", "pw")).excludedProducts())
+                .containsExactly("压测产品");
+        assertThat(SimulatorConfig.fromEnv(Map.of("CONDUIT_ADMIN_PASSWORD", "pw",
+                "SIM_EXCLUDE_PRODUCTS", " 压测产品 , pk-abc ,, ")).excludedProducts())
+                .containsExactlyInAnyOrder("压测产品", "pk-abc");
+        assertThat(SimulatorConfig.fromEnv(Map.of("CONDUIT_ADMIN_PASSWORD", "pw",
+                "SIM_EXCLUDE_PRODUCTS", "")).excludedProducts()).isEmpty();
+    }
+
     @Test
     void aBlankPlatformPasswordMeansDemoOnly() {
         assertThat(SimulatorConfig.fromEnv(Map.of("CONDUIT_ADMIN_PASSWORD", "pw", "SIM_PLATFORM_PASSWORD", "  "))

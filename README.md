@@ -183,6 +183,7 @@ conduit-server 的指标经专用端点 `/internal/metrics` 抓取：它与 EMQX
 | `SIM_PLATFORM_PASSWORD` | 独立部署复用平台管理员密码；本地为空 | 平台管理员密码；为空时只模拟默认演示电表 |
 | `SIM_TENANTS` | `*` | 逗号分隔的租户编码，`*` 表示全部启用中的租户 |
 | `SIM_MAX_DEVICES_PER_PRODUCT` | `100` | 每个产品最多模拟的设备数 |
+| `SIM_EXCLUDE_PRODUCTS` | `压测产品` | 不模拟的产品名称或 productKey，逗号分隔；被排除的产品不读物模型、不重置设备密钥（模拟器与压测脚本共用设备会互相作废对方的密钥）；配成空表示不排除 |
 | `SIM_ACK_TIMEOUT_MS` | `30000` | 等待平台业务回执的毫秒数，超时原样重发 |
 | `SIM_MAX_PENDING` | `1000` | 每台设备的内存待确认上限，达到后暂停产生新数据 |
 

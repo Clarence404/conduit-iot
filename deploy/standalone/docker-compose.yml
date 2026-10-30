@@ -240,6 +240,9 @@ services:
       SIM_PLATFORM_PASSWORD: ${SIM_PLATFORM_PASSWORD:-${CONDUIT_PLATFORM_ADMIN_PASSWORD}}
       SIM_TENANTS: ${SIM_TENANTS:-*}
       SIM_MAX_DEVICES_PER_PRODUCT: ${SIM_MAX_DEVICES_PER_PRODUCT:-100}
+      # 不模拟的产品（名称或 productKey，逗号分隔）：模拟器会重置所模拟设备的密钥，默认排除压测脚本的「压测产品」，
+      # 否则两边互相作废对方的密钥。用 `-` 而非 `:-`，使显式配成空表示不排除
+      SIM_EXCLUDE_PRODUCTS: ${SIM_EXCLUDE_PRODUCTS-压测产品}
       # 光伏、用电、用水的日曲线按本地时间计算
       TZ: Asia/Shanghai
       CONDUIT_LOG_DIR: /var/log/conduit

@@ -8,8 +8,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * 模拟器配置，来自环境变量（或 simulator-local.properties）。
@@ -26,6 +28,8 @@ import java.util.Properties;
  * @param payloadFormat     上报载荷格式，同时决定新建产品的解码器
  * @param ackTimeout        等待平台业务回执的超时时间，超时后原样重发
  * @param maxPending        每台设备最多保留的待确认消息数，达到后暂停产生新数据
+ * @param excludedProducts  多租户发现时排除的产品（名称或 productKey），默认排除压测脚本的「压测产品」：
+ *                          模拟器会重置所模拟设备的密钥，与压测脚本共用设备会互相作废对方的密钥
  */
 public record SimulatorConfig(URI apiUrl, String adminUsername, String adminPassword,
                               String mqttHost, int mqttPort, String productName,
@@ -33,7 +37,11 @@ public record SimulatorConfig(URI apiUrl, String adminUsername, String adminPass
                               PayloadFormat payloadFormat,
                               String platformUsername, String platformPassword,
                               TenantFilter tenants, int maxDevicesPerProduct,
-                              Duration ackTimeout, int maxPending) {
+                              Duration ackTimeout, int maxPending, Set<String> excludedProducts) {
+
+    public SimulatorConfig {
+        excludedProducts = Set.copyOf(excludedProducts);
+    }
 
     /** 本地联调用的配置文件（classpath 根目录，不入库），键名与环境变量相同。 */
     static final String LOCAL_PROPERTIES = "simulator-local.properties";
@@ -52,6 +60,8 @@ public record SimulatorConfig(URI apiUrl, String adminUsername, String adminPass
 
     /**
      * 从键值表构造配置，未提供的项取默认值。
+     *
+     * SIM_EXCLUDE_PRODUCTS 缺省为「压测产品」，显式配成空表示不排除。
      *
      * @throws IllegalStateException CONDUIT_ADMIN_PASSWORD 缺失或为空、SIM_PAYLOAD_FORMAT 非法、
      *                               SIM_MAX_DEVICES_PER_PRODUCT 小于 1
@@ -74,7 +84,8 @@ public record SimulatorConfig(URI apiUrl, String adminUsername, String adminPass
                 TenantFilter.parse(env.getOrDefault("SIM_TENANTS", "*")),
                 atLeastOne(env, "SIM_MAX_DEVICES_PER_PRODUCT", 100),
                 positiveDuration(env, "SIM_ACK_TIMEOUT_MS", 30_000),
-                atLeastOne(env, "SIM_MAX_PENDING", 1000));
+                atLeastOne(env, "SIM_MAX_PENDING", 1000),
+                commaSet(env.getOrDefault("SIM_EXCLUDE_PRODUCTS", "压测产品")));
     }
 
     /** 是否模拟各租户的产品：平台管理员密码非空时才开启。 */
@@ -104,6 +115,17 @@ public record SimulatorConfig(URI apiUrl, String adminUsername, String adminPass
             throw new IllegalStateException("Environment variable " + name + " is required");
         }
         return value;
+    }
+
+    /** 按逗号拆分并去掉首尾空白，空项忽略。 */
+    private static Set<String> commaSet(String value) {
+        Set<String> items = new LinkedHashSet<>();
+        for (String part : value.split(",")) {
+            if (!part.isBlank()) {
+                items.add(part.trim());
+            }
+        }
+        return items;
     }
 
     /** 读取不小于 1 的整数配置，缺省取 defaultValue。 */

@@ -13,7 +13,7 @@ import java.util.Set;
 
 /**
  * 多租户发现（V0.2-R spec 5.1，启动时一次）：平台管理员列出启用中的租户，按 SIM_TENANTS 过滤后逐个进入，
- * 取物模型非空、解码器可生成的产品及其启用设备（每产品最多 maxDevicesPerProduct 台），重置这些设备的密钥，再退出租户。
+ * 跳过排除的产品后，取物模型非空、解码器可生成的产品及其启用设备（每产品最多 maxDevicesPerProduct 台），重置这些设备的密钥，再退出租户。
  * 任一租户或产品失败只记 WARN，跳过它继续处理其他的。
  */
 public final class TenantDiscovery {
@@ -41,10 +41,12 @@ public final class TenantDiscovery {
      * @param filter               模拟哪些租户
      * @param maxDevicesPerProduct 每产品最多模拟的设备数
      * @param skipProductKeys      跳过的产品（演示产品，由 DemoProvisioner 处理）
+     * @param excludedProducts     排除的产品名称或 productKey（SIM_EXCLUDE_PRODUCTS），在读物模型与重置密钥之前判断
      * @return 至少有一台设备的产品，按租户与产品的列表顺序
      */
     public static List<DiscoveredProduct> discover(ConduitApiClient platform, TenantFilter filter,
-                                                   int maxDevicesPerProduct, Set<String> skipProductKeys) {
+                                                   int maxDevicesPerProduct, Set<String> skipProductKeys,
+                                                   Set<String> excludedProducts) {
         List<DiscoveredProduct> result = new ArrayList<>();
         for (TenantSummary tenant : platform.listActiveTenants()) {
             if (!filter.includes(tenant.code())) {
@@ -59,7 +61,7 @@ public final class TenantDiscovery {
             }
             try {
                 List<DiscoveredProduct> products = discoverTenant(platform, tenant, maxDevicesPerProduct,
-                        skipProductKeys);
+                        skipProductKeys, excludedProducts);
                 result.addAll(products);
                 log.info("Tenant {} ({}): {} products with {} devices to simulate", tenant.code(), tenant.name(),
                         products.size(), products.stream().mapToInt(p -> p.devices().size()).sum());
@@ -101,11 +103,17 @@ public final class TenantDiscovery {
 
     /** 在已进入的租户内发现产品；单个产品失败只记 WARN 并跳过。 */
     private static List<DiscoveredProduct> discoverTenant(ConduitApiClient platform, TenantSummary tenant,
-                                                          int maxDevicesPerProduct, Set<String> skipProductKeys) {
+                                                          int maxDevicesPerProduct, Set<String> skipProductKeys,
+                                                          Set<String> excludedProducts) {
         List<DiscoveredProduct> products = new ArrayList<>();
         for (ProductSummary product : platform.listProducts()) {
             if (skipProductKeys.contains(product.productKey())) {
                 log.debug("Product {} is the demo product, simulated by the demo flow", product.productKey());
+                continue;
+            }
+            if (excludedProducts.contains(product.name()) || excludedProducts.contains(product.productKey())) {
+                log.info("Product {} ({}) in tenant {} is in SIM_EXCLUDE_PRODUCTS, not simulated and secrets untouched",
+                        product.productKey(), product.name(), tenant.code());
                 continue;
             }
             if (product.propertyCount() == 0) {

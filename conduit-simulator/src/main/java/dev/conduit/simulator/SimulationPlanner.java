@@ -51,7 +51,7 @@ public final class SimulationPlanner {
         ZoneId zone = ZoneId.systemDefault();
         List<SimulatedDevice> devices = new ArrayList<>();
         for (TenantDiscovery.DiscoveredProduct product : TenantDiscovery.discover(platform, config.tenants(),
-                config.maxDevicesPerProduct(), demoProductKeys)) {
+                config.maxDevicesPerProduct(), demoProductKeys, config.excludedProducts())) {
             for (DeviceCredentials credentials : product.devices()) {
                 devices.add(new SimulatedDevice(credentials, product.format(),
                         new ThingModelReadingSource(product.properties(), credentials.deviceKey(), zone)));

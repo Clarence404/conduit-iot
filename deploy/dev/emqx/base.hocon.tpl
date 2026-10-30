@@ -14,7 +14,7 @@ authentication = [
       "content-type" = "application/json"
       "X-Conduit-Internal-Token" = "__CONDUIT_INTERNAL_TOKEN__"
     }
-    request_timeout = "5s"
+    request_timeout = "10s"
   }
 ]
 

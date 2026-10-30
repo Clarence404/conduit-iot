@@ -1,19 +1,30 @@
-# 拆分部署 · EMQX 主机：只运行 EMQX，其余服务在应用主机上（见 ../app.yml 与 ../README.md）。
-# EMQX 的定义只在 ../../dev/docker-compose.yml（ulimits、内存持久会话、共享订阅策略、配置模板挂载等），这里以 extends 引用；
+# 拆分部署 · EMQX 主机（IOT-MQTT）：只运行 EMQX，其余服务在应用主机上（见 ../app.yml 与 ../README.md）。
+# EMQX 的定义只在 ../../dev/docker-compose.yml（文件描述符上限、内存持久会话、共享订阅策略、配置模板挂载等），这里以 extends 引用；
 # 挂载路径按 dev 文件所在目录解析，所以本机要有完整的 deploy/ 目录。插值用本目录的 .env，并执行 dev 文件的必填检查。
 # 用法：cp .env.example .env 并填写，然后 docker compose up -d
-name: conduit-emqx
+# Compose 项目名只允许小写，所以项目名为 iot-mqtt，容器名为 IOT-MQTT
+name: iot-mqtt
 
 services:
   emqx:
     extends:
       file: ../../dev/docker-compose.yml
       service: emqx
+    container_name: IOT-MQTT
+    # 容器网络命名空间内的连接队列：大批设备同时（重）连时，内核默认 4096 的半连接/全连接队列会先满
+    sysctls:
+      net.core.somaxconn: ${EMQX_SOMAXCONN:-4096}
+      net.ipv4.tcp_max_syn_backlog: ${EMQX_SOMAXCONN:-4096}
     environment:
+      # 是否按信箱长度 / 堆大小强杀单个连接进程。关闭后单个连接不再被杀，但积压会一直涨到整个节点内存耗尽
+      EMQX_FORCE_SHUTDOWN__ENABLE: ${EMQX_FORCE_SHUTDOWN_ENABLE:-true}
       # 连接进程信箱上限（EMQX 默认 1000）。transport 的在途消息堆在其连接进程信箱里，
-      # 本值必须显著大于 EMQX_MAX_INFLIGHT，否则负载下 transport 连接被 mailbox_overflow 强杀；
-      # 连接进程堆上限（EMQX_CONNECTION_MAX_HEAP_SIZE）仍是兜底，不随本值上调
+      # 本值必须显著大于 EMQX_MAX_INFLIGHT，否则负载下 transport 连接被 mailbox_overflow 强杀
       EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-1000}
+      # 设备接入监听的 TCP 监听队列（EMQX 默认 1024），受上面 somaxconn 约束
+      EMQX_LISTENERS__TCP__DEFAULT__TCP_OPTIONS__BACKLOG: ${EMQX_TCP_BACKLOG:-1024}
+      # 单个 MQTT 报文上限（EMQX 默认 1MB，最大 256MB）
+      EMQX_MQTT__MAX_PACKET_SIZE: ${EMQX_MAX_PACKET_SIZE:-1MB}
 
   # 本机 CPU / 内存（profile metrics，默认不启动）。开放 9100 端口供应用主机上的 Prometheus 按需抓取；
   # 默认未接入看板：看板的整机面板不按主机区分，混入后会把两台机器的 CPU 合并计算
@@ -21,6 +32,7 @@ services:
     extends:
       file: ../../dev/docker-compose.yml
       service: node-exporter
+    container_name: IOT-MQTT-node-exporter
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${NODE_EXPORTER_PORT:-9100}:9100"
 

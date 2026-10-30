@@ -1,4 +1,4 @@
-# 拆分部署：EMQX 单独一台主机
+# 拆分部署：EMQX 单独一台主机（IOT-MQTT）
 
 EMQX 部署在一台主机，其余服务（PostgreSQL、Redis、InfluxDB、conduit-server、两个 transport、Web、模拟器、观测栈）部署在另一台。
 用于把设备接入层的 CPU 与网络开销从应用主机上拆走：2026-10-30 在 8 核压测 VM 上实测，EMQX 与内核网络处理占忙碌 CPU 的约 70%
@@ -31,6 +31,7 @@ cd deploy/split/emqx
 cp .env.example .env    # 填 CONDUIT_AUTH_URL；口令与应用主机 .env 中的同名值一致
 docker compose up -d
 docker compose --profile metrics up -d node-exporter   # 可选：本机 CPU / 内存
+docker exec IOT-MQTT emqx ctl conf show mqtt            # 回读实际生效的配置
 ```
 
 建议的宿主机内核参数（连接数上万时；以 root 写入 `/etc/sysctl.d/` 后 `sysctl --system`）：
@@ -51,7 +52,7 @@ net.core.netdev_max_backlog = 16384
 ```
 EMQX_REMOTE_HOST=<EMQX 主机地址>
 BIND_ADDR=0.0.0.0              # 让鉴权回调能访问 server 的 API 端口
-TRANSPORT_BUS_BATCH_SIZE=512   # 与 EMQX 主机的 EMQX_MAX_INFLIGHT=1024 配套，见下表
+TRANSPORT_BUS_BATCH_SIZE=512   # 必须 <= EMQX 主机的 EMQX_MAX_INFLIGHT，见下文「容量参数」
 ```
 
 然后在 `deploy/standalone` 目录：
@@ -65,18 +66,23 @@ docker compose -f docker-compose.yml -f ../split/app.yml --profile metrics up -d
 
 ## 容量参数
 
-`emqx/.env.example` 给的是 2026-10-29 在 8 核压测 VM 上按守恒判据验证过的组合（11,500 条/秒无损），与其他部署包的默认值不同：
+EMQX 主机的 `emqx/.env.example` 按所有者要求（2026-10-30）把各项都取到 EMQX 5.10.5 接受的最大值，压测后再调整。
+每项都用临时 EMQX 5.10.5 容器验证过能启动且生效。
 
-| 参数 | 位置 | 本包取值 | 其他包默认 | 说明 |
+| 参数 | 本包取值 | EMQX 默认 | 其他部署包 | 说明 |
 |---|---|---|---|---|
-| `EMQX_MAX_INFLIGHT` | EMQX 主机 | 1024 | 512 | EMQX 推给 transport 每条连接、尚未确认的消息上限 |
-| `EMQX_MAX_MAILBOX_SIZE` | EMQX 主机 | 10000 | 1000（EMQX 默认） | 在途消息堆在连接进程信箱里，必须显著大于在途窗口，否则 transport 连接被强杀 |
-| `EMQX_MAX_MQUEUE_LEN` | EMQX 主机 | 100000 | 100000 | 覆盖 transport 主备切换窗口（约 17 秒）；驻留在连接进程堆内 |
-| `EMQX_CONNECTION_MAX_HEAP_SIZE` | EMQX 主机 | 256MB | 256MB | 兜底保护，不为塞下更大的队列上调 |
-| `TRANSPORT_BUS_BATCH_SIZE` | 应用主机 | 512 | 64 | 必须 ≤ `EMQX_MAX_INFLIGHT` |
-| `TRANSPORT_MQTT_CONNECTIONS` | 应用主机 | 4 | 4 | transport 共享订阅的连接数 |
+| `EMQX_MAX_INFLIGHT` | 65535（上限，65536 启动失败） | 32 | 512 | EMQX 推给每条连接、尚未确认的消息上限 |
+| `EMQX_MAX_MQUEUE_LEN` | infinity | 1000 | 100000 | 每个会话的内存队列；不限时 transport 跟不上就一直积压到节点内存耗尽，transport 会话监控的「队列水位」告警随之失效 |
+| `EMQX_FORCE_SHUTDOWN_ENABLE` | false | true | true | 不再按信箱 / 堆强杀单个连接；信箱与堆两项保留为重新开启时的取值（10000 / 256MB） |
+| `EMQX_TCP_BACKLOG` / `EMQX_SOMAXCONN` | 65535 | 1024 / 4096 | 默认 | 大批设备同时重连时的连接队列 |
+| `EMQX_MAX_PACKET_SIZE` | 256MB（上限） | 1MB | 默认 | 单个 MQTT 报文上限 |
+| 文件描述符 | 1048576 | — | 1048576 | 在 dev 文件中设定，每条 MQTT 连接占一个 |
 
-约束：`TRANSPORT_BUS_BATCH_SIZE ≤ EMQX_MAX_INFLIGHT ≪ EMQX_MAX_MAILBOX_SIZE`。
+**代价**：关掉强杀、队列不限之后，过载不再表现为「单条连接被杀、丢一部分消息」，而是积压持续增长直到 EMQX 整个节点内存耗尽，
+所有设备一起断开。压测时要盯 EMQX 主机的内存（`docker stats IOT-MQTT`）。
+
+应用主机这侧保持 2026-10-29 验证值：`TRANSPORT_BUS_BATCH_SIZE=512`、`TRANSPORT_MQTT_CONNECTIONS=4`。
+transport 对这两项没有上限，只要求批大小不超过 EMQX 的在途窗口。
 
 ## 多套环境共用一台 EMQX
 

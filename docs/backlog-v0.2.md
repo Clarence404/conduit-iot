@@ -209,3 +209,25 @@
 - 会话监控每 30 秒采一次（`conduit.transport.monitor.interval`），信箱长度是瞬时值，短于采样间隔的尖峰可能被漏掉。
   实测过载时信箱持续高位、30 秒采样能抓到，但「几秒内冲破上限被杀」的极端情况仍可能漏。缩短间隔需同步调整
   `stall-samples`（停滞判定窗口 = 次数 × 间隔，当前 3 分钟），否则停滞判定会变得过于敏感。
+
+## 2026-10-30 拆分部署压测遗留
+
+详见 [设备数阶梯报告](test-reports/2026-10-30-device-ladder-split.md)。
+
+- **【已立项排查】EMQX 鉴权回调的 HTTP 长连接偶发「半开」**（所有者 2026-10-30 决定立项）。
+  - 现象：拆分部署（EMQX 与 server 分机）下，闲置数分钟后的第一批设备建连中，EMQX 的 8 条鉴权长连接里有 1 条请求全部超时
+    （`http_connector_do_request_failed, reason: timeout`，5 秒），这些设备被判未授权；server 端没有收到这些请求
+    （`conduit_mqtt_auth_total` 只有放行、没有拒绝）。约 10 秒后 EMQX 判定该连接为僵尸并重建
+    （`force_reconnecting_zombie_http_connection, inactive_duration_threshold: 10000, inflight_requests: 9`），之后恢复正常。
+    2026-10-30 14:02 一次 300 台建连有 116 台因此被拒。
+  - 已排除：server 的 Tomcat 长连接时限（`keep-alive-timeout: 30m` 实测生效，空闲 40 秒后同一连接可复用）；两台主机的连接跟踪
+    超时（`nf_conntrack_tcp_timeout_established` 均为 432000 秒）与表容量（26 万，实际几百）。
+  - 与上午修掉的问题不同：那次是 Tomcat 主动关连接（`reason: closing`），这次是连接悄无声息地失效（`timeout`）。
+  - 怀疑方向：应用主机上 Docker 发布端口的 iptables / firewalld 规则重载（如容器重建）使既有连接的 NAT 映射失效；
+    VMware NAT 网段内 vSwitch 对空闲连接的处理；EMQX 所在容器的出站 MASQUERADE。
+  - 下一步：在两端抓包（EMQX 容器内与应用主机 8091 端口）观察失效连接最后的报文与时间；记录失效前后是否有容器重建或
+    防火墙重载；评估 EMQX 鉴权 HTTP 连接池的 `pool_size`、`request_timeout`，以及给鉴权连接开 TCP keepalive。
+  - 影响与临时措施：真实设备偶发一次鉴权失败，重连即恢复，不丢数据；`loadgen.py` 对首次被拒的设备重连一次并照实上报
+    首次被拒数，压测不再因此作废。
+- 本地三机（发压机与两台 VM）同在一台物理机，2.5 万台以上的结论受宿主机 CPU 与内存争用影响；测平台本身的上限需要
+  发压机与被测机分开（`ladder.py` 已支持多台电脑分担发压，同事电脑连 EMQX 需在宿主机做 VMware NAT 端口转发）。

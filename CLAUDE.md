@@ -1,242 +1,589 @@
 # Conduit IoT 项目说明（给 Claude 与开发者）
 
-**命名约定**：对外产品名称为 `Conduit IoT`，GitHub 仓库为 `Clarence404/conduit-iot`（`https://github.com/Clarence404/conduit-iot`）；Maven 根父工程坐标为 `dev.conduit:conduit-iot`，所有子模块的父工程引用必须一致，根工程展示名为 `Conduit IoT`，子模块展示名以 `Conduit IoT ::` 开头。Java 包名、子模块 artifactId、服务名、配置前缀、部署目录与数据卷继续沿用 `conduit`。历史设计中的 `Conduit` 与 `conduit-parent` 为旧命名；修改构建配置时以当前 POM 为准。产品定位变化时，除更新仓库文档，还必须同步检查 GitHub About 等独立维护的对外简介。
+**命名约定**
+- 对外：产品名 `Conduit IoT`，仓库 `Clarence404/conduit-iot`。
+- Maven：根父工程 `dev.conduit:conduit-iot`，展示名 `Conduit IoT`；子模块父引用必须一致，展示名以 `Conduit IoT ::` 开头。
+- 其余技术标识沿用 `conduit`：Java 包名、子模块 artifactId、服务名、配置前缀、部署目录、数据卷。
+- 旧命名 `Conduit` / `conduit-parent` 以当前 POM 为准。
+- 产品定位变化时，同步检查 GitHub About 等对外简介。
 
-产品目标是建设面向工业、能源、园区与设备运营场景的生产级多租户 IoT SaaS 平台：设备通过 MQTT 等协议接入，数据经消息总线进入服务端，按产品物模型处理后用于存储、规则、告警、控制与开放集成。当前已实现能力见下文组件职责，生产就绪状态以阶段验收与测试报告为准。本文件记录**整体设计思路与编码约定**。
+**产品目标**：面向工业、能源、园区与设备运营的生产级多租户 IoT SaaS。
+- 设备经 MQTT 接入，数据经消息总线进入服务端，按物模型处理后用于存储、规则、告警、控制与开放集成。
+- 生产就绪状态以阶段验收与测试报告为准。本文件记录整体设计与编码约定。
 
-**维护规则**：每次升级（新子项目、架构调整、重要修复）除了写 `docs/superpowers/` 下的 spec / plan 外，还必须把其中**决定性质的约定**（技术选型、模块职责、数据格式与语义、接口约定、界面与数据约定、部署方式等）同步更新到本文件对应章节，并在第 4 节「决定记录」追加一条；与本文件冲突的旧内容直接改掉，不留过期描述。讨论中确定的后续工作与方向性判断（即使暂不实施）也要当时写进当前路线图（`docs/roadmap-saas.md`）或对应 spec，不能只记在对话或个人记忆里。
+**维护规则**
+- 每次升级都要写 `docs/superpowers/` 下的 spec / plan。
+- 决定性质的约定同步写进本文件对应章节：技术选型、模块职责、数据语义、接口、界面、部署。并在第 4 节追加一行。
+- 与新决定冲突的旧描述直接改掉，不留过期内容。
+- 讨论中确定的后续方向，即使暂不实施，也要当时写进 `docs/roadmap-saas.md` 或对应 spec。
 
-**智能体交接规则（必须）**：工作跨智能体或跨任务继续且尚未完成时，按 [`docs/handoffs/README.md`](docs/handoffs/README.md) 在 `docs/handoffs/` 维护同一任务的一份交接文件；**所有交接文件只能放在 `docs/handoffs/`**，不得放在仓库根目录 `handoffs/` 或其他位置，发现放错的直接移入。写明已完成、未完成、验证证据、当前 Git/部署版本、下一步和安全取凭据方式；接手者先核对实时状态。不得把口令、令牌或私钥写进交接。完成后标记已完成并链接报告与提交；普通已完成任务不生成空交接。交接不替代 spec、roadmap、架构同步和测试报告。
+**智能体交接（必须）**
+- 跨智能体或跨任务未完成的工作，按 [`docs/handoffs/README.md`](docs/handoffs/README.md) 在 `docs/handoffs/` 维护同一任务的一份交接。
+- **交接文件只能放在 `docs/handoffs/`**，放错的直接移入。
+- 内容：已完成、未完成、验证证据、当前 Git 与部署版本、下一步、凭据的安全获取方式。不写口令、令牌、私钥。
+- 接手者先核对实时状态。完成后标记「已完成」并链接报告与提交。
+- 交接不替代 spec、roadmap、架构文档和测试报告。
 
-**架构同步规则（必须）**：一旦实施内容影响模块职责或依赖、组件拓扑、数据流、协议与接口、存储、租户隔离、可靠性或部署方式，必须在同一变更中同步更新受影响的架构文档和图，完成后才能交付或提交。至少检查 `README.md` 架构说明、`docs/images/architecture.svg`、`docs/images/module-dependencies.svg`、本文件第 1 节，以及对应 spec / plan；涉及可靠上报时检查 `docs/images/reliable-uplink.svg`，涉及后续路线时更新 `docs/roadmap-saas.md`。只修改受影响的内容，但交付说明中必须列出已更新的架构文件；若检查后无需修改，应说明原因。架构图描述实际已实现状态，规划能力须明确标注；新增或修改的图使用支持亮暗主题的 SVG，并自检文字、间距和连线，同时检查 Markdown 引用有效。
-
-**架构图源约定**：架构图统一使用支持亮暗主题的 SVG；同一架构共用一个源文件，各文档通过 Markdown 图片引用，禁止复制维护多份同义图。`README.md` 与本文件的当前系统架构统一引用 `docs/images/architecture.svg`。各文档保留必要的职责表、数据流与设计语义说明，便于检索和理解；图源变更时同步检查所有引用位置。
+**架构同步（必须）**
+- 范围：凡影响模块职责与依赖、拓扑、数据流、协议与接口、存储、租户隔离、可靠性、部署方式的改动。
+- 必须在同一变更中更新架构文档和图。至少检查：
+  - `README.md` 架构说明
+  - `docs/images/architecture.svg`
+  - `docs/images/module-dependencies.svg`
+  - 本文件第 1 节
+  - 对应 spec / plan
+  - 涉及可靠上报时检查 `docs/images/reliable-uplink.svg`；涉及后续路线时更新 roadmap
+- 交付说明列出已更新的架构文件；无需修改时说明原因。
+- 架构图只描述已实现状态，规划能力须标注。
+- 图一律用支持亮暗主题的 SVG，同一架构只维护一个源文件，各处用 Markdown 引用。改图后自检文字、间距、连线与引用。
 
 ## 1. 整体设计
 
-**新功能演示约定（必须）**：每次新增功能同步准备可直接查看和操作的演示数据、入口与预期现象，不交付空页面。关系数据写入版本化 Flyway 迁移或明确的 demo 初始化脚本，动态数据由模拟器/可重复脚本生成，保证其他电脑初始化与 VM 升级可复现；初始化幂等且不覆盖人工数据、密码和密钥，限制在演示环境/演示租户。覆盖主要场景与权限、状态、缺测等关键边界，自测后写入 `docs/test-reports/`；无法生成的部分必须报告原因。此要求同时记录于全局 `%USERPROFILE%/.codex/AGENTS.md`。
+**新功能演示（必须）**
+- 每个新功能同时交付：可操作的演示数据、入口和预期现象，不交付空页面。
+- 关系数据写进版本化 Flyway 迁移或明确的 demo 初始化脚本（如 `deploy/demo/*.py`）；动态数据由模拟器或可重复脚本生成。
+- 初始化必须幂等，不覆盖人工数据、密码和密钥，只在演示环境 / 演示租户启用。
+- 覆盖主要场景、权限、状态与缺测边界。自测结果写入 `docs/test-reports/`；生成不了的部分要报告原因。
+- 同一要求也记录在全局 `%USERPROFILE%/.codex/AGENTS.md`。
 
 ### 1.1 组件与数据流
 
 ![Conduit 当前系统架构：设备接入、同步鉴权、异步处理与存储](docs/images/architecture.svg)
 
-设备通过 MQTT 接入 EMQX，EMQX 同步调用 `conduit-server` 鉴权；主 `conduit-transport` 将上报组装为 `RawMessage`，写入 Redis Streams `conduit:stream:up`。server 以消费组异步拉取、解码、校验并写入 InfluxDB 3 的 `property` 表及 Redis 最新值；Redis 同时保存在线状态与设备身份缓存，PostgreSQL 保存租户、用户、组织、产品、设备、邀请和会话。Vue 前端通过 REST 调用同一 server 进程；邀请通过 `InvitationNotificationChannel` 发往 SMTP，演示环境由 Mailpit 收取。可靠上报的业务回执含义与重试边界见 1.2；图中展示当前已实现架构，后续规划见 `docs/roadmap-saas.md`。
+**上行链路**
+1. 设备经 MQTT 接入 EMQX，EMQX 同步回调 `conduit-server` 鉴权。
+2. 主 `conduit-transport` 把上报组装为 `RawMessage`，写入 Redis Streams `conduit:stream:up`。
+3. server 以消费组拉取，解码、校验后写入 InfluxDB 3 的 `property` 表和 Redis 最新值。
+
+**存储与前端**
+- Redis 还存在线状态与设备身份缓存。
+- PostgreSQL 存租户、用户、组织、产品、设备、邀请、会话。
+- Vue 前端调用同一 server 的 REST 接口。邀请邮件经 `InvitationNotificationChannel` 发往 SMTP，演示环境由 Mailpit 收取。
 
 ![Conduit 租户内组织模型与设备归属](docs/images/organization-model.svg)
 
 | 模块 | 职责 |
 |---|---|
-| `conduit-common` | 跨进程共享：`MessageBus` 接口与 Redis Streams 实现、协议无关的 `RawMessage` |
-| `conduit-transport` | 协议接入层（对应 ThingsBoard 的 transport）：单活多备（Redis 选主，只有主实例连接 EMQX），主实例开 `connections` 条（默认 4）内存持久会话连接、以共享订阅分摊 EMQX 的投递，每条连接把设备报文攒成微批（`batch-size` 默认 64，不得大于 EMQX `max_inflight`，后者默认 512）一次写入总线；不做业务解析；主实例另经 EMQX REST API 按连接轮询会话指标告警 |
-| `conduit-server` | 业务核心：EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 写时序库/最新值）、REST API、多租户与用户、邀请/会话治理，以及租户内客户/项目/站点/资产和设备归属；邮件邀请经可替换通知接口发送 |
-| `conduit-simulator` | 演示用设备模拟器与可靠上报参考实现：自动创建演示产品/设备、导入演示物模型、按间隔上报；收到平台业务回执才从内存待确认队列删除，超时原样重发、队列满后背压；配置平台管理员密码后模拟各租户的物模型产品 |
-| `conduit-ui` | 前端：Vue 3 + TypeScript + Element Plus + ECharts；统一框架、首页、租户/用户管理、邮件邀请、个人会话、组织管理、设备归属与资源权限绑定 |
-| `conduit-e2e` | 端到端测试（`-Pe2e`）：Testcontainers 临时环境 + 本地 jar 进程，杀 server / 主 transport / 全部 transport、重启 EMQX 及可靠设备上报途中强杀 EMQX 五个场景不丢数据 |
-| `deploy/` | 开发环境包 `dev/`（开发用）、独立部署包 `standalone/`（基础服务 + 应用 + 演示邮箱 Mailpit）、拆分部署 `split/`（EMQX 单独一台主机，其余沿用独立部署包）、`package.sh`（打独立部署包）；项目名均为 `conduit`（所有部署包的 EMQX 容器名统一为 `conduit-emqx`） |
+| `conduit-common` | `MessageBus` 接口与 Redis Streams 实现、协议无关的 `RawMessage` |
+| `conduit-transport` | 协议接入层，单活多备（Redis 选主）。主实例开 `connections` 条（默认 4）内存持久会话连接，以共享订阅分摊 EMQX 投递；把报文攒成微批写入总线；经 EMQX REST API 按连接监控会话；不做业务解析 |
+| `conduit-server` | EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 时序库 / 最新值）、REST API、多租户与用户、邀请 / 会话、租户内组织与设备归属 |
+| `conduit-simulator` | 演示设备模拟器与可靠上报参考实现：自动建演示产品 / 设备，按物模型上报；收到业务回执才删待确认消息，超时重发、队列满背压 |
+| `conduit-ui` | Vue 3 + TypeScript + Element Plus + ECharts |
+| `conduit-e2e` | `-Pe2e` 端到端测试：Testcontainers + 本地 jar，五个故障场景不丢数据 |
+| `deploy/` | `dev/` 开发基础服务、`standalone/` 独立部署、`split/` EMQX 与应用分机、`demo/` 演示初始化脚本、`package.sh` 打包 |
 
 ### 1.2 关键设计决定
 
-- **项目/站点授权（V0.3-B2）**：五个预置角色、自定义角色与三级范围绑定；`PermissionGateFilter → AuthorizationService → MyBatis-Plus 租户/范围/分页拦截器`，列表、计数、详情与写入先在 SQL 中限制范围；访问 Redis/InfluxDB 之前必须查到已授权设备。业务请求每次回源 PostgreSQL，撤权/禁用下一请求生效。旧 role/JWT 保留，未显式接管的账号兼容旧角色，最早启用的未接管管理员为兼容 OWNER；保存绑定设置 `authz_managed=true`，空绑定不回落。至少保留一名启用 OWNER，授权替换在租户行锁内执行。`CONDUIT_AUTHORIZATION_MODE` 支持默认 shadow 观察、enforce 执行与 read-only 保留范围的只读保护。用户页可配置资源权限与自定义角色；项目管理员可在当前项目委派权限，不能触及租户和其他项目。产品保持租户级共享。B3 的邀请与会话见下文，持久化审计待 B4。详见 `docs/authorization.md`。
+#### 租户、组织与权限
 
-- **身份治理（V0.3-B3 当前切片）**：JWT 带 `sid` 和 `av`；每次访问以 PostgreSQL `user_session` 与 `app_user.authz_version` 校验，禁用、改权、登出或主动撤销的旧 access 下一请求失效。refresh 在同一会话中按哈希比较并轮换；旧版无 `sid` 令牌在生产默认拒绝，升级后用户需重新登录。邀请只保存一次性 token 的 SHA-256 哈希，48 小时过期，可撤销、只接受一次；邮件交付经 `InvitationNotificationChannel` 扩展点，首个实现为 SMTP，独立演示包用 Mailpit。邮件失败时创建事务回滚，未配置通道时拒绝创建。账号邀请**只支持租户级管理员/只读绑定，这是最终形态**——邀请时携带项目/站点范围角色已于 2026-10-27 决定不实施，需要细粒度范围的成员由管理员在接受邀请后到用户页配置；可复现演示见 `docs/identity-governance.md`。租户可配置密码策略、密码历史/过期/失败锁定与 MFA **已决定不实施**（2026-10-27，见第 4 节）。密码规则保持全局固定的 8～64 位含字母和数字；**登录失败不做锁定或限流**，在线猜测口令不受次数限制。
+**多租户**（V0.2-C，10-22 加固；隔离方案定为不采用 RLS，见第 4 节）
+
+*租户过滤*
+- `product`、`device`、`product_property` 等业务表带 `tenant_id`，由 MyBatis-Plus 租户拦截器按令牌中的租户自动过滤。
+- `tenant`、`app_user` 不过滤；按租户查用户必须显式带 `tenant_id`。
+- 关联表用 `(tenant_id, …)` 组合外键，数据库层拒绝跨租户关联。
+
+*跨租户访问*
+- 跨租户 Mapper 只能放在 `dev.conduit.server.tenant.system` 包，并标注 `@InterceptorIgnore`。
+- 调用必须经 `TenantContext.callAsSystem(purpose, …)`，每次进入记一行 INFO。
+- 一个事务只服务一个租户；已绑定租户的事务不得切换租户或进入系统模式。
+
+*Redis / InfluxDB 访问*
+- 必须先经受租户过滤的 PostgreSQL 查询拿到设备，再用查出的 `deviceKey` 读写，禁止直接用请求参数中的 `deviceKey`。
+- `conduit:auth:{deviceKey}` 是唯一的平台级例外：缓存身份必须携带可信的 `tenantId`，后续处理只采用该值。
+
+*角色与账号规则*
+- 角色：`PLATFORM_ADMIN`（`tenant_id` 为空，数据库约束保证）、`TENANT_ADMIN`、`TENANT_VIEWER`。
+- 用户名 3～32 位，字母开头（字母、数字、`_-.`），全平台唯一。
+- 密码固定为 8～64 位、含字母和数字，BCrypt 存储。不支持租户级密码策略、锁定或 MFA（已决定不实施）；**登录失败不限流**。
+- 租户编码 `^[a-z][a-z0-9-]{1,31}$`，不可修改。
+
+*平台管理员与租户保护*
+- 启动时若没有平台管理员，按 `CONDUIT_PLATFORM_ADMIN_USERNAME`（默认 `sysadmin`）/ `_PASSWORD` 创建；密码为空只记 WARN。
+- 默认租户 `default` 不能停用或删除。删除租户要求先没有产品和设备，用户随之删除。
+- 不能删除、禁用自己或修改自己的角色；本租户最后一个启用的管理员受保护（在租户行锁内检查）。
+- 停用租户时清该租户设备的身份缓存；之后 MQTT 鉴权拒绝该租户设备，已连接设备的上报进死信 `TENANT_DISABLED`。
+
+**会话与令牌**（V0.2-C + V0.3-B3）
+
+*令牌*
+- JWT access 15 分钟；refresh 7 天，放 HttpOnly Cookie。
+- 声明：`sub`、`tid`（平台管理员没有）、`role`、`typ`、`sid`、`av`；代入租户时加 `imp`，需改密码时加 `mcp`。
+
+*每次请求的校验*
+- 以 PostgreSQL 的 `user_session` 与 `app_user.authz_version` 校验：禁用、改权、登出、撤销会话在下一请求即失效。
+- refresh 在同一会话内按哈希比较并轮换；生产环境拒绝旧版无 `sid` 的令牌。
+
+*强制改密码*
+- 适用：新用户、首个管理员、被重置密码。
+- 此时除 `GET /auth/me`、`PUT /me/password` 与登录、刷新、登出外，一律返回 403 `PASSWORD_CHANGE_REQUIRED`。
+
+*代入租户*
+- 平台管理员经 `POST /platform/tenants/{code}/enter` 进入租户（停用租户返回 409），经 `POST /auth/exit-tenant` 退出；两者各记一行 INFO。
+- 代入期间每个写请求由 `ImpersonationLogFilter` 记一行 INFO，不记请求体；代入期间不能改密码。
+- 续期时若目标租户已停用或删除，退回平台管理员自己的令牌。
+
+**邀请**（V0.3-B3）
+- 只存一次性 token 的 SHA-256；48 小时过期，可撤销，只能接受一次。
+- 经 `InvitationNotificationChannel` 发送（首个实现为 SMTP）；邮件发送失败则回滚，未配置通道则拒绝创建。
+- **只支持租户级管理员 / 只读两种角色，这是最终形态**。需要细粒度范围的成员，接受邀请后由管理员到用户页配置。
+- 演示数据：`deploy/demo/identity-demo.py`；详见 `docs/identity-governance.md`。
+
+**组织模型**（V0.3-B1，Flyway V6 / V7）
+- `tenant` 是合同、计费、资源与安全边界。
+- `customer` 是租户内的业务归类，不是子租户。
+- `project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点，最多 8 层嵌套。
+- 产品是租户级共享模板。设备必须属于一个站点，可选关联同站点的资产；组合外键拒绝跨租户、跨站点关联。
+- V6 为每个租户建不可删除的默认项目与默认站点；新建租户在同一事务中创建两者。
+- V7 只为 4 个演示租户创建 `demo-*` 组织，并把演示设备分到主设备组；不覆盖已有组织或人工归属。
+- Redis 键与 InfluxDB 标签不含组织维度。
+
+**项目 / 站点授权**（V0.3-B2，详见 `docs/authorization.md`）
+- 权限模型：5 个预置角色、自定义角色、租户 / 项目 / 站点三级绑定。
+- 执行链：`PermissionGateFilter → AuthorizationService → 租户 / 范围 / 分页拦截器`。列表、计数、详情与写入都先在 SQL 中限制范围；访问 Redis / InfluxDB 前必须查到已授权设备。
+- 业务请求每次回源 PostgreSQL，撤权下一请求即生效。
+- 兼容旧账号：未接管的账号沿用旧 role；保存绑定后设 `authz_managed=true`，空绑定不回落到旧角色；最早启用的未接管管理员视为兼容 OWNER。
+- 约束：至少保留一名启用的 OWNER（授权替换在租户行锁内执行）；`tenant.manage` 只属于内置 OWNER；自定义角色有绑定时不能删除，停用立即生效。
+- 项目管理员只能委派本项目的权限。
+- 模式 `CONDUIT_AUTHORIZATION_MODE`：`shadow`（默认，只观察，按旧 `SecurityConfig` 路径矩阵放行）、`enforce`、`read-only`。持久化审计待 B4。
 
 ![项目与站点授权链路](docs/images/authorization-flow.svg)
 
-- **遥测缺测与零值（全局强制）**：遥测值 null/测点缺省表示该时刻没有上报数据；0 表示实际有效上报的零值，false/枚举0同样是有效值。禁止缺测补零；无有效样本的聚合桶为缺测，曲线已知缺口须断线，不能前值填充或插值。查询失败另报错误，不能返回全零或假装无数据。最新值须保留最后有效样本的时间戳。适用完整规则与当前缺口见 `docs/telemetry-value-semantics.md`；元数据 null 按各字段契约解释。
+#### 遥测语义与查询
 
-- **组织演示种子（Flyway V7）**：只为 V4 的四个演示租户创建固定 `demo-*` 编码的 8 客户、8 业务项目、16 业务站点、48 资产（设备区及主/备用设备组）；已有同编码组织不覆盖。仅将 V4 命名的演示设备从默认站点且无资产的状态分配至主设备组，保留人工归属、密钥与设备状态；普通新租户不灌演示业务数据。历史 V4/V6 迁移不修改，跨电脑复现由 V7 保证；运行数据继续由模拟器生成。
+**缺测与零值（全局强制，详见 `docs/telemetry-value-semantics.md`）**
+- null 或测点缺省表示该时刻没有上报；0、false、枚举 0 都是有效值。
+- 禁止缺测补零：无样本的聚合桶为 null，曲线在缺口处断线，不前值填充、不插值。
+- 查询失败另报错误，不返回全零。最新值保留最后一个有效样本的时间戳。
 
-- **组织模型（V0.3-B1）**：`tenant` 继续作为合同、计费、资源和安全边界；`customer` 是租户内业务归类，不是子租户；`project` 是主要授权范围，可选关联客户；`site` 必属一个项目；`asset` 必属一个站点并允许最多 8 层树形嵌套。产品仍为租户级共享模板。设备必须属于一个站点，可选属于该站点的资产，项目由站点推导；数据库以带 `tenant_id` 的组合外键拒绝跨租户或跨站点关联。Flyway V6 为每个存量租户创建不可删除的默认项目和默认站点并承接存量设备，新建租户在同一事务中创建两者。租户侧栏「组织」页面以客户/项目/站点/资产四个标签维护层级，只读用户仅查看；设备详情显示并可调整站点/资产。Redis 键和 InfluxDB 标签暂不增加组织维度；B2 前半段已以 SQL 范围验证项目/站点与设备归属，再访问缓存或时序数据（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
+**物模型与解码**
+- 属性类型：DOUBLE / INT / BOOL / TEXT / ENUM。逐测点校验，不合格测点剔除并记 `FIELD_REJECTED`。
+- 没有物模型的产品：数值一律按浮点处理。
+- 物模型缓存 60 秒，编辑后在事务提交后失效。
+- 解码器 SPI `PayloadDecoder`（`standard-json`、`flat-json`），按产品选择，名称重复则启动失败。
 
-- **消息总线**：经 `MessageBus` 接口，当前实现为 Redis Streams（消费组、`XPENDING` 认领、死信流 `conduit:stream:dead`）。将来评估 RabbitMQ（下行）、Kafka（大规模）时只换实现。
-- **投递语义**：至少一次。下游写入成功后才 ack；可恢复错误（时序库不可用、数据库连接失败等，判断时沿异常 cause 链查找）原地退避重试 1s→30s，不消耗投递次数；意外错误只把该条消息进死信 `PROCESSING_ERROR`；超过 5 次投递进死信 `MAX_DELIVERY_EXCEEDED`。接入侧：EMQX 使用**内存**持久会话（磁盘持久会话已于 2026-10-28 关闭，见第 4 节），transport 写入总线成功后才回 PUBACK；transport 离线（主备切换窗口）期间的消息排在 EMQX 会话的内存队列 mqueue 中，重连后补发。mqueue 容量 `EMQX_MAX_MQUEUE_LEN` 默认 100000，按主备切换窗口定容；**mqueue 驻留在会话进程堆内，与 `EMQX_CONNECTION_MAX_HEAP_SIZE`（256MB，实际按 1.5 倍即 384MB 触发）共享同一上限，调大队列容量前必须确认 `heap_size` 余量，不得反过来上调堆限**。队列溢出丢弃并计入 `dropped_msgs`，EMQX 重启则未投递消息丢失。**未达成**：计划要求测量的「mqueue 满载时 `heap_size` 与 384MB 堆限的余量」未取得——修复后队列峰值仅 128 条、从未满载，该风险只在入库彻底停摆时触发；在取得实测前不应上调 `EMQX_MAX_MQUEUE_LEN`。
-- **端到端可靠上报**（V0.2-R2）：属性上报顶层带 1～128 字符字符串 `id` 即启用；此时 `ts` 必填且重发保持不变。transport 在 `XADD` 成功后向 `conduit/{productKey}/{deviceKey}/down/ack` 发布 QoS 0 `{"id":...,"ts":receivedAt}`，含义是“平台已持久接收”，不是“已入库”。回执失败不影响 PUBACK，设备收不到会原样重发；真实设备必须把待确认队列持久化到本地。无 `id` 的旧设备行为不变，但只有逐跳 QoS 1 保证：在 EMQX 重启或队列溢出时会丢失消息。当前幂等依靠同设备同 `ts` 覆盖，尚无按 id 去重。
-- **演示数据种子**（Flyway V4）：全新库预置 4 个租户、8 个产品、174 台设备、36 个物模型属性，名称与开发演示环境一致；已有租户按 code、产品按租户内名称、设备按产品内名称复用，升级不重复。种子设备只有不可用的占位密钥哈希，模拟器启动后经 API 重置；在线状态、最新值和历史曲线不写迁移，由模拟器写 Redis / InfluxDB。独立部署的 `SIM_PLATFORM_PASSWORD` 默认复用 `CONDUIT_PLATFORM_ADMIN_PASSWORD`，自动模拟全部演示租户（`2026-10-20-conduit-demo-seed-design.md`）。
-- **transport 单活多备**（V0.2-R）：
-  - 会话与订阅：主实例开 `conduit.transport.mqtt.connections` 条连接（默认 4），全部 `cleanStart=false`、会话保留 86400 秒，订阅选项 `retainHandling=DO_NOT_SEND`（重连不重放保留消息）。多于 1 条时订阅**共享订阅** `$share/conduit-transport/conduit/+/+/up/#`，由 EMQX 把投递分散到各连接进程。**为什么**：EMQX 每条连接由一个 Erlang 进程负责、单核封顶，单连接时全平台上行挤过同一个进程（2026-10-29 recon 实测 9,000 条/秒时该进程 3 秒 1,500～1,800 万 reductions，约为单个设备连接的 350 倍，已顶在单调度器上限，信箱持续增长直至 `mailbox_overflow` 被杀）。clientId：第 0 条沿用 `conduit-transport`，第 i 条为 `conduit-transport-i`——**必须保留 `conduit-` 前缀**，transport 超级用户鉴权要求（`MqttAuthService`）。**升级路径**：第 0 条以旧 clientId 接管旧会话、补发其中排队的消息后**退订旧的非共享过滤器** `conduit/+/+/up/#`（否则这条连接仍收全量，共享订阅形同虚设）；全新安装时 EMQX 回 NO_SUBSCRIPTIONS_EXISTED 视为成功，其他原因码视为失败由协调器重试。**上下线事件 `$SYS/...` 只由第 0 条订阅**，否则重复 K 次。EMQX 分发策略 `mqtt.shared_subscription_strategy = hash_clientid`，同一设备固定走同一条连接、单设备保序（**键在 `mqtt` 下而非 `broker` 下**，写成 `EMQX_BROKER__...` 会被静默忽略）。`connections=1` 时与改动前完全一致（旧 clientId、普通订阅、不退订），即回退开关。共享订阅成员离线时，落到它的消息排进其持久会话、重连后补发，不丢也不改派（实测），所以主备切换时新主以同一组 clientId 接管即可补回；副作用是若只有一条长时间断开，约 1/K 流量滞留其会话（延迟而非丢失，超 mqueue 上限 10 万才丢）。`LeaderElection` 本就接收适配器列表，选主逻辑未改。见 `docs/superpowers/specs/2026-10-29-conduit-transport-shared-subscription-design.md`。
-  - 选主：Redis 键 `conduit:transport:leader`，抢锁是一段 Lua 脚本（键不存在则 `SET PX`；键里已是本实例 id 则刷新 TTL 并视为抢到，所以 Redis 抖动后原主立即拿回锁；否则拒绝），续期与释放同样 Lua 比对 id 后 `PEXPIRE` / `DEL`；ttl 15s，续期 5s，抢锁 2s。只有主实例连接 EMQX；续期失败立即断开并转为备用，正常停止时释放锁（compose 中两个 transport 均 `stop_grace_period: 20s`）。transport 的 Redis 命令超时为 2s。
-  - 重连：适配器不用 HiveMQ 自动重连。断线或会话被接管时，由选主协调器先续期确认仍持锁，再重新连接；SUBACK 含错误码视为失败。
-  - 日志：抢锁或适配器启动首次失败 WARN，后续重试 DEBUG，恢复与每次角色变化 INFO。
-  - 健康检查：`components.leader.details` 显示 `role` / `instanceId` / `connected`，`connected` 仅在已连接且订阅被批准后为 true。
-  - 已解决的旧版问题：EMQX 5.8.6/5.8.9 在正常停止交接时曾出现持久会话补发错位并丢少量消息；升级到当前项目版本 5.10.5 后，专项实验 9 次均未复现。Broker 自身崩溃仍可能丢已确认消息，见 `docs/durability-validation.md`。
-- **transport 微批与会话监控**（2026-10-28）：原先每条消息一次 `XADD`，持续投递上限实测约 1230 条/秒；改为攒批写入，稳态约 1980 条/秒。规则是 `conduit.transport.mqtt.batch-size ≤ EMQX mqtt.max_inflight`，且窗口应为批的若干倍，默认 **512 / 64**；**`max_inflight` 还必须显著小于 EMQX 的 `force_shutdown.max_mailbox_size`（默认 1000）**，在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 `mailbox_overflow` 强杀（初版曾写「必须相等，均为 32」、后改 1024，均已被实测推翻，见第 4 节）：相等是停等协议（发 N 条、等全部确认、再发 N 条），窗口远大于批才能流水线化；批大于窗口则批永远攒不满、每批白等满 `batch-delay` 5ms。主实例经 EMQX REST API 轮询会话指标，对丢弃、队列水位、会话进程内存、投递停滞、持久会话被意外启用、批大小超过窗口六项告警（健康明细含 `inflightToBatchRatio`），**只有「投递停滞」把健康检查置为 DOWN**。压测复验（3000 条/秒 × 180 秒）：投递 367,376 条、丢弃 0、超堆被杀 0、mqueue 峰值 128、停压后自愈排空（对比：磁盘持久会话下投递冻结在 39,811；内存会话但未微批时投递 307,263 且丢弃 53,552）。
-- **e2e**（V0.2-R/R2）：`ReliabilityE2EIT` 在 Testcontainers 临时环境中运行。EMQX 使用内存持久会话，并固定一个 20000～29999 的随机宿主机端口，以便容器重启后端口不变。测试本地以 jar 启动 1 个 server、2 个 transport，配置全部经环境变量传入，口令每次随机生成。前四个场景仍用 PUBACK 设备验证应用进程故障与正常重启；第五个场景用业务回执设备并向 EMQX 发 SIGKILL。各发 500 条，断言计数恰好、无死信、无待确认。「重启 EMQX」场景使用带 `id` 的可靠上报设备（内存持久会话在 EMQX 重启后不保留未投递消息，实测该场景设备重发 20 条，证明机制确被考验）。运行需 `E2E_DEV_HOST`：先 `mvn -B -DskipTests install`，再 `mvn -B verify -Pe2e -pl conduit-e2e`。
-- **模拟器多租户**（V0.2-R）：
-  - 发现：`SIM_PLATFORM_PASSWORD` 非空时，用平台管理员（`SIM_PLATFORM_USERNAME`）发现 `SIM_TENANTS` 中启用租户的物模型产品与启用设备（每产品最多 `SIM_MAX_DEVICES_PER_PRODUCT` 台），并重置其密钥；`SIM_EXCLUDE_PRODUCTS`（名称或 productKey，逗号分隔，默认 `压测产品`，配成空表示不排除）中的产品在读物模型与重置密钥之前跳过，避免与压测脚本共用设备而互相作废密钥；任一租户失败只记 WARN。退出租户失败时用平台管理员重新登录，再失败则发现停止并保留已发现的部分；单台设备重置密钥失败只跳过该设备。
-  - 生成：按解码器选上报格式，按物模型规则生成数据（spec 5.2），取值满足上下限与小数位；日曲线按系统时区（Docker 中 `TZ=Asia/Shanghai`）。产品含 eday/etotal/发电/光伏/pv/solar 测点或辐照度测点即为光伏模型，其 kW/W 功率测点（如交流功率）按日照曲线（夜间为 0）并累加成日发电量，用电类模型的功率按用电曲线；有多个功率测点时取最大的一个，不求和。
-- **多租户与用户**（V0.2-C，2026-10-22 加固）：`product`、`device`、`product_property` 带 `tenant_id`，MyBatis-Plus 租户拦截器按令牌中的租户自动过滤；`tenant`、`app_user` 不过滤，按租户查用户必须显式带 `tenant_id`。`device`、`product_property` 通过 `(tenant_id, product_id)` 组合外键引用 `product(tenant_id, id)`，数据库拒绝跨租户关联。真正的跨租户 Mapper 只能位于 `dev.conduit.server.tenant.system` 包并标注 `@InterceptorIgnore`，调用方还必须经 `TenantContext.callAsSystem(purpose, ...)` 进入系统模式；每次进入记 INFO 日志，系统模式内误用普通 Mapper 会因无租户上下文失败。一个数据库事务只服务一个租户：已有租户绑定的事务不得切换租户或进入系统模式；平台事务从未绑定状态进入一种模式仍允许。角色 `PLATFORM_ADMIN`（不属于任何租户，`tenant_id` 为空，数据库约束保证）/ `TENANT_ADMIN` / `TENANT_VIEWER`；用户名 3～32 位字母开头（字母、数字、`_-.`）全平台唯一，密码 8～64 位含字母和数字（BCrypt），租户编码 `^[a-z][a-z0-9-]{1,31}$` 不可改；用户与租户状态 `ACTIVE`/`DISABLED`。启动时没有平台管理员则按 `CONDUIT_PLATFORM_ADMIN_USERNAME`（默认 `sysadmin`）/ `CONDUIT_PLATFORM_ADMIN_PASSWORD` 创建，密码为空只 WARN。默认租户 `default` 不能停用或删除；删除租户需无产品与设备，用户随之删除。租户用户保护：不能删除、禁用自己或改自己的角色，本租户最后一个启用的 `TENANT_ADMIN` 不能被降级、禁用或删除（租户行锁内检查）。停用租户时清除该租户设备的身份缓存 `conduit:auth:*`；设备身份带租户状态，MQTT 鉴权拒绝停用租户的设备，已连接设备的上报进死信 `TENANT_DISABLED`。访问 Redis 最新值/在线状态与 InfluxDB 前，必须先经受租户过滤的 PostgreSQL 查询取得设备，再使用查出的 `deviceKey`，禁止用请求参数中的 `deviceKey` 直接读写；`conduit:auth:{deviceKey}` 是有意的平台级例外，缓存身份必须携带可信 `tenantId`，后续处理只采用该值。
-- **权限与会话**（V0.2-C）：JWT（access 15 分钟、refresh 7 天 HttpOnly Cookie）声明 `sub` 用户 id、`tid`（平台管理员没有）、`role`（有效角色）、`typ`，代入时加 `imp`（平台管理员 id），需改密码时加 `mcp`。登录拒绝禁用用户与停用租户；续期重读数据库（shadow 下禁用、停用、角色变化最长 15 分钟生效；enforce/read-only 下业务请求每次检查数据库当前状态与授权），代入令牌续期时目标租户停用或删除则退回平台管理员自己的令牌。旧兼容 `shadow` 模式下，`SecurityConfig` 按路径与方法统一判断：`/platform/**` 仅平台管理员（代入令牌的有效角色是 `TENANT_ADMIN`，被拒），`/users/**` 租户管理员，其余 `/api/v1/**` GET 为租户管理员与只读用户、写为租户管理员，`/auth/**`、`/me/**` 所有登录用户，`/actuator/**` 除 health 外仅平台管理员；前端只隐藏入口。需改密码时（新用户、首个管理员、被重置密码）除 `GET /auth/me`、`PUT /me/password`、登录/刷新/登出外一律 403 `code=PASSWORD_CHANGE_REQUIRED`，`PUT /me/password` 返回新令牌。进入租户 `POST /platform/tenants/{code}/enter`（停用租户 409）与退出 `POST /auth/exit-tenant` 各记 INFO，代入期间每个写请求由 `ImpersonationLogFilter` 记一行 INFO（不记请求体），代入期间不能改密码。
-- **物模型**（V0.2-A）：产品定义属性（DOUBLE/INT/BOOL/TEXT/ENUM），上报按属性逐测点校验；不合格测点被剔除并记录 `FIELD_REJECTED`；没有物模型的产品按 V0.1 规则（数值一律浮点）。物模型缓存 60 秒，编辑后提交事务再失效。
-- **解码器**：`PayloadDecoder` SPI，按产品选择（`standard-json`、`flat-json`），名称重复启动即失败。
-- **时序库**：InfluxDB 3 Core 3.12.0，自写 HTTP 客户端（`/api/v3/write_lp`、`/api/v3/query_sql`），所有产品共用表 `property`，tag 为 `tenant_id`/`product_key`/`device_key`，每个测点一列，保留 30 天。列类型全表共享：同名测点在所有产品中必须是同一类型（例如模拟器只给物模型含枚举 st 的演示产品发送 st，e2e 等无物模型产品不发）。
-- **历史查询**（V0.2-B）：`GET /api/v1/devices/{deviceKey}/history`，单设备 1～8 个测点，跨度 1 分钟～30 天（默认最近 1 小时）。先计数：每个测点 ≤ 1000 点时返回原始点，否则在固定档位（1s、5s、10s、30s、1m、5m、15m、30m、1h、3h、6h、12h）中取使桶数 ≤ 1000 的最小桶，用 `date_bin`（原点 1970）聚合：数值 avg/min/max，布尔/枚举取桶内最后值（`selector_last`）。SQL 参数化，时间参数用 ISO-8601 UTC 字符串；列名只用 `InfluxSchema`（60 秒缓存，未知列强制刷新一次）确认存在的标识符；InfluxDB 不可达或 5xx → 503，其他查询错误 → 500 且不暴露 SQL；**文件扫描上限例外**——InfluxDB 把它报成 500，但缩短范围即可成功，按报文中的 `parquet files` + `file limit` 两个关键词识别后映射为 400 并带稳定错误码 `HISTORY_SCAN_LIMIT`（`ApiException` 支持可选 code，经 `GlobalExceptionHandler` 写入 ProblemDetail 的 code 属性）。**可查询跨度由 `INFLUXDB3_QUERY_FILE_LIMIT` 决定**（单次查询可打开的 parquet 文件数，Core 默认 432，本项目设 5000）。parquet 按 `--gen1-duration` 切分，而它**只接受 1m/5m/10m**，默认 10m 已是最大，**无法降低文件数**，144 个/天是下限；Core 不做 compaction，标签过滤也不减少文件数。于是默认 432 ÷ 144 = 3 天，即默认配置下任何超过 2 天的查询都必然失败；30 天需要 4320 个，故取 5000。再往上放大会显著抬高内存与延迟，真正的解法是分段查询（V0.3-E）。InfluxDB 容器设 `mem_limit`（默认 3g），防止长范围查询拖垮宿主机。前端查询失败时不弹 toast（快捷范围每 30 秒自动刷新会刷屏），改为保留旧曲线并常驻提示本次失败与旧曲线的真实时间范围；首次加载失败显示可重试空状态。前端 ECharts 6.1.0（5.6.0 存在 XSS 公告 GHSA-fgmj-fm8m-jvvx，故升级）经 `echarts/core` 按需引入（不用 vue-echarts），每测点一张联动小图，框选缩放后重新查询。
-- **流水线吞吐**（2026-10-27 压测，2026-10-29 更新）：`PipelineWorker` 启动 `conduit.pipeline.workers` 条（默认 4）虚拟线程，每条是消费组中一个独立消费者（名为 `consumer-序号`），各批完成顺序不确定但下游均不依赖顺序（最新值按测点比较 ts、InfluxDB 按（序列, ts）幂等、在线状态有 since 守护）；`workers` 非正数启动即失败。每批只写一次 InfluxDB，而写入要等 WAL 刷盘（`--wal-flush-interval` 默认 1s，`no_sync` 保持默认 false）。**不要缩短刷盘间隔**：2026-10-29 实测 100ms 使 influx 阶段从约 630ms 降到约 79ms，但批从约 1 万条缩到约 1,700 条，每批约 120～260ms 的固定开销摊不薄，吞吐反降 36%——那 1 秒等待实际在攒批。写最新值前用 `LatestCoalescer` 剔除同批内被后续消息完全覆盖的点（同设备、后续 ts 不早于且测点为超集），每批每台设备通常只剩一次脚本调用；只在批量路径合并，批量失败的逐条回退不合并，被剔除者照常 ACK。分阶段指标 `conduit.pipeline.stage{stage=total|identity|decode|influx|latest|ack}`（total 只在属性批记录，保证与子阶段分母一致）与 `conduit.pipeline.batch.size`。以下为 2026-10-27 的单消费者结论：因此 `conduit.pipeline.batch-size` 直接决定吞吐上限，**默认 `20000`**（2026-10-28 起；`-1` 仍合法，表示不限，取走当前可读的全部，但会随流 `MAXLEN` 100 万条无界占内存，故不再作默认）。写入按 `conduit.influx.max-request-bytes`（默认 8 MiB，须小于 InfluxDB 的 `max_http_request_size` 10 MiB）自动切块，所以批再大也不会 413；**413 与 400 同属不可恢复**，不得当成「下游不可用」原地重试——否则会无限重发同一超大载荷而永久停摆。实测：批大小不限时 21 万条积压一次读完、76 秒处理完、约 2,780 条/秒，入库数与发送数一致。接入侧（EMQX 持久会话 + transport）的可用上限在 1500～3000 条/秒之间，3000 时 PUBACK p95 升至约 3 秒并可能触发会话楔死（见第 4 节）。
-- **遥测重放**（V0.2-R3）：平台管理员按时间范围把 Redis 上行流中保留的原始报文重新写入时序库，用于 InfluxDB 断电丢数后的恢复。接口 `POST`/`GET`/`DELETE` `/api/v1/platform/telemetry/replay`（权限沿用 `/api/v1/platform/**` 规则），体 `{from, to}` 为毫秒、左闭右开，二者在 0～253402300799999 内、`from < to`、跨度不超过 6 小时，否则 400；同一时刻只允许一个任务（运行中再次提交 409，查询与取消都不带任务 id），`GET` 在从未提交时返回 `{"state":"NONE"}`。任务状态只在内存（单个 `AtomicReference`，不持久化，最近一次完成的状态保留到下次提交）。执行：按条目 id 区间 `XRANGE` 分批（每批 500）读取（流条目 id 前半段即毫秒时间戳），每批之间检查取消标志；可恢复错误退避重试至多 `MAX_ATTEMPTS`=8 次（约 90 秒，足以跨过一次 InfluxDB 重启而不致无法取消），超限则 `FAILED`；取消只在批次之间检查；若此时正处于重试阶梯，要等该阶梯结束（最长约 90 秒）才会停下。统计 `scanned`/`written`/`skipped`/`rejected`。**时钟来源**：条目 id 取自 Redis 服务端时钟而非应用时钟（实测偏差约 650 毫秒），运维选窗口时两端应各多留约 1 分钟。**可回溯范围**：流约保留 `MAXLEN`（默认 100 万条）条，当前演示负载约 16 小时，随流量变化。**重放不更新在线状态、不写死信**（旧数据会把离线设备标成在线、死信会被重复写入污染首页统计），因为写入幂等（同 ts 覆盖、最新值按 ts 比较），可与正常消费并行、重复重放无害。实现上「解码 → 校验 → 写库 → 写最新值」抽为 `TelemetryIngestor`（`prepare` 带 `IngestSource` 参数 `LIVE`/`REPLAY`，指标 `conduit.pipeline.rejected_fields` 带 `source` 标签以区分重放中的拒绝），退避重试抽为 `Backoff`（流水线用无上限、重放用有上限），由正常消费与重放共用；`MessageBus` 增加只读的 `range(startId, endId, count)`（不进消费组、不改待确认列表）。前端「系统管理 → 数据重放」页提交范围、每 2 秒轮询、可取消。
-- **首页总览与计数**（界面刷新）：`GET /api/v1/overview` 按当前租户返回产品数、属性总数、设备数（启用/禁用/在线）、最后上报最近的 5 台设备、各产品设备数（在线/总数，按设备数降序）与最近 1 小时死信（`XREVRANGE` 死信流到 1 小时前、最多 1 万条，只统计 `pk` 属于本租户产品的条目，按 `reason` 分组）。`ProductView` 带 `deviceCount`/`onlineCount`，`UserView` 带显示名称、租户编码与名称、是否需改密码与代入者（`impersonatedBy`）。设备计数统一由 `DeviceStats` 计算（PostgreSQL 分组计数 + Redis 在线状态批量读取）；Redis 不可用时在线数、最近上报与死信为 null（列表为空），其余照常，前端显示「—」。本期读出租户全部设备再统计，设备到万级时改增量计数（见 backlog）。
+**时序库**
+- InfluxDB 3 Core 3.12.0，自写 HTTP 客户端（`/api/v3/write_lp`、`/api/v3/query_sql`）。
+- 所有产品共用表 `property`，tag 为 `tenant_id` / `product_key` / `device_key`，每个测点一列，保留 30 天。
+- 同名测点在全表必须同一类型。
 
-- **平台吞吐总览**（2026-10-29）：`GET /api/v1/platform/overview` 增加 `throughput`，平台首页「实时吞吐」一行显示入库 TPS、峰值 TPS、累计入库与累计死信。速率由 `ThroughputSampler` 自带的守护线程每 5 秒抄一次 Micrometer 累计值（环形缓冲 13 格，窗口 60 秒），用首尾差值除以耗时得到；**不启用全局 `@EnableScheduling`**。**口径是 server 本进程、启动即归零**，多实例各不相同，跨重启与跨实例的口径只看 Prometheus/Grafana，界面上已写明这一点。遵循全局遥测语义：**采样不足两次时速率为 `null`（界面显示「—」并提示「采样中」），真实零流量显示 `0`**，两者不得混同。累计死信为所有 `reason` 之和。
-- **前端框架与外观**（界面刷新）：分组侧栏按身份给出（平台管理员：概览 / 系统管理→租户；租户管理员与代入者：概览 / 设备接入 / 系统管理→用户；只读用户：概览 / 设备接入）、可折叠、宽度 < 820px 自动折叠，侧栏有浅色/深色两种风格（默认深色）；顶栏为全局面包屑（路由 `meta.breadcrumb`，详情页用 `useBreadcrumb` 设置对象名称）、外观设置、租户名称与用户菜单（显示名称、角色、个人设置、退出登录），代入时顶栏下方固定显示代入提示条与「退出」，需改密码时弹出不可关闭的改密码对话框；路由 `meta.scope`（tenant / platform）与 `meta.requires`（manageUsers）由守卫与 AppLayout 统一处理，身份不匹配时改去租户管理或首页；`/home` 对未代入的平台管理员显示平台首页；浏览器标题「<页面名或对象名称> · Conduit」；`/` 重定向到 `/home`，未知地址显示 404。暗色模式用 Element Plus 暗色变量（`<html>` 的 `dark` 类），主题 浅色/深色/跟随系统（默认跟随系统）；外观偏好（主题、侧栏风格、侧栏折叠、最新值视图）存 `localStorage` 键 `conduit.ui`，读写失败用默认值。ECharts 图表随主题销毁重建（内置 `dark` 主题，背景透明）。设备详情为信息卡 + 指标卡片：前 8 个数值测点一次历史查询画最近 1 小时迷你趋势线（60 秒刷新，数值 5 秒刷新），布尔/枚举显示文字标签；点击卡片进入 `?tab=history&props=<标识>`，历史页从 `props` 读取初始选中。
-- **在线状态**：Redis hash `conduit:presence:{deviceKey}`（online / since / clientIp / source / lastSeen），由 Lua 脚本 `presence-apply.lua` 原子写入。两个来源：①EMQX 上下线事件（权威，时间为 EMQX 时钟，只接受 `eventTime >= since` 的事件，`since` 是唯一的乱序保护）；②设备上报数据（补偿设备在 transport 订阅之前就已连接、没有连接事件），在数据落库并 ACK 后由流水线每批按设备 pipeline 一次写入（尽力而为，失败只记 WARN）。数据时间是 transport 的接收时间 `receivedAt`，与 EMQX 时钟不同源，所以**数据永远不推进 `since`**：无记录 → 置在线；已在线 → 不改（只刷新 lastSeen）；已离线 → 仅当 `ts > since + 10 秒宽限期`（`PresenceStore.DATA_ONLINE_GRACE_MILLIS`）才复活。记录由数据产生（source=data）时 `since` 不可信，EMQX 事件总是生效。上线事件无 IP 时保留原 IP。
-- **设备列表筛选**：`GET /api/v1/devices` 在 productKey / keyword 之外支持 `online`（true|false）、`status`（ENABLED|DISABLED，不区分大小写）、`reported`（RECENT=最近 1 小时内有上报 | STALE=有上报但更久 | NEVER=从未上报）、`createdFrom`（毫秒，含）、`createdTo`（毫秒，不含），范围 0～253402300799999，非法值 400。status / 创建时间 / 产品 / 关键字在 SQL 过滤；`online` 与 `reported` 依赖 Redis，走「SQL 取全部匹配设备 → 批量读 Redis → 内存过滤 → 内存分页」，`total` 为过滤后数量，Redis 不可用返回 503「在线状态暂不可用」，开销 O(设备数)（见 backlog）。`reported` 依据设备时间戳（最新值 `__last`），`online` 依据 receivedAt / 事件时间，两者可能不一致。
-- **日志**：所有 Java 服务写文件日志，目录由环境变量 `CONDUIT_LOG_DIR` 指定（默认 `logs`，相对工作目录），每服务一个文件 `<服务名>.log`；按天 + 按大小滚动（单文件 50MB、保留 14 天、总量 1GB，归档 `<名>.%d{yyyy-MM-dd}.%i.log.gz`），控制台输出不变。server / transport 通过 `application.yml` 的 `logging.file.name` 与 `logging.logback.rollingpolicy.*` 配置；simulator 用 logback-classic + 自带 `logback.xml`（不再用 slf4j-simple）；测试 profile 写 `target/test-logs`，e2e 用 `logback-test.xml` 只输出控制台。独立部署包中 server、simulator 与两个 transport 容器共用命名卷 `conduit-logs`（`/var/log/conduit`），第二个 transport 写入其 `transport-2` 子目录。
-- **部署**（部署包整理）：
-  - 两个包都可直接放到 Linux 上 `docker compose up -d`，项目名均为 `conduit`、数据卷同名（`conduit_pg-data` 等），同一宿主机二选一，切换时数据沿用。
-  - 开发环境包 `deploy/dev`：PostgreSQL、Redis、InfluxDB、InfluxDB Explorer、EMQX。EMQX 默认用官方镜像 `emqx/emqx:5.10.5`（可由 `EMQX_IMAGE` 覆盖），`emqx/base.hocon.tpl` 与 `emqx/acl.conf` 只读挂载（需对 uid 1000 可读），启动命令用 `sed` 渲染回调地址与内部 token；EMQX 不依赖 conduit-server（自行重试鉴权回调）。Redis AOF 使用 `appendfsync always`。`.env` 只含基础服务变量，`CONDUIT_AUTH_URL` 必填（开发机 `http://<dev-host>:8080`），`BIND_ADDR` 默认 `0.0.0.0`。
-  - 独立部署包 `deploy/standalone`：以 `extends` 引用 dev 包的 5 个服务（相对路径按 dev 文件解析；插值用独立部署包的 `.env` 并执行 dev 包的必填检查，所以独立部署包的 `.env` 含 dev 包的全部必填变量，`CONDUIT_AUTH_URL=http://conduit-server:8080`，EMQX 也以该值覆盖），数据卷在独立部署包文件中同名重新声明。应用服务：conduit-server、两个 transport（`conduit-transport`、`conduit-transport-2`，YAML 锚点复用配置，`stop_grace_period: 20s`，后者日志在 `conduit-logs` 卷的 `transport-2` 子目录；不用 `deploy.replicas`，避免两个进程滚动同一个日志文件）、conduit-web、模拟器（默认启动，不用 profile）。
-  - 镜像：构建上下文为仓库根目录，`deploy/standalone/docker/java.Dockerfile`（参数 `MODULE`、`JAR_NAME`，运行镜像 `eclipse-temurin:21.0.6_7-jre`）与 `web.Dockerfile`（`nginx:1.27.4-alpine`，`conduit-ui/nginx.conf`）。全局 `ARG BUILD_FROM=prebuilt`：阶段 `prebuilt`（`FROM scratch`）从 `deploy/standalone/artifacts/` 复制产物，阶段 `source` 用 `maven:3.9.9-eclipse-temurin-21` / `node:22.14.0-alpine` 从源码编译（需联网），`FROM ${BUILD_FROM} AS app` 选择，BuildKit 只构建选中的阶段；`.env` 中 `BUILD_FROM=prebuilt|source`。根 `.dockerignore` 排除 `.git`、`node_modules`、`target`、日志、IDE 与本地配置。
-  - 拆分部署 `deploy/split`（2026-10-30）：EMQX 主机 `split/emqx/docker-compose.yml`（项目名与容器名均为 `conduit-emqx`）以 `extends` 引用 dev 的 emqx，`.env` 含 dev 文件全部必填项（用不到的填占位）；容量参数按所有者要求取 EMQX 5.10.5 接受的最大值（inflight 65535、mqueue infinity、关闭 force_shutdown、TCP backlog 与容器 somaxconn 65535、报文 256MB，均经临时容器验证），代价是过载时由「单连接被杀」变为积压涨到整个节点内存耗尽，transport 的队列水位告警在 mqueue 不限时失效；应用主机 `split/app/docker-compose.yml`（项目名 `conduit`，与独立部署包共用数据卷）逐个列出除 EMQX 外的全部服务，每个以 `extends` 引用 standalone 的同名定义，只改 transport / 模拟器 / Prometheus 指向 `EMQX_REMOTE_HOST`，并以 `depends_on: !override` 去掉对本机 emqx 的依赖（需 Compose ≥ 2.24.4）；`split/app/.env.example` 由 standalone 的改出，标注「拆分部署」的几处不同，修改 standalone 的示例时须同步。从单机切换时 `up -d --remove-orphans` 移除原 EMQX 容器。两边 `deploy/` 须在同一绝对路径（EMQX 主机只开 Docker 远程 API 时，在应用主机上用 `DOCKER_HOST` 部署，挂载路径解析到 EMQX 主机的磁盘）。Prometheus 的 EMQX 抓取地址由 `EMQX_METRICS_TARGET`（默认 `emqx:18083`）渲染进模板。鉴权回调是 EMQX 主机 → 应用主机的同步调用，应用主机在 NAT 后时须端口转发或改桥接。EMQX 开源版无 vhost，多套环境共用一台 EMQX 会在 transport clientId、共享订阅组与鉴权回调上互相干扰，本包一台 EMQX 对应一套环境。
-  - Docker 宿主机无外网：开发机执行 `deploy/package.sh`，从当前提交的干净检出（git worktree）编译，产物放入 `deploy/standalone/artifacts/`（jar 三个 + `ui/`），把 `deploy/`（不含 `.env`）、根 `.dockerignore` 与 `conduit-ui/nginx.conf` 打成 `target/conduit-standalone-<短提交>.tar.gz`，复制到宿主机解压后以 prebuilt 启动。
-  - 性能观测栈：dev 文件定义 prometheus（v3.5.0）、grafana（11.6.1）、node-exporter、cadvisor、redis-exporter，全部在 profile `metrics` 下，不加 `--profile metrics` 不启动，standalone 用 `extends` 引用；每个服务设 `mem_limit`，合计约 1 GB，Prometheus 保留期 7d + 2GB 上限，Grafana 不开匿名。抓取配置 `deploy/dev/prometheus/prometheus.yml.tpl` 启动时渲染 EMQX API key；预置面板 `deploy/dev/grafana/dashboards/conduit-bottleneck.json`。应用经 `micrometer-registry-prometheus` 暴露 `/actuator/prometheus`，权限仍是除 health 外仅平台管理员；server 指标改由 `/internal/metrics` 抓取（沿用 `/internal/**` 由控制器自校验 `CONDUIT_INTERNAL_TOKEN` 的模式，见第 4 节）。
-  - 容器名固定（`container_name`）：只有一个实例的服务不带 `-1` 后缀——`conduit-postgres`、`conduit-redis`、`conduit-influxdb`、`conduit-influxdb-explorer`、`conduit-emqx`、观测栈 `conduit-prometheus` 等（定义在 dev 文件）与 `conduit-mailpit`、`conduit-server`、`conduit-web`、`conduit-simulator`（定义在 standalone）；可多实例的 transport 为 `conduit-transport-1` / `conduit-transport-2`（注意与 transport 的 MQTT clientId `conduit-transport`、`conduit-transport-1`… 是两套命名）。split 经 extends 继承。EMQX 容器 `ulimits.nofile` 软硬均 1048576：每条 MQTT 连接占一个文件描述符，Docker 默认软限制 1024 时约 1,000 台设备即 `emfile`、内置 Mnesia 崩溃并反复重启（2026-10-30 实测）；
-  - EMQX 磁盘持久会话已关闭（`EMQX_DURABLE_SESSIONS__ENABLE=false`，`deploy/dev/docker-compose.yml` 保留一处说明原因），改用内存持久会话；`EMQX_CLUSTER__DISCOVERY_STRATEGY=singleton`、`EMQX_NODE__NAME=emqx@127.0.0.1` 仍写在 compose 环境变量中，不在 base.hocon；
-  - **`.env` 新增两个必填变量 `CONDUIT_EMQX_API_KEY` / `CONDUIT_EMQX_API_SECRET`**（EMQX REST API 只读 API key，经 `api_key.bootstrap_file` 下发；EMQX 5 的 REST API 不接受控制台账号密码，实测 401 `BAD_API_KEY_OR_SECRET`），不设置则 compose 直接启动失败，现有部署升级时必须补上；
-  - 固定节点名的副作用：控制台里改过的密码会恢复为 `.env` 值，首次重建后 EMQX 数据目录为全新。
+**历史查询** `GET /api/v1/devices/{deviceKey}/history`（V0.2-B）
+
+*参数与降采样*
+- 单设备 1～8 个测点，跨度 1 分钟～30 天，默认最近 1 小时。
+- 每个测点 ≤ 1000 点时返回原始点；否则从固定档位（1s～12h）中选使桶数 ≤ 1000 的最小桶，用 `date_bin`（原点 1970）聚合。数值取 avg / min / max，布尔与枚举取桶内最后值。
+
+*安全与错误码*
+- SQL 参数化；列名只用 `InfluxSchema` 确认存在的标识符。
+- InfluxDB 不可达或返回 5xx → 503；其他查询错误 → 500，不暴露 SQL。
+- 扫描文件数超限（报文同时含 `parquet files` 与 `file limit`）→ 400 + `HISTORY_SCAN_LIMIT`。
+
+*可查询跨度*
+- 由 `INFLUXDB3_QUERY_FILE_LIMIT` 决定：Core 默认 432，本项目设 5000。
+- 原因：`--gen1-duration` 只接受 1m / 5m / 10m，默认 10m 已是最大，固定每天 144 个文件；Core 不做 compaction，标签过滤也不减少文件数。
+- 30 天需要 4320 个文件，故取 5000；30 天为外推，未实测。更长跨度靠分段查询，留到 V0.3-E。
+- InfluxDB 容器设 `mem_limit`。
+
+*前端*
+- 查询失败时保留旧曲线，并常驻提示旧曲线的真实时间范围，不弹 toast；首次加载失败显示可重试的空状态。
+- ECharts 6.1.0 经 `echarts/core` 按需引入；每测点一张联动小图，框选缩放后重新查询。
+
+**遥测重放**（V0.2-R3，平台管理员）
+- 接口：`POST` / `GET` / `DELETE` `/api/v1/platform/telemetry/replay`，用于 InfluxDB 丢数后从 Redis 上行流恢复。
+- 参数 `{from, to}`：毫秒、左闭右开，跨度不超过 6 小时，否则 400。
+- 同时只允许一个任务，运行中再次提交返回 409；任务状态只在内存。
+- 执行：按流条目 id 区间 `XRANGE`，每批 500 条，批间检查取消；可恢复错误最多重试 8 次（约 90 秒）。
+- **不更新在线状态，不写死信**；写入幂等，可与正常消费并行。
+- 条目 id 取 Redis 服务端时钟，运维选窗口时两端各多留约 1 分钟。可回溯范围约为流 `MAXLEN` 100 万条。
+- 实现：共用 `TelemetryIngestor`（来源 `LIVE` / `REPLAY`，指标带 `source` 标签）与 `Backoff`；`MessageBus.range` 只读，不进消费组。
+- 前端入口：「系统管理 → 数据重放」。
+
+#### 消息链路与可靠性
+
+**消息总线**：经 `MessageBus` 接口，当前实现为 Redis Streams（消费组、`XPENDING` 认领、死信流 `conduit:stream:dead`）。将来换 RabbitMQ / Kafka 时只换实现。
+
+**投递语义：至少一次**
+
+*服务端*
+- 下游写入成功后才 ack。
+- 可恢复错误（沿异常 cause 链判断）原地退避重试 1s→30s，不消耗投递次数。
+- 意外错误：该条进死信 `PROCESSING_ERROR`。超过 5 次投递：进死信 `MAX_DELIVERY_EXCEEDED`。
+- 死信一律先写记录再 ack。
+
+*接入侧*
+- EMQX 用**内存持久会话**；磁盘持久会话已关闭，积压下会静默楔死。
+- transport 写入总线成功后才回 PUBACK。
+- transport 离线期间，消息排在会话 mqueue 中，重连后补发。
+- 默认 `EMQX_MAX_MQUEUE_LEN` 100000：mqueue 与连接堆上限（256MB，实际按 1.5 倍触发）共享内存，**调大前必须确认 `heap_size` 余量，不得上调堆上限**。满载余量尚未实测。
+- 队列溢出会丢弃并计入 `dropped_msgs`；EMQX 重启会丢未投递的消息。
+
+**端到端可靠上报**（V0.2-R2）
+
+*启用条件*
+- 上报顶层带 1～128 字符的字符串 `id` 即启用；此时 `ts` 必填，重发时保持不变。
+
+*回执*
+- transport `XADD` 成功后，向 `conduit/{productKey}/{deviceKey}/down/ack` 发 QoS 0 `{"id","ts":receivedAt}`。
+- 含义是「平台已持久接收」，不是「已入库」。
+- 回执失败不影响 PUBACK；设备收不到回执就原样重发。真实设备必须把待确认队列持久化。
+
+*幂等与旧设备*
+- 幂等依靠同设备同 `ts` 覆盖，尚无按 `id` 去重。
+- 不带 `id` 的设备只有逐跳 QoS 1 保证，EMQX 重启或队列溢出时会丢。
+
+**transport 单活多备与共享订阅**（V0.2-R；共享订阅 10-29）
+
+*连接与会话*
+- 主实例开 `conduit.transport.mqtt.connections` 条连接（默认 4），`cleanStart=false`，会话保留 86400 秒，订阅选项 `retainHandling=DO_NOT_SEND`。
+- 连接数大于 1 时订阅共享订阅 `$share/conduit-transport/conduit/+/+/up/#`。
+- 原因：EMQX 每条连接是一个单核封顶的 Erlang 进程，单连接时全平台上行挤过同一进程，信箱持续增长直至 `mailbox_overflow` 被杀（recon 实测）。
+
+*clientId*
+- 第 0 条为 `conduit-transport`，第 i 条为 `conduit-transport-i`。
+- **必须保留 `conduit-` 前缀**，transport 超级用户鉴权依赖它。
+
+*从单连接升级*
+- 第 0 条接管旧会话、补发后，**退订旧的非共享过滤器** `conduit/+/+/up/#`。
+- EMQX 回 `NO_SUBSCRIPTIONS_EXISTED` 视为成功；其他原因码由协调器重试。
+
+*分发与回退*
+- 上下线事件 `$SYS/...` 只由第 0 条订阅。
+- 分发策略 `mqtt.shared_subscription_strategy = hash_clientid`，单设备保序。**键在 `mqtt` 下**，写成 `broker` 下会被静默忽略。
+- `connections=1` 即回退开关：旧 clientId、普通订阅、不退订。
+
+*成员离线*
+- 共享订阅成员离线时，落给它的消息排进其会话、重连后补发，不改派。
+- 因此主备切换时新主以同一组 clientId 接管即可。若只有一条长时间断开，约 1/K 流量会滞留。
+
+*选主*
+- Redis 键 `conduit:transport:leader`，由 Lua 抢锁：键不存在则写入；键已是本实例 id 则续期，视为抢到。续期与释放同样比对 id。
+- ttl 15s，续期间隔 5s，抢锁间隔 2s；只有主实例连接 EMQX。
+- 续期失败立即断开并转为备用；正常停止时释放锁（`stop_grace_period: 20s`）。
+- 不用 HiveMQ 自动重连：由协调器先确认仍持锁再重连；SUBACK 含错误码视为失败。
+- Redis 命令超时 2s。
+
+*日志与健康检查*
+- 日志：首次失败 WARN，后续重试 DEBUG，恢复与角色变化 INFO。
+- 健康明细 `components.leader.details`：`role` / `instanceId` / `connected`；`connected` 只在已连接且订阅获批后为 true。
+
+*已知限制*
+- Broker 自身崩溃仍可能丢失已确认消息，见 `docs/durability-validation.md`。
+
+**transport 微批与会话监控**（10-28）
+
+*参数规则*
+- 约束：**`batch-size ≤ max_inflight ≪ max_mailbox_size`**。
+  - 窗口应为批的若干倍：两者相等就成了停等协议；批大于窗口则永远攒不满，每批白等满 `batch-delay` 5ms。
+  - 在途消息堆在连接进程的信箱里，越过 `max_mailbox_size` 即被强杀。
+- 默认值：`max_inflight` 512、`batch-size` 64，`max_mailbox_size` 为 EMQX 默认 1000。
+- 拆分部署的值：EMQX 主机 `max_inflight` 65535、信箱 10000、关闭 `force_shutdown`；应用主机 `batch-size` 512（由所有者要求取最大值）。
+
+*会话监控*
+- 主实例经 EMQX REST API 按连接轮询会话指标。告警六项：丢弃、队列水位、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
+- **只有「投递停滞」把健康检查置为 DOWN**，任一连接停滞即判 DOWN。
+- 仪表带 `client` 标签。另暴露 `mailbox.len` 与 `reductions`，只暴露、不参与健康判定。
+
+**e2e**（`ReliabilityE2EIT`）
+
+*环境*
+- Testcontainers 临时环境，EMQX 使用内存持久会话，宿主机端口取 20000～29999 间的随机固定值，容器重启后端口不变。
+- 本地以 jar 启动 1 个 server 和 2 个 transport；口令每次随机生成。
+
+*场景*
+- 杀 server、杀主 transport、杀全部 transport、重启 EMQX、可靠上报途中强杀 EMQX，各发 500 条。
+- 断言：计数恰好、无死信、无待确认。重启 EMQX 的两个场景使用带 `id` 的设备。
+
+*运行*
+- 需设置 `E2E_DEV_HOST`。先执行 `mvn -B -DskipTests install`，再执行 `mvn -B verify -Pe2e -pl conduit-e2e`。
+
+**服务端流水线吞吐**
+
+*消费者*
+- `PipelineWorker` 启动 `conduit.pipeline.workers` 条（默认 4）虚拟线程，每条是消费组中的一个消费者（`consumer-序号`）。
+- 下游都不依赖顺序：最新值按测点比较 ts，InfluxDB 按（序列, ts）幂等，在线状态有 `since` 守护。
+
+*批与 WAL*
+- `conduit.pipeline.batch-size` 默认 20000；`-1` 表示不限，但会无界占内存。
+- 每批只写一次 InfluxDB，写入要等 WAL 刷盘（默认 1s）。**不要缩短刷盘间隔**：实测 100ms 使批变小、吞吐反降 36%。
+
+*写入切块与错误分类*
+- 按 `conduit.influx.max-request-bytes`（默认 8 MiB，须小于 InfluxDB 的 10 MiB 上限）切块发送。
+- **413 与 400 不可恢复**，不得原地重试；否则会无限重发同一载荷而永久停摆。
+
+*Redis 批量化*
+- 身份用一次 `MGET` 预取；最新值一次 pipeline 提交，`latest-update.lua` 原样复用。
+- `LatestCoalescer` 剔除同批内被后续消息完全覆盖的点。
+- 批量遇不可恢复错误时退回逐条处理，只让出错的那条进死信。
+
+*指标*
+- `conduit.pipeline.stage{stage=total|identity|decode|influx|latest|ack}`、`conduit.pipeline.batch.size`。
+
+**容量结论**（守恒判据，见 `docs/script/loadtest/README.md`）
+
+*单机部署压测 VM（8 vCPU，600 连接）*
+- **可靠无损 11,500 条/秒**；13,000 为边缘；16,000 撞到硬件墙。
+
+*拆分部署（本地两台 8 vCPU VM 与发压机同在一台物理机）*
+- 每台每 10 秒 1 条：2.5 万台无损。
+- 每台每秒 1 条：5,000 台通过，6,000 台起掉线。瓶颈是 EMQX 主机 VM 的内核收包 softirq，EMQX 自身约 1 核。
+
+*口径限制*
+- 本地数字反映虚拟化网络的上限，**不得外推到物理机或云主机**。
+- 吞吐不能直接换算为设备数，因为连接数本身有开销。
+
+**MQTT 鉴权**
+- EMQX 用 HTTP 回调鉴权；按协议，拒绝也回 200 + `result: deny`。
+- 鉴权结论计入 `conduit.mqtt.auth{result, reason}`，启动时就注册全部 9 个序列。
+- EMQX 端：`request_timeout` 10 秒，8 条长连接。
+- server 端：`server.tomcat.keep-alive-timeout: 30m`、`max-keep-alive-requests: -1`。否则 Tomcat 关闭空闲连接的瞬间，EMQX 复用该连接会失败，并直接判为未授权。
+
+**在线状态**
+
+*存储*
+- Redis hash `conduit:presence:{deviceKey}`（online / since / clientIp / source / lastSeen），由 `presence-apply.lua` 原子写入。
+
+*两个来源*
+- EMQX 上下线事件是权威来源：使用 EMQX 时钟，只接受 `eventTime >= since` 的事件。
+- 流水线在数据落库并 ack 后，按设备每批写一次（尽力而为）。
+
+*数据来源的规则*
+- 数据永远不推进 `since`：无记录 → 置在线；已在线 → 只刷新 lastSeen；已离线 → 仅当 `ts > since + 10 秒` 才复活。
+- `source=data` 产生的记录，其 `since` 不可信，EMQX 事件总是生效。
+- 上线事件不带 IP 时保留原 IP。
+
+**演示数据**
+- Flyway V4：4 租户 / 8 产品 / 174 设备 / 36 属性。按 code 与名称复用，升级不重复。种子设备的密钥是不可用的占位哈希，由模拟器重置。
+- 动态数据（在线状态、最新值、曲线）由模拟器生成。
+
+**模拟器**
+
+*设备发现*
+- `SIM_PLATFORM_PASSWORD` 非空时，用平台管理员发现 `SIM_TENANTS` 中启用租户的物模型产品，每个产品最多 `SIM_MAX_DEVICES_PER_PRODUCT` 台设备，并重置其密钥。
+- `SIM_EXCLUDE_PRODUCTS`：默认 `压测产品`，在读物模型、重置密钥之前跳过，避免与压测脚本互相作废密钥；配成空即不排除。
+- 失败处理：单个租户失败只记 WARN；单台设备失败只跳过该设备。
+
+*数据生成*
+- 按物模型规则生成，满足上下限与小数位；日曲线按系统时区。
+- 光伏模型（含 eday / etotal / pv / solar / 辐照度等测点）：功率按日照曲线，夜间为 0，并累加成日发电量。
+- 有多个功率测点时取最大的一个，不求和。
+
+#### 界面与总览
+
+**首页总览** `GET /api/v1/overview`
+- 返回：产品数、属性数、设备数（启用 / 禁用 / 在线）、最近上报的 5 台设备、各产品设备数，以及最近 1 小时按 `reason` 分组的死信（最多 1 万条）。
+- 计数由 `DeviceStats` 统一计算。Redis 不可用时相关字段为 null，前端显示「—」。
+
+**平台吞吐**：`/api/v1/platform/overview` 的 `throughput` 字段。
+- `ThroughputSampler` 自带守护线程，每 5 秒采样一次，算 60 秒窗口速率；不启用全局 `@EnableScheduling`。
+- 口径：server 本进程，重启归零。
+- 采样不足两次时为 `null`（显示「采样中」）；真实零流量为 `0`。
+
+**设备列表筛选** `GET /api/v1/devices`
+- 参数：productKey、keyword、`online`、`status`、`reported`（RECENT / STALE / NEVER）、`createdFrom` / `createdTo`（毫秒，左闭右开）。非法值返回 400。
+- `online` 与 `reported` 依赖 Redis，走内存过滤与分页：开销 O(设备数)，Redis 不可用时返回 503。
+- 前端把已应用的筛选经 `router.replace` 同步到 query。
+
+**前端框架**
+
+*侧栏*
+- 分组侧栏按身份给出菜单；可折叠，宽度 < 820px 自动折叠；有浅色、深色两种风格。
+
+*顶栏*
+- 包含面包屑、外观设置、租户名、用户菜单。
+- 代入租户时固定显示提示条；需改密码时弹出不可关闭的对话框。
+
+*路由*
+- `meta.scope` / `meta.requires` 由守卫统一处理。
+- 浏览器标题为「<页面或对象名> · Conduit」。`/` 重定向到 `/home`，未知地址显示 404。
+
+*主题与偏好*
+- 主题：浅色 / 深色 / 跟随系统，深色基于 Element Plus 暗色变量。
+- 偏好存 `localStorage` 的 `conduit.ui`，读写失败时用默认值。ECharts 随主题重建。
+
+*设备详情*
+- 信息卡 + 指标卡片：前 8 个数值测点画 1 小时迷你趋势线。
+- 点击卡片进入 `?tab=history&props=<标识>`。
+
+*外壳与品牌*
+- 应用外壳恰好一屏高，只有主区滚动；表格行高约 44px，1080p 屏下 10 行列表无需滚动。
+- 品牌标志为 `ConduitLogo`（字母 C 信号），favicon 为 `public/favicon.svg`。
+
+#### 日志与部署
+
+**日志**
+- Java 服务写文件日志，目录为 `CONDUIT_LOG_DIR`（默认 `logs`），每个服务一个 `<服务名>.log`。
+- 按天与大小滚动：单文件 50MB、保留 14 天、总量 1GB。
+- simulator 使用 logback-classic。测试写 `target/test-logs`；e2e 只输出到控制台。
+- Docker 中共用卷 `conduit-logs`，第二个 transport 写入其 `transport-2` 子目录。
+
+**部署包**
+
+*通用*
+- 项目名均为 `conduit`（split 的 EMQX 主机为 `conduit-emqx`），数据卷同名，同一宿主机上各包二选一。
+- `deploy/dev`：PostgreSQL、Redis（AOF `appendfsync always`）、InfluxDB、InfluxDB Explorer、EMQX 5.10.5。
+  - EMQX 配置模板只读挂载，以 `sed` 渲染。
+  - `CONDUIT_AUTH_URL` 必填。
+  - `CONDUIT_EMQX_API_KEY` / `_SECRET` 必填：EMQX REST API 只认 API key，不认控制台账号。
+
+*`deploy/standalone`*
+- 以 `extends` 引用 dev 的服务；其 `.env` 含 dev 的全部必填变量，`CONDUIT_AUTH_URL=http://conduit-server:8080`。
+- 应用服务：conduit-server、两个 transport（服务名 `conduit-transport` / `conduit-transport-2`，YAML 锚点复用）、conduit-web、模拟器、Mailpit。
+- Java 服务设容器内存上限：server 1500m、transport 512m、simulator 384m；InfluxDB 2g。
+
+*镜像*
+- 构建上下文为仓库根目录：`java.Dockerfile`（`eclipse-temurin:21.0.6_7-jre`）与 `web.Dockerfile`（`nginx:1.27.4-alpine`）。
+- `BUILD_FROM=prebuilt|source` 选择预编译产物或源码构建。
+- Docker 宿主机无外网时：开发机执行 `deploy/package.sh`，从干净检出编译，打包为 `target/conduit-standalone-<短提交>.tar.gz`。
+
+*`deploy/split`*
+- EMQX 主机：`split/emqx`，extends dev 的 emqx，容量参数取最大值。代价是过载时会把整个节点内存耗尽，而不只是单连接被杀。
+- 应用主机：`split/app`，逐个 extends standalone 的服务；`EMQX_REMOTE_HOST` 指向 EMQX 主机，`depends_on: !override`（需 Compose ≥ 2.24.4）。
+- 两边的 `deploy/` 须在同一绝对路径。
+- 鉴权回调是 EMQX → 应用主机的同步调用。EMQX 开源版没有 vhost，一台 EMQX 只对应一套环境。
+
+*容器名（`container_name`）*
+- 单实例服务不带 `-1` 后缀：`conduit-postgres`、`conduit-redis`、`conduit-influxdb`、`conduit-emqx`、`conduit-server`、`conduit-web`、`conduit-simulator`、`conduit-mailpit`、`conduit-prometheus` 等。
+- transport 为 `conduit-transport-1` / `-2`。注意这与 MQTT clientId 是两套命名。
+
+*EMQX 运行参数*
+- `ulimits.nofile` 1048576：Docker 默认 1024 时，约 1,000 台设备即 `emfile` 崩溃。
+- 关闭磁盘持久会话；`singleton` 发现策略，节点名固定为 `emqx@127.0.0.1`，因此控制台改过的密码会恢复为 `.env` 中的值。
+
+*观测栈*（profile `metrics`）
+- 组件：Prometheus v3.5.0、Grafana 11.6.1、node-exporter、cadvisor、redis-exporter。各设 `mem_limit`，合计约 1GB；Prometheus 保留 7 天，上限 2GB。
+- 抓取方式：
+  - server 指标走 `/internal/metrics`，校验 `X-Conduit-Internal-Token`，与鉴权回调同一令牌。
+  - transport 直接抓 `/actuator/prometheus`；`/actuator/**` 除 health 外仅平台管理员可访问。
+  - InfluxDB 以 `--disable-authz health,ping,metrics` 免鉴权暴露 `/metrics`。
+- 看板 `conduit-bottleneck.json` 由脚本生成，数据源 uid 读自预置文件。
 
 ### 1.3 版本路线
 
-当前生效路线见 `docs/roadmap-saas.md`：V0.3 SaaS 基座与安全边界 → V0.4 设备生命周期与控制 → V0.5 规则引擎与告警 → V0.6 资产与仪表盘 → V0.7 开放平台 → V0.8 云原生与高可用 → V0.9 商业化 → V1.0 SaaS GA。V0.1/V0.2 路线保留为历史基线。每个子项目都要有 spec（`docs/superpowers/specs/`）和实施计划（`docs/superpowers/plans/`）；延后事项在 `docs/backlog-v0.2.md`。
+当前路线见 `docs/roadmap-saas.md`：V0.3 SaaS 基座与安全边界 → V0.4 设备生命周期与控制 → V0.5 规则引擎与告警 → V0.6 资产与仪表盘 → V0.7 开放平台 → V0.8 云原生与高可用 → V0.9 商业化 → V1.0 SaaS GA。
 
-### 1.4 SaaS 升级约束（规划，按阶段实施）
+V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命周期、D 计量配额、E 资源治理，F 工程与运维可与其他子项目并行。每个子项目都要有 spec 与 plan；延后事项记在 `docs/backlog-v0.2.md`。
 
-- V0.3 同时建设访问隔离与资源隔离：租户生命周期状态机、客户/项目权限边界、租户资源路由、配额、公平调度、查询预算和用量事件；CI/CD、基础指标、备份恢复验证同步交付。
-- V0.4 的 RPC、配置、OTA、凭据轮换复用统一批量任务中心；指令必须定义幂等性、有效期与执行状态，超时或取消不等于设备未执行。
-- V0.5 明确物模型版本、单位精度、数据质量、设备/接收时间、去重与迟到乱序语义；重放默认不触发外部副作用。V0.6 完成保留期、降采样、归档和跨存储删除治理。
-- V0.8 深化集群 HA、故障域和租户迁移；V0.9 在已有租户控制面与计量口径上完成商业闭环。容量与 99.9% 可用性均为待验证目标，验收须固定负载、硬件、SLI 和统计口径。
+### 1.4 SaaS 升级约束（规划）
+
+- **V0.3**：访问隔离与资源隔离同时建设，包括租户状态机、客户 / 项目边界、资源路由、配额、公平调度、查询预算、用量事件；CI/CD、基础指标、备份恢复验证同步交付。
+- **V0.4**：RPC、配置、OTA、凭据轮换复用统一批量任务中心；指令须定义幂等、有效期与执行状态。超时或取消不等于设备未执行。
+- **V0.5**：明确物模型版本、单位精度、数据质量、时间语义、去重与乱序；重放默认不触发外部副作用。
+- **V0.6**：保留期、降采样、归档与跨存储删除。
+- **V0.8**：集群 HA 与租户迁移。
+- **V0.9**：在租户控制面与计量口径之上完成商业闭环。
+- **容量与 99.9% 可用性**：均为待验证目标，验收须固定负载、硬件、SLI 与统计口径。
+- **多实例前提**（方向性约束）：进程内状态只能是可重建的缓存，跨实例协调走 Redis 锁、消费组或数据库，写操作幂等。已知不满足的一项：遥测重放任务状态只在单进程内存中。
 
 ## 2. 编码约定
 
 ### 2.1 注释（必须）
 
-- **每个类都要有注释**，说明它做什么：Java 的类、接口、record、枚举写类级 Javadoc；TypeScript 模块写文件头注释或导出函数注释；Vue 组件在 `<script setup>` 顶部写注释。
-- **每个重点方法都要有注释**：public 方法、service/controller 方法、策略类纯函数、带分支逻辑的方法，写 Javadoc/JSDoc 说明做什么、重要参数与返回值、不明显的行为（异常、边界、副作用）。简单 getter、一行辅助方法可以不写。
-- 注释用中文，说明"做什么、为什么"，不复述代码。
-- 修改代码时同步更新相关注释，不留过期注释。
+- 每个类都要有中文注释：Java 的类、接口、record、枚举写 Javadoc；TS 模块写文件头注释；Vue 组件在 `<script setup>` 顶部写注释。
+- 重点方法要写注释：public 方法、service / controller 方法、纯函数、带分支逻辑的方法。说明用途、重要参数与返回值、异常与边界、副作用。简单 getter 可以省略。
+- 注释写「做什么、为什么」，不复述代码。改代码时同步更新注释。
 
 ### 2.2 其他约定
 
-- Java 21、Spring Boot 3.5、MyBatis-Plus、Flyway；包名 `dev.conduit.<模块>`；按业务分包（`device`、`product`、`thingmodel`、`telemetry`、`pipeline` …）。
-- 测试：先写失败测试（TDD）；集成测试用 Testcontainers；前端用 Vitest + `@vue/test-utils`。
-- 测试报告：每次实际执行测试后，必须在 `docs/test-reports/` 新建或更新 `YYYY-MM-DD-<主题>.md`。**压测类报告必须记录接入 QPS（EMQX 接收并确认）与入库 TPS（真正写进 InfluxDB）两个数，并写明测试类型**：容量测试（找积压不增长的最大稳态速率）、压力测试（刻意过载，刻画失效模式，**必须同时核对失效日志**）、回归对比（固定在容量以下的同一速率）。**对外承诺能力只能用入库 TPS**——过载时 EMQX 会先 PUBACK 再丢弃，接入 QPS 包含了随后被丢掉的消息。报告至少记录被测范围与代码状态、环境、实际命令、用例数/结果/耗时、跳过或阻塞项、非阻塞警告及日志位置；失败和无效尝试也要如实记录。没有执行的测试不得写成“通过”。最终交付时必须给出本次报告链接。
-- 界面：中文文案；所有分页表格默认每页 10 条（可选 10/20/50/100），分页、请求序号与越界页码修正统一用 `useTable`；功能入口要显眼（列表有「操作」列按钮、全局面包屑、产品与设备互相可跳转）；详情页的标签页与路由 query `tab` 同步（`router.replace`）。页面顶部用 `PageHeader`，列表筛选用 `FilterBar`，在线状态用 `OnlineDot`，启用/禁用用 `el-tag`，时间用 `RelativeTime`；空状态为 `el-empty` + 引导按钮，首次加载显示骨架屏。样式只用 CSS 变量（`--el-*` 或 `src/styles/tokens.css` 的 `--cd-*`），不写死颜色，深色主题下必须可读。新增页面在 `router/meta.ts` 的 `ROUTE_META` 中登记页面名称、面包屑与菜单归属。写操作按钮（新建、编辑、删除、导入、启用/禁用、重置密钥/密码）按 `usePermission().can(permission, tenant)` 与响应行级 permissions 显示；shadow 兼容旧 canWrite，只读身份隐藏而非禁用；新页面在 `ROUTE_META` 标注 `scope` 与 `requires`。
-- 演示与测试数据：用有意义的中文名称（如「三相电表（演示）」「1号楼配电室 电表01」），测试结束清理自己创建的数据。
-- 日志：SLF4J 参数化；消息链路上 DEBUG 每条消息/每批一行（transport 收发、流水线解码/校验/写库/ACK、鉴权放行、在线状态、历史与总览、REST 访问行），逐字段细节放 TRACE；构造字符串或集合的日志用 `isDebugEnabled()`/`isTraceEnabled()` 保护；绝不记录设备密钥、口令、JWT、内部 token、Authorization；payload 值只在 TRACE 且截断 256 字符。；管理操作（租户与用户的增删改、重置密码、进入/退出租户、代入期间的写请求）各记一行 INFO，不记请求体与口令。
-- 提交：Conventional Commits；只署名不带邮箱；不加任何 AI 署名行。
-- 仓库公开：不要把 IP、本机路径、用户名、口令、token 写进受版本控制的文件；本地配置（`deploy/dev/.env`、`deploy/standalone/.env`、`application-local.yml`、`simulator-local.properties`）与独立部署包产物 `deploy/standalone/artifacts/` 已在 `.gitignore`。
+- **技术栈**：Java 21、Spring Boot 3.5、MyBatis-Plus、Flyway。包名 `dev.conduit.<模块>`，按业务分包。
+- **测试**：先写失败测试（TDD）。集成测试用 Testcontainers；前端用 Vitest + `@vue/test-utils`。
+- **测试报告**：每次实际执行测试后，在 `docs/test-reports/YYYY-MM-DD-<主题>.md` 新建或更新报告。
+  - 必须写明：被测范围与代码版本、环境、实际命令、结果与耗时、跳过与阻塞项、警告及日志位置；失败和无效尝试也要如实记录。
+  - 没执行的测试不得写成「通过」。交付时给出报告链接。
+- **压测报告**：
+  - 必须写明测试类型：容量测试、压力测试（必须核对失效日志）或回归对比。
+  - 同时记录接入 QPS（EMQX 确认的条数）与入库 TPS（InfluxDB 实际行数）。**对外承诺只用入库 TPS**，因为过载时 EMQX 会先 PUBACK 再丢弃。
+  - **验收用计数守恒**：客户端 PUBACK 数 = InfluxDB 行数，且丢弃、死信、失效日志均为 0。
+  - **压测与排障前必须回读运行中的实际配置**，不以仓库内容为准。
+  - 本地 VM 压测前，确认宿主机不紧张，并核对网卡的 `pkts rx OOB` 增量。
+- **界面**：
+  - 文案用中文。分页表格默认每页 10 条（可选 10 / 20 / 50 / 100），统一用 `useTable`。
+  - 组件：`PageHeader`、`FilterBar`、`OnlineDot`、`el-tag`、`RelativeTime`；空状态用 `el-empty` + 引导按钮，首次加载显示骨架屏。
+  - 入口要显眼：列表有操作列、全局面包屑、产品与设备可互相跳转。详情页的标签页与 query `tab` 同步。
+  - 样式只用 CSS 变量（`--el-*` / `--cd-*`），深色主题下必须可读。
+  - 新页面在 `router/meta.ts` 的 `ROUTE_META` 中登记名称、面包屑、菜单、`scope`、`requires`。
+  - 写操作按钮按 `usePermission().can(...)` 与行级 permissions 显示；只读身份隐藏而不是禁用。
+- **演示与测试数据**：用有意义的中文名称，测试结束清理自己创建的数据。
+- **日志**：
+  - SLF4J 参数化。消息链路上 DEBUG 每条消息或每批一行，逐字段细节放 TRACE；构造字符串的日志要加级别判断。
+  - 绝不记录设备密钥、口令、JWT、内部 token、Authorization。payload 只在 TRACE 输出，并截断到 256 字符。
+  - 管理操作各记一行 INFO，不记请求体与口令。
+- **提交**：Conventional Commits，只署名不带邮箱，不加任何 AI 署名行。
+- **仓库公开**：不提交 IP、本机路径、用户名、口令、token。本地配置与部署产物已在 `.gitignore`。
 
 ## 3. 本地开发
 
-见 README「开发」：开发模式是 Docker 宿主机只跑开发环境包（宿主机上 `deploy/dev` 目录中 `docker compose up -d`），server、transport、simulator、UI 在 IDEA 中运行（运行配置 `Conduit (local all)`），`deploy/dev/.env` 的 `CONDUIT_AUTH_URL` 指向开发机。本地 transport 直接成为主实例；**本地开发须在 `application-local.yml` 设 `conduit.transport.monitor.enabled: false`**，否则 transport 在 monitor 启用而 `conduit.transport.monitor.api-key` / `api-secret` 为空时启动失败（提示「会话监控已启用，必须配置 conduit.transport.monitor.api-key 与 api-secret（或将 enabled 设为 false）」），关闭最省事；不要在 `application-local.yml` 中覆盖 `client-id` 或 `session-expiry-seconds`；本地模拟器默认使用「三相电表（演示）」，配置 `SIM_PLATFORM_PASSWORD` 后同时模拟各演示租户的产品。本地 server 需在 `application-local.yml` 配 `conduit.bootstrap.platform-admin-password`（或环境变量 `CONDUIT_PLATFORM_ADMIN_PASSWORD`）才会创建平台管理员 `sysadmin`。实施计划不再包含部署步骤，本地日志在仓库根目录 `logs/`（`CONDUIT_LOG_DIR`），排查问题先看这里。验收用测试和对本地运行的整套服务做 API 检查；只有所有者要求时才部署独立部署包（`deploy/package.sh` 打包后在宿主机启动）。
+见 README「开发」。
+
+**基础服务与应用**
+- Docker 宿主机只跑 `deploy/dev`（`docker compose up -d`）。
+- server、transport、simulator、UI 在 IDEA 中运行，运行配置为 `Conduit (local all)`。
+- `deploy/dev/.env` 的 `CONDUIT_AUTH_URL` 指向开发机。
+
+**`application-local.yml` 必须配置**
+- `conduit.transport.monitor.enabled: false`，否则缺少 EMQX API key 时 transport 启动失败。
+- `conduit.bootstrap.platform-admin-password`，才会创建 `sysadmin`。
+- 不要覆盖 `client-id` 或 `session-expiry-seconds`。
+
+**排查与验收**
+- 本地日志在仓库根目录 `logs/`，排查问题先看这里。
+- 验收用测试和对本地整套服务做 API 检查。只有所有者要求时才部署独立部署包。
 
 ## 4. 决定记录
 
-- 2026-10-26 缺测曲线修复：聚合历史按既有桶宽/1970原点返回完整时间桶，空桶显式 null；前端折线、LAST阶梯线、min/max波动带和迷你趋势线均保留 null 并断线，0/false正常绘制。原始历史保持实际样本，不在无采样周期时猜测缺失时刻；扫描上限工作继续暂停（`docs/test-reports/2026-10-26-history-null-zero.md`）。
+每条一行：日期、决定、出处。被推翻的决定只保留最终结论，并注明推翻的原因。
 
-- 2026-10-26：明确全局遥测语义「null=该测点该时刻未上报，0=有效上报零值」；暂停历史查询扫描参数与错误提示实施，优先明确缺测展示。夜间模拟辐照度0保留；聚合缺桶省略与波动带 null 运算存在待修正项，原始历史缺口识别须定义采样周期/缺测阈值，见 `docs/telemetry-value-semantics.md`。
+**架构与可靠性**
+- 2026-10-14 V0.1：Spring Boot 3 + EMQX 5 + Redis Streams 总线 + PostgreSQL 16 + Redis 7；Vue 3 前端；transport / server 两进程；HTTP 鉴权回调；从 V0.1 起带 `tenant_id`（`2026-10-14-conduit-v0.1-design.md`）。
+- 2026-10-15 V0.2-A：时序库为 InfluxDB 3 Core；物模型只做属性；解码器 SPI。可恢复错误沿 cause 链判断；`conduit-connector` 改名为 `conduit-transport`。
+- 2026-10-16 V0.2-R：transport 单活多备（Redis 锁）；e2e 改为 Testcontainers + 本地 jar；模拟器支持多租户与多产品（`2026-10-16-conduit-v0.2r-reliability-design.md`）。同期选用的磁盘持久会话已于 10-28 关闭，「放弃共享订阅」已于 10-29 推翻。
+- 2026-10-19：统一为 EMQX 5.10.5，旧版交接补发错位未再复现；Redis AOF 改为 `always`。
+- 2026-10-20 V0.2-R2：带 `id` 的端到端可靠上报 + QoS 0 业务回执；e2e 增加强杀 EMQX 场景（`2026-10-20-conduit-reliable-uplink-design.md`）。
+- 2026-10-20 V0.2-R3：遥测重放（`2026-10-20-conduit-telemetry-replay-design.md`），10-21 验收通过。
+- 2026-10-27：流水线吞吐 = 批大小 ÷ WAL 1 秒，修复为大批量 + 按字节切块，413 / 400 改判为不可恢复（`076ec17`）。
+- 2026-10-28：**关闭 EMQX 磁盘持久会话**，因积压下会静默楔死，且重连重放超堆形成死循环；改为内存持久会话。`mqtt.retry_interval` 对持久会话无效，勿重走此路（`2026-10-28-conduit-emqx-session-wedge-fix-design.md`）。
+- 2026-10-28：transport 改为微批写总线。批与窗口的规则几经实测修正，最终定为 `batch-size ≤ max_inflight ≪ max_mailbox_size`，默认 512 / 64；会话监控六项告警。
+- 2026-10-28：流水线 Redis 往返批量化（MGET + pipeline），确立「批量失败退回逐条」的模式；Java 容器设内存上限；Redis 保持 `appendfsync always`。
+- 2026-10-29：transport 共享订阅（默认 4 条连接，`hash_clientid`），依据是 recon 测得单连接进程单核封顶；负载下强杀主 transport 零丢失（`65ad9a2`，`2026-10-29-conduit-transport-shared-subscription-design.md`）。同日早先「8,000 条/秒天花板、暂不实施」的结论源于发压器测量假象，已作废。
+- 2026-10-29：`LatestCoalescer` 同批合并最新值，`latest` 阶段 1,856ms → 98ms（`141bdd6`）。
+- 2026-10-29：transport 会话监控加信箱长度与 reductions，只暴露，不参与健康判定。
+- 2026-10-30：MQTT 鉴权按原因计数；模拟器排除压测产品；EMQX `nofile` 1048576；Tomcat keep-alive 修复鉴权回调偶发失败（`69ac212`）；鉴权超时由 5 秒放宽到 10 秒（`de5a237`）。
 
-- 2026-10-27 历史查询扫描上限（计划第一、二阶段已实施）：根因查明为两个 InfluxDB 默认值相乘——`gen1-duration` 10m 产生 144 文件/天，`query-file-limit` 默认 432，恰好 3 天即触顶；实测单设备带租户/产品/设备过滤同样触顶（Core 不做 compaction，标签过滤不减少文件数），即默认配置下超过 2 天的查询必然失败，与对外承诺的 30 天不符。处置：compose 固化 `INFLUXDB3_QUERY_FILE_LIMIT=5000` 与 `mem_limit=3g`（原先无内存限制）；后端把扫描上限从 503 改判为 400 + `HISTORY_SCAN_LIMIT`；前端保留旧曲线并标注其真实范围，首次加载失败可重试。**30 天为外推**：库中只有 12 天数据，实测 12 天 ≈ 1 秒、520MB，真实 30 天未验证。实施中发现 `--gen1-duration=1h` 会使 InfluxDB 启动即失败（只接受 1m/5m/10m），该参数已从编排中移除。分段查询仍留到 V0.3-E（`docs/superpowers/plans/2026-10-26-history-query-limits.md` 第三阶段）。
+**租户、组织与身份**
+- 2026-10-16 V0.2-C：三种角色、JWT 声明、`SecurityConfig` 路径矩阵、强制改密码、平台接口与代入、停用租户（`2026-10-16-conduit-v0.2c-tenants-users-design.md`）。
+- 2026-10-22：租户隔离用拦截器 + 组合外键 + 受控系统通道（`2026-10-22-conduit-tenant-isolation-design.md`）。10-27 复核：**不采用 RLS，不再定期重提**；唯一触发条件是出现真实的跨租户泄露。
+- 2026-10-26 V0.3-B1 / B2：组织骨架（V6 / V7）与项目 / 站点授权（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`、`docs/authorization.md`）。
+- 2026-10-27 V0.3-B3：服务端会话、授权版本、一次性邀请。租户密码策略、锁定、MFA **不实施**，也不预留字段。邀请携带范围角色**不实施**。B 阶段只剩 B4 持久化审计。
 
-- 2026-10-28 关闭 EMQX 磁盘持久会话：压测证明它在积压下会静默楔死——inflight 占满 32、投递永久停止、dropped_msgs 为 0、连接正常、两侧日志零错误、健康检查全绿；重连触发 DS 重放超堆被杀形成死循环，恢复只能丢弃会话与积压（实测滞留约 29 万条）。对比实验（唯一变量 durable_sessions.enable）下内存持久会话投递 307,263 条并完全排空、超堆被杀 0 次，失败模式由「静默、整批、必须人工」变为「可见、有界、自愈」。随之：mqueue 按主备切换窗口定容（EMQX_MAX_MQUEUE_LEN 默认 100000，与单连接堆限共享上限，调大前须确认 heap_size 余量，**不得上调堆限**）；transport 微批写入总线（原每条一次 XADD，实测约 1230 条/秒，现稳态约 1980 条/秒；batch-size 与 max_inflight 的「必须相等」已更正，见 2026-10-28 吞吐对照条）；transport 主实例经 EMQX REST API 轮询会话指标告警（该 API 只认 API key/secret，不接受控制台账号密码；`.env` 新增必填 `CONDUIT_EMQX_API_KEY`/`CONDUIT_EMQX_API_SECRET`）。设备契约明确声明：不带 id 的上报只有逐跳 QoS 1 保证，EMQX 重启或队列溢出时会丢。**mqtt.retry_interval 对持久会话无效，已实测证伪，不是可选解，勿重走此路。** **未达成**：mqueue 满载时 heap_size 与 384MB 堆限的余量未测得（队列峰值仅 128），取得实测前不应上调 EMQX_MAX_MQUEUE_LEN。（`docs/superpowers/specs/2026-10-28-conduit-emqx-session-wedge-fix-design.md`、`docs/test-reports/2026-10-28-emqx-durable-session-wedge.md`、`docs/test-reports/2026-10-28-session-wedge-fix-verification.md`）
+**遥测与界面**
+- 2026-10-15：界面刷新（统一框架、暗色模式、列表套件、首页总览）、设备列表筛选、数据驱动在线状态、日志落盘、InfluxDB Explorer；ECharts 由 5.6.0 升至 6.1.0（XSS 公告 GHSA-fgmj-fm8m-jvvx）。
+- 2026-10-26：全局遥测语义「null = 未上报，0 = 有效值」；聚合返回完整时间桶，空桶为 null，前端断线。
+- 2026-10-27：历史扫描上限的根因是两个 InfluxDB 默认值相乘；`INFLUXDB3_QUERY_FILE_LIMIT=5000`，错误码 `HISTORY_SCAN_LIMIT`，分段查询留到 V0.3-E。
+- 2026-10-29：平台首页「实时吞吐」，口径为本进程、重启归零。
 
-- 2026-10-26：Flyway V7 固化四个演示租户的客户、项目、站点、资产与演示设备归属；保持 V4/V6 不变，新增编码冲突时保留已有组织，已有人工设备归属不覆盖。初始化数量及新库/旧库验收见 `docs/test-reports/2026-10-26-organization-demo-seed.md`。
+**部署、观测与流程**
+- 2026-10-16：部署包定为 `deploy/dev` 与 `deploy/standalone`，`package.sh` 打包；旧的 `build-local.sh`、`sync-to-host.sh`、`infra/`、`full/` 已删除（`2026-10-16-conduit-deploy-packages-design.md`）。
+- 2026-10-20：产品名 Conduit IoT，Maven 根工程 `dev.conduit:conduit-iot`；SaaS 路线以 `docs/roadmap-saas.md` 为准，演示数据须从正式生产基线中剥离（`2026-10-20-conduit-demo-seed-design.md`）。
+- 2026-10-20：架构图统一为单一 SVG 源文件，并确立架构同步规则；每次实际测试都要留报告。
+- 2026-10-21：V0.3 拆为 A～F 六个子项目；CI 暂不建设，理由见 roadmap。
+- 2026-10-26：新功能必须带可复现的演示数据。
+- 2026-10-28：性能观测栈（profile `metrics`）；server 指标走 `/internal/metrics`。
+- 2026-10-29：看板按数据流重排，增加守恒差面板。
+- 2026-10-29：压测改用计数守恒判据；压测前必须回读运行配置（部署漂移曾导致决定写错）。
+- 2026-10-29：所有者确定目标为「当前压测 VM 上不崩溃的最大吞吐」，信箱上限可按实测调大，堆上限不得上调。
+- 2026-10-30：拆分部署包 `deploy/split`；容器名全部固定，EMQX 统一为 `conduit-emqx`（`2026-10-30-split-deployment.md`）。
+- 2026-11-02：交接文件只放 `docs/handoffs/`，全局 `~/.codex/AGENTS.md` 已同步。
 
-按时间追加，每条一行：日期、版本、决定、对应 spec / 提交。
+**方法教训**
+- 2026-10-28：Redis `commandstats` 会把 Lua 内部调用一并计数；模型与实测不符时，先怀疑模型。
+- 2026-10-28：容量参数必须同时核对吞吐与失效日志。只看吞吐时漏掉了 inflight 1024 超过信箱上限 1000 导致的强杀。
+- 2026-10-29：发压器测量假象。模拟器重置了压测设备的密钥，而 paho 连接时被拒绝鉴权也不报错。识别特征：接入量恰好是名义目标的固定比例。
+- 2026-10-29：观测改动必须走通展示端到数据源的完整链路；预警阈值须用过载与健康两组历史数据验证后才能标红。
+- 2026-10-29：「命令成功但未生效」一律以回读结果为准，例如配置键写错层级会被静默忽略。
 
-- 2026-10-29 平台吞吐总览：平台首页加「实时吞吐」一行（入库 TPS / 峰值 / 累计入库 / 累计死信），后端新增 `ThroughputSampler` 按 5 秒采样 Micrometer 累计值算 60 秒平均速率，接口挂在既有 `/api/v1/platform/overview` 下。明确口径为 server 本进程、重启归零，界面与 DTO 注释均写明；速率未知为 null、真实零为 0。只读新增字段，未改模块职责、拓扑、数据流、存储与部署，故架构 SVG 无需修改（`docs/test-reports/2026-10-29-platform-throughput-overview.md`）。
-
-- 2026-10-29（当日稍晚）**上条决定的事实基础已作废**：其依据的「入口天花板约 8,000 条/秒、成因是 EMQX 单连接 Erlang 进程受单核约束」是测量假象。压测产品带物模型，演示模拟器按 `SIM_TENANTS=*` 给其前 `SIM_MAX_DEVICES_PER_PRODUCT`（压测机 100）台设备重置了密钥，`devices.json` 中那 100 台随即失效；而 paho 的 `connect()` 只发起 TCP、鉴权被拒不抛异常，脚本仍报「连接数 600、客户端错误 0」。**名义目标 10,000/秒实际只喂进 8,333，EMQX 恰好收到 8,334**——那道「墙」就是实际供给。复测证实供给 8,333 收 8,334、16,667 收 16,680、20,000 收 20,009，全部「给多少收多少」。**因此共享订阅的触发条件（稳态入库 >3,300 条/秒）与「可持续 6,600 条/秒」均失去依据，暂停引用，待重测后重定。** 识别特征：接入量恰好是名义目标的固定比例——真实容量上限是绝对值，不会按比例缩放。工具侧修复见提交 `67a785b`（`run` 等 CONNACK、未通过鉴权即报错退出；新增 `refresh` 子命令）。
-- 2026-10-29 压测验收判据改为**计数守恒**：速率峰值证明不了不丢（过载时 EMQX 先 PUBACK 再丢弃），必须比对客户端 publish 数、客户端 PUBACK 数、`emqx_messages_received` 计数差、`conduit_pipeline_processed_total` 计数差与 **InfluxDB 实际行数**五个口径全部相等，同时要求 `emqx_messages_dropped` 增量、死信增量与 EMQX 失效日志均为 0。失效日志须按本档起始时刻锚定且**时间戳带 `Z`**——VM 为 CST，不带时区标记时 Docker 按本地时间解释，会多截 8 小时把历史过载算进本档（实测把 0 次数成 295 次）。排空须等入库计数不再增长，固定等待会把「没排完」误判成「丢了」。判据与踩坑记录见 `docs/script/loadtest/README.md`。
-- 2026-10-29 当前配置违反项目自身约束（**当日稍晚更正：本条的取值有误**——下文的「512」是仓库与本文件中的值，压测 VM 实际运行的是 `max_inflight` **1024**，即 1024 > 1000，正是本文件 2026-10-28 条早已记载的「必然溢出」配置；VM 的 compose 与 `.env` 落后于仓库，1024→512 的修正从未部署。见下文「部署漂移」条）：`batch-size ≤ max_inflight ≪ max_mailbox_size` 的实际取值是 **64 ≤ 512 ≪ 1000**，512 对 1000 仅 2 倍余量，不构成「≪」。实测在仅 5,000 条/秒、CPU 未饱和时即发生 `mailbox_overflow`（信箱实测 1,106 > 上限 1,000），EMQX 杀掉 transport 连接、缓冲消息随之丢失；三次运行两次丢消息（丢失率 0 / 1.55% / 4.8%），**设备已收到 PUBACK，平台无死信无报错，健康检查仍为 UP**。此外，当初选定 `max_inflight=512` 的 A/B 实验同样跑在坏掉的发压器上，绝对值不可信，需用修复后的发压器重做。
-- 2026-10-29 方向调整（所有者要求）：目标改为**在当前压测 VM 上求「不崩溃的最大吞吐」**，配置与代码按此取舍。据此，既有原则「不为塞下更大缓冲去调高保护阈值」在 `max_mailbox_size` 上不再适用——该值可按实测调大，前提是连接堆上限（`max_heap_size`，当前 256MB）仍作为真正兜底。**该原则对堆上限本身依然有效。**
-- 2026-10-29 transport 共享订阅（**推翻同日「现阶段仍不实施」**，所有者批准窄方案）：保留单活多备选主，主实例从 1 条连接改为 `connections` 条（默认 4）共享订阅分摊 EMQX 投递；第 0 条沿用旧 clientId 接管旧会话并退订旧的非共享过滤器，上下线事件只由第 0 条订阅，EMQX 分发策略 `hash_clientid`；会话监控按连接拆分、仪表带 `client` 标签（否则同名仪表被合并、其余连接隐身），任一连接停滞即判 DOWN。依据是 recon 直接证据（见 1.2「会话与订阅」）。快速验证：4 个只回 PUBACK 的探测订阅者在 14,000 条/秒下 100% 收到、零丢弃零强杀；持久会话共享组全员离线后重连补收 6,000/6,000。正式实现后负载下 `docker kill` 主 transport，约 25 秒接管，InfluxDB 行数 1,199,999 = 实发，零丢失（入库计数多 1,742 为被杀瞬间未回 PUBACK 的重投，InfluxDB 同 ts 覆盖吸收）。（`65ad9a2`；`docs/superpowers/specs/2026-10-29-conduit-transport-shared-subscription-design.md`）
-- 2026-10-29 最新值同批合并：共享订阅后 12,000 条/秒下 Redis 单线程峰值 91%，最新值脚本占 58.9%（约每条消息一次）。脚本按顺序执行时每个测点的最终值是其所有写入中按（ts, 批内顺序）字典序最大者，因此被同批后续消息支配（ts 不早于且测点为超集）的点可去掉而最终状态不变。判定保守、O(1)：每设备只与已保留后续点中 ts 最大者比较。10,000 条/秒时 `latest` 阶段 1,856ms → 98ms。验证用参考模型做 2,000 次随机等价对照，并以变异确认测试能抓错。（`141bdd6`）
-- 2026-10-29 压测 VM 容量（**取代 2026-10-29 容量报告**）：守恒判据下**可靠无损 11,500 条/秒**（2 次全过；10,000 为 3 次全过，含一次负载下强杀主 transport）、**13,000 为边缘**（3 次 2 过）、**16,000 为硬件墙**（8 vCPU 整机 96～97%、1 分钟负载 15）。墙已从软件移到硬件；再往上须降低每条消息的 CPU 开销或加核。口径限制：600 条连接打出的吞吐不能换算为设备数（海量连接的开销未测）。无效或负优化：WAL 刷盘 100ms（-36%）、Lua 快路径（收益在噪声内）、流水线并发单独测不出收益。（`docs/test-reports/2026-10-29-vm-max-throughput.md`）
-- 2026-10-29 看板重排与 InfluxDB 接入（**当日稍晚更正**：本条所述「零空查询」的验证绕过了 Grafana——审计直接进 Prometheus 容器执行 PromQL、再读 Grafana 数据库确认 JSON 已加载，**从未经过 Grafana 数据源走一遍真实查询**。部署后所有者打开看板，48 个面板全部报错 No data：生成脚本只取了旧看板前两个面板的数据源作样例，恰好取到旧看板里 6 个面板误用的、并不存在的 uid `conduit-prometheus`（正确为预置文件中的 `prometheus`，旧看板另外 21 个面板用的就是它），并套到了全部面板上。该错误发生在浏览器端，Grafana 服务端日志里没有记录。已改为生成脚本直接读取数据源预置文件中的 uid，并在部署前检查看板引用的每个 uid 都存在。**教训：观测类改动的验收必须走通从展示端到数据源的完整链路，分段验证每一段都通过，不等于整条链路通**）：「Conduit 性能瓶颈观测」按数据流逐跳重排为 9 组 46 个面板（总览 → 各跳速率 → EMQX → transport 按连接 → Redis 总线 → 流水线每批各阶段耗时 → InfluxDB → 资源 → JVM 折叠），每个面板附「看什么、什么算坏」。验收方法是**把每条 PromQL 拿到真实 Prometheus 上回看执行**，而非看图：重排前审出 4 条空查询（流长度标签应为 `stream` 而非 `key`；死信、测点拒绝计数器惰性注册、从未发生时序列不存在，改为 `or on() vector(0)`）、一处单位混用（`process_cpu_usage` 是 0～1 占比，须乘 `system_cpu_count` 才是核数）、多连接后 transport 会话面板未按 `client` 区分且被备实例的 NaN 污染（一律先 `>= 0` 过滤）；重排中又自审出两处「带标签向量与不带标签向量做运算得空集」（`node_load1 / 核数`、整机 CPU 减 Redis CPU，须先 `sum()`）。InfluxDB 3 Core **有** `/metrics`：以 `--disable-authz health,ping,metrics` 免鉴权抓取，而**不**把能写能删整个库的管理员 token 分发给 Prometheus（已验证 `/metrics` 返回 200、查询接口仍 401）；其 `tokio_worker_total_busy_duration_seconds_total` 之和即 InfluxDB 自身核数。**两个「连接被杀前兆」候选都被历史数据否掉、未上看板**：`emqx_vm_process_messages_in_queues` 在连接信箱冲到 1.5 万被强杀时也恒为 0；transport 在途窗口占用率在 10,000 条/秒守恒全过的健康运行中也顶满 100%（攒批时 EMQX 会尽量塞满窗口，属设计内状态）。教训：**预警指标必须拿过载与健康两种历史数据验证后才能标红**，不能凭机制推理。`emqx_vm_cpu_use` 与 `emqx_vm_used_memory` 一样是 EMQX 在容器里看到的整机数据，不能当 EMQX 自身用。
-- 2026-10-29 看板总览重排与守恒差：总览改为「吞吐 / 有没有丢 / 余量」三行，新增「守恒差」= 设备上行（QoS 1）+ EMQX 上下线计数 − 消费组已读出 − lag 变化 − 会话积压变化，即 EMQX 收到却没进总线的条数。**口径必须用 EMQX / Redis 中重启不归零的计数器两端原始值相减**：`increase()` 的窗口外推在速率陡变时偏几个百分点，server 进程内计数在重启时丢一截（实测假报 15.6%），而真实丢失只有 1.55%～4.8%，会被淹没；负载中各组件抓取时刻不一致使差值平移「速率 × 约 9 秒」，所以只在时间范围两端都空闲时出数。受控实验校准后空闲区间为 0 / −1，并在 17:2x 过载中报出 391,593 条（InfluxDB 实少约 40.7 万）。**同时发现 EMQX 的丢弃计数漏掉随连接进程强杀丢失的消息**：该次 `emqx_messages_dropped` 为 0、`emqx_delivery_dropped` 仅 5,190，「丢弃」格子改为两者之和并注明不含强杀丢失。其余口径：接入 QPS 用 `emqx_messages_qos1_received`（总接收含 transport 的 QoS 0 回执，恰为 2 倍）；鉴权拒绝取 EMQX `emqx_authentication_failure`（server 按 EMQX HTTP 鉴权协议对拒绝回 200 + `result: deny`，这是协议要求而非缺陷）。另加压测 VM 容量参考线、三类事件标注与强杀线变量 `max_mailbox_size`。只改看板，未改模块职责、拓扑、数据流与部署，架构 SVG 无需修改（`docs/test-reports/2026-10-29-grafana-dashboard-regroup.md`）。
-- 2026-10-30 MQTT 鉴权按原因计数：`MqttAuthService` 每次结论计入 `conduit.mqtt.auth{result, reason}`（allow：transport / device；deny：missing_credentials / transport_rejected / client_id_mismatch / unknown_device / device_disabled / tenant_disabled / wrong_secret），启动即注册全部 9 个序列，从未发生的原因为 0 而非无数据；标签只含有限枚举，不含 clientId。原因：按 EMQX HTTP 鉴权协议，拒绝也回 200 + `result: deny`（这是协议要求，不是缺陷），EMQX 与 HTTP 指标都只知放行/拒绝。看板「设备鉴权」图叠加非零的拒绝原因；EMQX 被拒数大于各原因之和时，差额为回调超时或 server 不可达。部署后实测即抓到一例：`loadgen.py refresh` 重置了模拟器同时在用的 100 台压测设备密钥，模拟器重连被拒 10 次，全部计为 wrong_secret——这正是 2026-10-29 「压测设备密钥被模拟器重置」的反向冲突。只新增指标，未改模块职责、数据流与部署，架构图无需修改（`docs/test-reports/2026-10-30-mqtt-auth-deny-reasons.md`）。
-- 2026-10-30 模拟器排除压测产品：新增 `SIM_EXCLUDE_PRODUCTS`（产品名称或 productKey，逗号分隔），默认 `压测产品`（压测脚本 `loadgen.py` 固定建的产品名，按名称匹配使各环境开箱即用，无需知道随机 productKey）；被排除的产品在读物模型与重置密钥之前跳过。根因：模拟器发现时重置所模拟设备的密钥，与压测脚本共用压测产品的前 100 台设备，双方互相作废——2026-10-29 因此误判出 8,300 条/秒的假天花板，2026-10-30 鉴权原因计数又抓到反向的模拟器重连被拒。compose 用 `${SIM_EXCLUDE_PRODUCTS-压测产品}`（`-` 而非 `:-`），显式配成空即恢复旧行为。未改模块职责与数据流，架构图无需修改（`docs/test-reports/2026-10-30-simulator-exclude-loadtest-product.md`）。
-- 2026-10-30 EMQX 文件描述符上限：900 台压测设备 + 174 台模拟器时 EMQX 报 `emfile`（打开文件数超 Docker 默认软限制 1024），内置 Mnesia 打不开日志文件而整节点崩溃，设备重连再次打满，10 分钟重启 5 次；**按原编排单个 EMQX 约 1,000 台设备即不可用**。dev compose 的 emqx 加 `ulimits.nofile` 1048576（standalone 经 extends 继承），VM 回读生效后不再崩溃。修复后同负载（900 连接 × 13 条/秒）为 CPU 饱和、持续丢失，瓶颈在 EMQX 与内核网络处理；且 900 连接 11,700 条/秒过载、600 连接 11,500 条/秒无损，说明连接数本身有显著开销，吞吐不能直接换算为设备数，需以海量低频连接实测（`docs/test-reports/2026-10-30-soak-900-devices.md`）。
-- 2026-10-30 拆分部署包 `deploy/split`（所有者要求：EMQX 在独立主机，其余服务在压测 VM）：不复制服务定义——EMQX 主机 extends dev 的 emqx，应用主机 `split/app` 逐个 extends standalone 的服务、显式列出全部服务（所有者要求：后续由他人或 AI 部署时目录即自明，不用叠加文件）；Prometheus 模板的 EMQX 目标改为变量 `EMQX_METRICS_TARGET`，默认值保持单机行为不变。`split/emqx/.env.example` 的容量参数取 EMQX 接受的最大值（所有者要求，压测后再调整），应用主机侧保持 transport 批 512 / 4 连接，其他部署包默认值不变。已在本地两台 VM（EMQX 主机只开 Docker 远程 API，由应用主机经 `DOCKER_HOST` 部署）实际部署并端到端验证（`docs/test-reports/2026-10-30-split-deployment.md`）。部署拓扑新增一种方式，组件、数据流与模块职责不变，架构 SVG 无需修改。
-- 2026-10-30 EMQX 容器名统一（所有者要求）：dev 文件为 emqx 设 `container_name: conduit-emqx`，standalone 与 split 经 extends 继承，排查命令在各部署包通用；split 的 EMQX 主机项目名由 `iot-mqtt` 改为 `conduit-emqx`（不用 `conduit`：EMQX 主机上可能留有旧单机部署的 `conduit_emqx-data`，同名项目会复用旧 EMQX 数据）、去掉 `IOT-MQTT` 容器名（与平台无关的命名已随「通用包」方案一起放弃）。代价：`container_name` 使 emqx 不能 `--scale`，单节点部署本就如此。
-- 2026-10-30 全部容器名固定（所有者要求）：只有一个实例的服务去掉 Compose 默认的 `-1` 后缀（原 `conduit-conduit-server-1` 等同时去掉重复前缀），transport 两个实例为 `conduit-transport-1` / `conduit-transport-2`；仓库脚本（`remote.py`、`capacity_test.py`、`seed-null-zero.py`）与 split README 同步改名。代价：固定名的服务不能 `--scale`，本项目单节点部署本就如此；同一宿主机不能同时跑 dev 与 standalone（本来就是二选一）。
-- 2026-10-30 拆分部署下的设备数阶梯（每台每 10 秒一条，守恒判据改为 InfluxDB 行数 = 客户端 PUBACK 数）：1 万 / 1.5 万 / 2 万台全部无损，两台 8 核 VM 均不到 2 核，EMQX 内存约每万台 0.6～0.7 GB。过程中发现并修复鉴权回调偶发失败：EMQX 以 8 条 HTTP 长连接回调鉴权且空闲不关，Tomcat 默认空闲约 20 秒或满 100 个请求即关，EMQX 恰在关闭瞬间复用时请求失败、不重试、直接判未授权；server 改为 `server.tomcat.keep-alive-timeout: 30m`、`max-keep-alive-requests: -1`（`69ac212`），修复后 0 次。3 万台档 EMQX VM 的 VMware 模拟网卡 e1000 在约 2.5 万连接时 `Detected Tx Unit Hang`，整机断网——测试 VM 网卡类型的限制，非平台上限；**压测用 VM 一律使用 vmxnet3**。换 vmxnet3 后复测 2.5 万台：已确认消息仍无丢失，但约 3,400 台（14%）在建连后的 CPU 高峰中掉线、PUBACK p99 9.6 秒，EMQX 告警 `runq_overload`；三台机器同在一台物理机、宿主机内存最低 330 MB，未能区分平台与宿主机争用。**这套本地环境的可靠结论：2 万台（每 10 秒一条）稳定无损，2.5 万台开始掉线**（`docs/test-reports/2026-10-30-device-ladder-split.md`）。
-- 2026-10-30 压测方向调整（所有者要求）：「N 台设备 × 每台每秒 1 条」阶梯在 2,000 台通过、5,000 台不合格（403 台掉线、p99 3.3 秒）；复现取证表明根因是发压机与两台 VM 同在一台物理机，宿主机 CPU 平均 83%、峰值 100%，EMQX VM 拿不到 CPU（`runq_overload`），双方都记录为对端关闭连接、EMQX 未触发 `send_timeout`，发压端停顿不超过 1 秒——测到的是物理机上限，**该方式暂停、计划保留作后期对比**（`docs/superpowers/plans/2026-10-30-device-ladder-1s-test-plan.md`，重测须分机发压）。改为「1,000 台设备固定、逐档提高每台每秒条数」测接入 QPS 与入库 TPS（计划 `docs/superpowers/plans/2026-10-30-qps-tps-1k-devices-test-plan.md`，未执行）。`ladder.py` 增加 `--rate-plan` 模式与第 7 条判据「发压机 CPU 平均 ≤ 85%，超过即结果不可信」（`docs/test-reports/2026-10-30-ladder-1s.md`）。
-- 2026-10-30 鉴权超时排查结论：立项时以为是「鉴权长连接半开」，实为**宿主机 CPU 紧张导致的虚拟网卡丢包**——VM 短暂冻结（128 内采样出现唯一一次 33 秒间隔、内核 `RT throttling activated`）、vmxnet3 接收环来不及补充，VMware 在宿主侧丢入站包（`vmware.log` 的 `Cannot retrieve the buffer descriptors per rx packet`，客户机 `pkts rx OOB` 累计约 40 万，内核 `rx_dropped` 为 0），被丢的鉴权请求 / 回应经 TCP 重传退避超过 5 秒即判未授权。宿主机清理后（终止空转的残留进程等）同场景零丢包，5,000 台 × 每秒 1 条 p99 16 毫秒、零掉线。**本地 VM 压测前必须确认宿主机不紧张，并核对 `pkts rx OOB` 增量**；此前 2.5 万台与 5,000 台档的掉线结论需在宿主机清理后复测（`docs/test-reports/2026-10-30-auth-timeout-investigation.md`）。
-- 2026-10-30 EMQX 鉴权回调超时由 5 秒放宽到 10 秒（所有者决定，`deploy/dev/emqx/base.hocon.tpl` 的 `request_timeout`，dev / standalone / split 共用）：鉴权被拒的实际诱因是丢包后 TCP 重传退避（0.2→0.4→0.8→1.6→3.2 秒）累计超过 5 秒，10 秒可多扛一到两轮重传。代价：server 真不可用时设备建连多等 5 秒才被拒；EMQX 判僵尸连接的 10 秒无响应阈值不变。
-- 2026-10-30 接收环对照与复测：宿主机 CPU 约 80% 时，vmxnet3 接收环 1024 下 EMQX 主机丢包 5,911、4096 下为 0；两台 VM 已改 4096（`ethtool -G`，运行时生效，**未持久化**）。宿主机正常、接收环 4096、鉴权超时 10 秒下复测此前不合格的两档均通过：5,000 台 × 每秒 1 条（入库 TPS 5,015，p99 15 毫秒）、2.5 万台 × 每 10 秒 1 条（入库 TPS 2,510，p99 31 毫秒），均守恒、零掉线——先前不合格源于宿主机紧张（`docs/test-reports/2026-10-30-ring-timeout-retest.md`）。
-- 2026-11-02 交接文件位置统一（所有者要求）：所有交接只放 `docs/handoffs/`；根目录 `handoffs/` 中遗留的 `2026-10-29-local-cli-orchestration.md` 已移入，根目录 `handoffs/` 删除。起因是全局 `~/.codex/AGENTS.md` 写的是 `handoffs/`，已同步改为 `docs/handoffs/`。
-- 2026-11-01 每秒 1 条设备数上限（拆分部署，宿主机空闲、接收环 4096 已持久化）：5,000 台通过，6,000 / 6,500 / 8,000 台均不合格（掉线 818 / 548 / 1,977 台，p99 2.5 / 4.0 / 8.0 秒），三档均无已确认消息丢失。瓶颈是 EMQX 主机 VM 的内核收包：6,000 台时 128 的 CPU 60%～84% 为 softirq、EMQX 用户态仅 10%～15%（约 1 核），vmxnet3 收包集中在队列 0，软中断跟不上即缺缓冲丢包、引发重传与重连而负载陡增。结论是**本地虚拟化网络的上限，不是 EMQX 或平台的上限**，不得外推到物理机或云主机。降低收包开销的选项（EMQX 改宿主机网络、RPS、换物理机重测）待所有者决定（`docs/test-reports/2026-11-01-ladder-1s-higher.md`）。
-- 2026-10-29 连接进程信箱与忙碌度：transport 会话监控新增采集 EMQX `/api/v5/clients/{clientid}` 的 `mailbox_len` 与 `reductions`，发布为仪表 `conduit.transport.session.mailbox.len` 与 `conduit.transport.session.reductions`（按 `client` 标签），**只暴露、不参与健康判定**。验证（健康 8,000 / 过载 16,000 条/秒各 2 分钟）：信箱最大 31 对 2,194，相差 70 倍，且它正是 EMQX 判断强杀的那个量（下午强杀日志中被杀时为 10,200～16,315），看板阈值定为黄 300、红 800（在仓库默认 `max_mailbox_size` 1000 下也能赶在被杀前变红）；每条连接 reductions/秒约 93 万对 200 万，随负载线性增长，离单连接实测的单核上限 500～600 万/秒尚远——印证瓶颈已从连接进程移到 VM 整机 CPU，阈值定为黄 300 万、红 450 万，用于抓「连接数被改回 1」这类结构性回退。限制：会话监控 30 秒一采，信箱的短尖峰可能漏掉。字段解析加了以真实 EMQX 响应结构为输入的测试（字段名写错时 `path().asLong()` 静默返回 0，已用变异确认测试能抓到）。
-- 2026-10-29 部署漂移教训：压测 VM 的 compose 与 `.env` 落后于仓库（`max_inflight` 仓库 512、VM 1024），2026-10-28 的修正从未部署，当天据仓库值写下的一条决定因此有误。**压测与故障排查前必须回读运行中的实际配置**（`emqx ctl conf show`、`docker exec <容器> env`、进程 `/proc/1/cmdline`），不能以仓库或文档为准。同日还有多处「命令成功但未生效」：EMQX 共享订阅策略键写在 `broker` 下被静默忽略、`docker exec ... < 文件` 的重定向由宿主 shell 执行、探测客户端不等 CONNACK——一律以回读结果为准。VM 上的信箱 10000、inflight 1024、transport 批 512 尚未写入仓库默认值（所有者决定暂缓），故按仓库默认部署无法复现上述容量数字。
-- 2026-10-29 多实例 + 共享订阅（**当日稍晚已被推翻并实施**，见下文「transport 共享订阅」条；本条的 8,000 条/秒天花板是测量假象，但「全平台上行挤过同一个 Erlang 进程」这一结构判断后经 recon 直接证实成立）：**状态由「受 EMQX 版本阻塞」改为「可行，待容量需求触发」，现阶段仍不实施**。阻塞前提（磁盘持久会话与共享订阅互斥）已随 2026-10-28 关闭磁盘持久会话而消失。实测当前「单活 transport + 普通订阅」的入口天花板约 **8,000 条/秒**，成因是 EMQX 需把全平台上行路由给**同一个 Erlang 进程**，而该进程信箱上限 1,000（19 次 `mailbox_overflow` 强杀，且当时 `max_inflight` 已是 512）。**该限制受单核约束，加 CPU 无效**。不实施的理由：可持续入库 6,600 条/秒按 10 秒上报间隔可支撑约 6.6 万台设备，当前演示负载 17 条/秒仅用掉 0.26%，无需求推动；而共享订阅要动投递顺序、未确认消息重分发、会话监控（需同时盯 N 个会话）与全部 e2e 场景，风险集中在「会不会丢、会不会乱序」。**触发条件：稳态入库持续超过 3,300 条/秒（容量的 50%），或出现明确的 >6,600 条/秒需求。** 共享订阅若实施，可顺带消解 mqueue 容量两难（该两难的根源是主备切换的 17 秒窗口）。（`docs/test-reports/2026-10-29-capacity-after-batching.md`）
-
-
-- 2026-10-28 流水线入库路径批量化（`docs/test-reports/2026-10-28-pipeline-redis-roundtrips.md`）：实测入库上限约 3,000 条/秒由**每条消息 2 次串行 Redis 网络往返**决定——`DeviceIdentityLookup.find()` 的 GET 与 `LatestValueStore.update()` 的 EVALSHA 在逐条循环内（InfluxDB 写入、ack、markOnline 本就每批一次）。已排除 InfluxDB（每批只写一次、CPU 0.16%）、JVM 内存上限（堆占用 12.6%、GC 0.8%）与 Redis 刷盘策略。改为：身份一次 `MGET` 预取（未命中仍逐个回源并回填），最新值一次 pipeline 提交——**`latest-update.lua` 原样复用、不重写**，只是放进 pipeline，按测点比较时间戳的语义（旧数据不覆盖新值）完全不变。**确立一条可复用的容错模式：批量操作遇不可恢复错误时退回逐条，只让出错那条进死信**；脚本幂等且回退保持原批次顺序，重做安全。入批前逐条校验（保留测点名 `__`、null 值），**一条坏数据不拖垮整批**。吞吐收益待压测复测，报告中 22,000 条/秒为外推值。
-- 2026-10-28 排查方法教训：Redis 的 `commandstats` **把 Lua 脚本内部调用的命令一并计数**。据此曾误判为「每条消息 6 次往返」并预测约 1,100 条/秒，与实测峰值 2,943 不符；正是这个对不上促使回头核对 `latest-update.lua`，才发现那 4 次 HGET/HSET 在服务端执行、无网络开销。**模型与实测不符时，先怀疑模型。**
-
-
-- 2026-10-28 `max_inflight` 由 1024 降为 **512**（同日自我更正）：按吞吐对照选定的 1024 在 6000 条/秒复压中**必然触发 `mailbox_overflow` 强杀**——EMQX 把最多 `max_inflight` 条未确认消息推给连接进程，这些消息堆在该进程的Erlang 信箱里，而 `force_shutdown.max_mailbox_size` 默认 **1000**，1024 > 1000 必然越界（实测两次强杀，信箱 1335 与 2896 条，且**先于队列溢出与堆超限发生**）。按既有原则「不为塞下更大缓冲去调高保护阈值」，降 `max_inflight` 而非调大信箱上限。**新增约束：`batch-size ≤ max_inflight ≪ max_mailbox_size`。**A/B 实验只跑 90 秒且只看吞吐未查失效日志，因此漏掉——**容量参数必须同时核对吞吐与失效日志**。同步更新两个 `.env.example`、dev compose、e2e 的 `E2eEnvironment` 与 transport 的 `TestBroker`。
-
-
-- 2026-10-28 多实例与微服务化约束（方向性，暂不实施）：**每个服务的设计都要让「后续拆成多实例 / 微服务」保持可行**，但现阶段不为此主动改造成主备或多实例。具体含义：进程内状态只能是缓存或可重建的派生物，不得是唯一事实来源；跨实例协调走外部组件（Redis 锁、消费组、数据库），不依赖「只有一个进程」这一前提；写操作对重复执行幂等。**当前已知的不满足项：遥测重放的任务状态是单进程内的 `AtomicReference`（见 1.2「遥测重放」），多实例下会各跑各的，改造时需外置到 Redis 或数据库。** transport 的单活多备维持现状；其选主已外置到 Redis 锁，将来改共享订阅时可整体摘除协调层——该前提（磁盘持久会话与共享订阅互斥）已随 2026-10-28 关闭磁盘持久会话而消失，但本次不实施，留作后续评估。
-
-
-- 2026-10-20 架构图源统一：本文件移除 ASCII 架构图，与 README 共用 `docs/images/architecture.svg`，保留文字数据流、模块职责与设计决定；同一架构只维护一个 SVG 源文件。
-
-- 2026-10-20 架构同步约定：影响架构的实施必须在同一变更中更新相关架构说明、SVG 和 spec / plan；交付列明更新文件或无需修改的原因，见本文件顶部「架构同步规则」。
-
-- 2026-10-20 SaaS 路线补充：租户控制面、资源公平性、用量采集、CI/CD、基础可观测与恢复验证前置 V0.3；补充客户/项目边界、资源路由、统一批量任务、数据治理及容量/SLI 验收口径。现有设计作为基线继承，新增要求按阶段实现，见 `docs/roadmap-saas.md` 与 1.4。
-
-- 2026-10-14 V0.1：Spring Boot 3 + EMQX 5 + Redis Streams 总线（经 `MessageBus` 接口）+ PostgreSQL 16 + Redis 7；前端 Vue 3 + Element Plus；transport / server 两进程；EMQX HTTP 鉴权回调；多租户从 V0.1 起带 `tenant_id`（`2026-10-14-conduit-v0.1-design.md`）。
-- 2026-10-15 V0.2：拆为 A 物模型与编解码 → B 历史查询与曲线 → C 多租户与用户管理，依次实施。
-- 2026-10-15 V0.2-A：时序库改为 InfluxDB 3 Core 3.12.0（自写 v3 HTTP 客户端）；物模型只做属性（8 个字段）；逐测点校验与 `FIELD_REJECTED`；解码器 SPI（`standard-json`、`flat-json`）（`2026-10-15-conduit-v0.2a-thing-model-design.md`）。
-- 2026-10-15：流水线可恢复错误沿异常 cause 链判断（MyBatis 包装的数据库断连也原地重试）；死信统一"先写记录再 ack"。
-- 2026-10-15：`conduit-connector` 改名 `conduit-transport`（避免与 EMQX 数据集成 Connector 混淆），env `TRANSPORT_MQTT_*`，属性前缀 `conduit.transport.mqtt`。
-- 2026-10-15：Docker 宿主机无外网，部署用 `deploy/build-local.sh`（本机干净检出构建 + 薄镜像）。
-- 2026-10-15：界面约定——分页每页 10 条、入口显眼（操作列 + 面包屑）、演示数据用有意义中文名、e2e 自清理。
-- 2026-10-15 V0.2-B：历史曲线在设备详情「历史」标签页；服务端自动聚合（≤1000 点/曲线，固定桶档位，数值 avg/min/max、状态取桶内最后值）；ECharts 6.1.0 按需引入（原定 5.6.0，因 XSS 公告 GHSA-fgmj-fm8m-jvvx 升级）；SQL 参数化（`2026-10-15-conduit-v0.2b-history-design.md`）。
-- 2026-10-15 路线图：V2.1 AI 能力（自然语言查数、异常检测、物模型草稿生成、告警摘要）。
-- 2026-10-15：所有类与重点方法必须写中文注释（见 2.1）；升级时同步更新本文件。
-- 2026-10-15 路线图调整：V0.3 改为「计算字段 → 告警」（计算字段先行，告警规则可引用）；新增 V0.4 资产与数据管理（资产层级/分组、历史导出 CSV、设备批量导入）；V1.0 加审计日志；V1.1 加网关与子设备；规则引擎留在 V2.0，由 V0.3 固定结构告警规则演进；可配置看板暂不纳入。
-- 2026-10-15 界面刷新：统一框架（分组可折叠侧栏 + 面包屑顶栏 + PageHeader + 404）、暗色模式与侧栏风格（偏好存 `localStorage` 的 `conduit.ui`）、列表套件（`useTable`/`FilterBar`/`OnlineDot`/`RelativeTime`）、设备信息卡与指标卡片迷你趋势线、首页总览 `GET /api/v1/overview`、`ProductView` 设备计数、`UserView` 租户名称（`2026-10-15-conduit-ui-refresh-design.md`）。
-- 2026-10-15 前端：品牌标志为「字母 C 信号」（`ConduitLogo`，`tone` auto/dark-bg，深色侧栏与登录品牌区用 dark-bg；favicon 为 `public/favicon.svg`，线宽加粗）；应用外壳恰好一屏高（100vh/100dvh），侧栏与顶栏固定，只有 el-main 滚动；表格行高约 44px、主内容内边距 16px，使 10 行列表页在 1080p 屏无需滚动。
-- 2026-10-15 部署与开发模式：Compose 默认只起基础设施，应用栈走 `app` profile（模拟器 `demo`），EMQX 鉴权回调地址可配置（`CONDUIT_AUTH_URL`）；开发时应用在 IDE 本地运行，实施计划不含部署步骤，验收用测试与 API 检查，部署仅按所有者要求通过 `deploy/build-local.sh`。
-- 2026-10-15：设备列表筛选——主行关键字/产品/在线状态/启用状态，「更多筛选」含最后上报与创建时间（本地日界、左闭右开毫秒）；已应用筛选经 router.replace 同步到 query（productKey、keyword、online、status、reported、createdFrom、createdTo），非法值忽略；首页「设备」「在线设备」卡片链接到列表。
-- 2026-10-15：设备列表筛选修正——路由 query 在页面内变化时重新应用；「更多筛选」角标与强制展开只看已应用条件；useTable 加载失败清空数据（各列表显示「加载失败」而非旧数据）；非法 query 值用 replace 改写掉。
-- 2026-10-15 设备列表筛选与数据驱动在线：列表新增 online / status / reported / createdFrom / createdTo 筛选（online、reported 走内存分页）；上报数据可把设备标记为在线，但数据不推进 `since`、离线后需超过 10 秒宽限期才复活，EMQX 事件仍是权威。
-- 2026-10-15：Java 服务日志统一写入 `CONDUIT_LOG_DIR`（默认 `logs`）下的每服务一个滚动文件（50MB/14 天/1GB）；simulator 由 slf4j-simple 换为 logback-classic；Docker 共用卷 `conduit-logs`。
-- 2026-10-15：编排可同步到 Docker 宿主机 `/opt/conduit`（`deploy/sync-to-host.sh`，借临时容器 + docker cp 写入），供宿主机面板（1Panel）管理；仓库 `deploy/` 仍是唯一来源。
-- 2026-10-15：基础设施加入 InfluxDB 3 Explorer（`influxdata/influxdb3-ui:1.11.0`，端口 `INFLUX_EXPLORER_PORT` 默认 8888，admin 模式，预置连接 compose 内的 InfluxDB 与 `telemetry` 库，数据卷 `influx-explorer-data`）。
-- 2026-10-15：沿消息链路补全 DEBUG/TRACE 日志与 REST 访问日志（`RequestLogFilter`），日志约定见 2.2。
-- 2026-10-16：新增 V0.2-R 可靠性加固（V0.2-C 之后）：e2e 本地化；transport 多实例 + 会话不持久；EMQX 磁盘持久会话（待验证 5.8.6 支持）；e2e 增加杀 transport / 杀 EMQX 场景。讨论中确定的后续工作须当时写入路线图或 spec。
-- 2026-10-16 V0.2-C：多租户与用户管理——角色 `PLATFORM_ADMIN`/`TENANT_ADMIN`/`TENANT_VIEWER`（Flyway V3：平台管理员 `tenant_id` 为空、旧 `ADMIN` 迁为 `TENANT_ADMIN`、删除租户级联删除用户）；JWT 可空 `tid`、代入 `imp`、需改密码 `mcp`；`SecurityConfig` 按路径与方法的权限矩阵；强制改密码 403 `PASSWORD_CHANGE_REQUIRED`；平台接口 `/api/v1/platform/**`（概况、租户、进入租户）与用户管理 `/api/v1/users`；代入写请求 INFO 留痕；停用租户拒绝登录、续期与 MQTT 鉴权并以 `TENANT_DISABLED` 死信；前端 `usePermission` 按角色隐藏写操作、菜单与路由按身份（`2026-10-16-conduit-v0.2c-tenants-users-design.md`）。
-- 2026-10-16：V0.2-R 并入「模拟器多产品」：按各产品物模型生成数据，演示租户的设备也有数据。
-- 2026-10-16 V0.2-R 方向调整：EMQX 5.8.6 磁盘持久会话与共享订阅互斥（实测），改为「磁盘持久会话 + transport 单活多备（Redis 锁选主、同 clientId 接管）」；多实例共享订阅放弃，升级 EMQX 留待 V1.0。
-- 2026-10-16 V0.2-R：EMQX 开启磁盘持久会话（compose 环境变量，singleton，固定节点名 `emqx@127.0.0.1`）+ transport 单活多备（Redis 锁 `conduit:transport:leader`，固定 clientId `conduit-transport`、普通订阅，协调器负责重连）；完整部署两个 transport 服务（日志分目录，不用 replicas）；e2e 改为 Testcontainers 临时环境 + 本地 jar 进程的四个故障场景（`E2E_DEV_HOST`）；模拟器经平台管理员模拟各租户的物模型产品（`2026-10-16-conduit-v0.2r-reliability-design.md`）。
-- 2026-10-16 部署包整理：`deploy/` 拆为开发环境包 `infra/`（EMQX 官方镜像 + 只读挂载配置，`CONDUIT_AUTH_URL` 必填，不依赖 server）与独立部署包 `full/`（extends infra，应用服务与模拟器默认启动，单一 `.env`）；项目名均为 `conduit`、数据卷不变；应用镜像构建上下文为仓库根，`ARG BUILD_FROM=prebuilt|source` + `FROM ${BUILD_FROM} AS app` 选择预编译产物或源码构建；`deploy/package.sh` 从干净检出打 `target/conduit-standalone-<短提交>.tar.gz`；删除根 `Dockerfile`、`conduit-ui/Dockerfile`、自定义 EMQX 镜像、`build-local.sh` 与 `sync-to-host.sh`（`2026-10-16-conduit-deploy-packages-design.md`）。
-- 2026-10-16：部署包目录定名为 deploy/dev（开发环境：虚拟机只跑基础服务，应用在 IDEA）与 deploy/standalone（独立部署：全部组件在 Linux 上），打包 conduit-standalone-<短提交>.tar.gz。
-- 2026-10-19：开发与独立部署模板、集成测试镜像统一为 EMQX 5.10.5；5.8.6/5.8.9 的正常交接补发错位问题经专项实验 9 次未复现，标记为已解决。Redis AOF 改为每次写入刷盘；Broker 强杀仍有已确认消息丢失，详见 `docs/durability-validation.md`；本地 `application-local.yml` 取消 Git 跟踪，部署打包增加检查。
-- 2026-10-20 V0.2-R2：设备带 `id` 启用端到端可靠上报；transport 在 Redis 总线写入成功后发 QoS 0 业务回执，设备收到后才删除持久化本地副本。模拟器实现内存待确认队列、超时重发和背压；e2e 新增强杀 EMQX 场景（`2026-10-20-conduit-reliable-uplink-design.md`）。
-- 2026-10-20：所有实际测试执行都必须在 `docs/test-reports/` 留存测试报告；报告必须区分通过、失败、跳过、阻塞和未执行，记录可复现命令与证据位置（见 2.2）。
-- 2026-10-20 演示数据种子：Flyway V4 固化 4 租户 / 8 产品 / 174 设备 / 36 属性的稳定资产基线；动态遥测仍由模拟器生成，独立部署默认开启全部演示租户模拟（`2026-10-20-conduit-demo-seed-design.md`）。
-- 2026-10-20 SaaS 产品升级：产品目标改为生产级多租户 IoT SaaS；当前路线以 `docs/roadmap-saas.md` 为准，优先完成生产初始化、数据库强隔离、IAM/审计/配额，再推进设备控制、规则、仪表盘、开放生态、HA 和商业化。演示数据必须在正式生产基线中剥离。
-- 2026-10-20 产品命名：对外使用 Conduit IoT，GitHub 仓库改名为 `Clarence404/conduit-iot`，About 同步为多租户 IoT 与生产级 SaaS 建设方向；内部技术标识沿用 `conduit`，见顶部命名约定。
-- 2026-10-20 Maven 命名统一：根父工程改为 `dev.conduit:conduit-iot`，同步全部五个子模块父引用，补齐根 POM 的产品名称、简介、URL 和 SCM，各子模块增加独立展示名；版本号及子模块 artifactId 不变。模块依赖与运行架构未变，无需修改架构 SVG。
-- 2026-10-20：链路精简评估完成，结论暂不精简——（**已被 2026-10-28 决定取代**，磁盘持久会话已关闭）关闭 EMQX 磁盘持久会话的前提是所有设备走可靠模式，而契约允许设备不带 `id`；删除 transport 选主的前提是共享订阅，受 EMQX 版本阻塞（5.10.5 不支持，6.3.0 可用但许可与吞吐未澄清）。Redis 总线因承担消费组、认领与死信而维持现状。重新评估的触发条件见 `2026-10-20-conduit-reliable-uplink-design.md` 第 10 节。
-- 2026-10-20 V0.2-R3：遥测重放——`/api/v1/platform/telemetry/replay` 三个接口，范围左闭右开、跨度上限 6 小时、每批 500、同时只允许一个任务且状态只在内存；重放不更新在线状态、不写死信；窗口按 Redis 时钟匹配故运维两端各多留约 1 分钟；`PipelineProcessor` 抽出 `TelemetryIngestor`（`IngestSource` + 指标 `source` 标签）与 `Backoff` 供正常消费与重放共用，`MessageBus` 增加 `range` 按条目 id 区间只读（`2026-10-20-conduit-telemetry-replay-design.md`）。
-- 2026-10-21：V0.2-R3 遥测重放验收通过（幂等、不写死信、不改在线状态、取消与权限矩阵均在本地整套服务上验证）。验收期间发现 EMQX 持久会话不可恢复会使接入彻底停住（已知故障模式首次实际发生），人工以 `cleanStart=true` 丢弃损坏会话恢复；自动兜底列入 backlog「V0.2-R3 遗留」。
-- 2026-10-21：EMQX 持久会话专项实验中，同 clientId 主备切换（18 轮）正常，服务端 `clients kick` 在 9/9 轮损坏会话；据此暂缓自动兜底。2026-10-26 演示 VM 的会话异常（32 MB 堆限制触发进程关闭、旧会话确认序号异常、实时采集停滞）**经所有者确认为测试中人为停止服务所致，不是自发故障**；当时「不能再把风险限定为人为 kick」的推论基于错误前提，已作废。已备份旧会话、切新 clientId 恢复实时采集；旧积压未声称恢复。恢复过程见 `docs/test-reports/2026-10-26-telemetry-freshness.md`。
-- 2026-10-27（当日稍晚**已作废**，见下条）：不实施会话异常检测与自动取证/恢复。两次事故中第二次已确认为人为，第一次（会话损坏后每次重连崩溃）原因不明且未再复现，为一次低频边界场景投入检测器、EMQX API 依赖、取证落盘与故障注入测试不划算。已知缺口如实记录：`LeaderHealthIndicator` 只报 `connected`，会话「连着但不投递」时健康检查仍为 UP，这种状态只能靠人观察曲线新鲜度发现；人工恢复按 `docs/test-reports/2026-10-26-telemetry-freshness.md` 的步骤执行。再次自发出现同类故障时重新评估。
-- 2026-10-27 压测推翻上条决定：3000 条/秒压测**可复现**地触发 EMQX 持久会话楔死——EMQX 收到 929,524 条、丢弃 0、持久化 902,187，但只投递 490,656，约 41 万条停住且 `inflight` 冻结。机制已查明：`emqx_persistent_session_ds:replay_batch` 重放积压时连接进程超堆被杀（日志 `maximum heap size reached`），transport 每次重连都重新触发、每次被杀，**重启 transport 无法恢复**，只能以 `cleanStart=true` 丢弃会话并永久丢失积压。`durable_sessions.batch_size` 已是 100，内存来自 DS 层扫描存量条目，**积压越大越吃内存**；`force_shutdown.max_heap_size=256MB` 确认生效但重放进程不受其约束。**触发条件普遍**（入库慢于接入即积压），**且零可观测**——transport 健康 UP、`leader.connected=true`、两侧日志无错误。原决定「原因不明、未复现、低频边界」的前提已被证伪，会话健康检测与可验证恢复需重新立项。证据见 `docs/test-reports/2026-10-27-load-test-and-pipeline-ceiling.md` 第 5 节。
-- 2026-10-27 流水线吞吐缺陷与修复：实测入库上限仅 **100 条/秒**，根因是「批大小固定 100 × 每批一次 InfluxDB 写入 × 写入等 WAL 刷盘 1 秒」，即 **吞吐 = 批大小 ÷ 1 秒**，与 CPU 无关（server 仅用 3～17%）。修复：`conduit.pipeline.batch-size` 支持 `-1`=不限并设为默认；新增 `conduit.influx.max-request-bytes`（默认 8 MiB）按字节切块发送，避免大批量触发 InfluxDB 的 413（10 MiB 上限）；413 与 400 一并改判为不可恢复——此前 413 被当作可恢复错误导致流水线**无限重试同一超大载荷而永久停摆**。修复后实测 **2,780 条/秒**，21 万条积压一次读完、入库数与发送数完全一致、413 为 0（提交 `076ec17`）。
-- 2026-10-21：V0.3 拆为六个子项目 A 租户隔离硬化 → B 组织模型与 RBAC → C 租户生命周期控制面 → D 计量与配额 → E 资源治理，F 工程与运维基线可并行（见 `docs/roadmap-saas.md` V0.3 一节）；CI 暂不建设，理由与重启条件一并记录在该节。
-
-- 2026-10-22 V0.3 前置租户隔离加固：决定暂不实施 PostgreSQL RLS，以 MyBatis-Plus 租户拦截器为主体，补充租户组合外键、唯一的 `tenant.system` + `TenantContext.callAsSystem` 跨租户通道、一事务一租户断言与越权测试。Redis/InfluxDB 延续共享存储逻辑隔离，访问必须使用经 PostgreSQL 租户查询确认的设备身份。触发条件见下条 2026-10-27 的复核结论（`2026-10-22-conduit-tenant-isolation-design.md`）。
-- 2026-10-27 RLS 复核结论：**定为不采用，不再周期性重提**。复核事实——21 条绕开拦截器的裸 SQL（`InvitationService`、`UserSessionRegistry`）全部正确限定租户，无任何泄露；`@InterceptorIgnore` 5 处仍全部位于 `tenant.system` 包，经 B1/B2/B3 三轮迭代未被绕过；组合外键在新增表上延续。定位澄清：**RLS 是纵深防御的附加层，不是 `tenant_id` 的替代**，`tenant_id` + 拦截器 + 组合外键 + 受控系统通道是本项目的租户隔离方案。不采用的理由：无实际泄露、成本由 3 张表涨到 10 张、绑死 PostgreSQL，且与认证路径冲突（系统模式与「从未绑定」在 `TenantContext` 中不可区分；未登录的邀请接受在事务中途才绑定租户，连接级会话变量已固定）。**原触发条件「业务表超过 10 张」作废**——它随正常功能推进必然满足，是进度信号而非风险信号。新触发条件只有一条：**出现真实的跨租户数据泄露**。
-- 2026-10-26 V0.3-B1 组织骨架：新增租户内 `customer → project → site → asset` 业务层级；项目与站点作为后续授权范围，客户不是子租户；产品仍在租户内共享，设备必须归属一个站点并可选关联同站点资产。V6 为存量和新建租户提供受保护的默认项目/站点，组合外键强制租户与站点一致；本阶段只交付数据模型和后端接口，细粒度授权、自定义角色、邀请、会话吊销、审计与界面按 B2～B4 实施（`2026-10-26-conduit-v0.3b-organization-rbac-design.md`）。
-- 2026-10-26 V0.3-B2：预置角色与租户/项目/站点绑定、每请求新鲜授权和 SQL 范围过滤；兼容账号以 authz_managed 标记显式接管，撤权不能恢复旧角色。提供 shadow/enforce/read-only 开关、OWNER 保护、用户资源权限与自定义角色管理，以及项目管理员限本项目的成员委派；自定义角色停用立即失效，有绑定时不得删除，`tenant.manage` 只属于内置 OWNER。B3/B4 的邀请、会话治理与持久化审计仍待实施。继续以可迁移的 MyBatis-Plus + 组合外键和受控系统 Mapper 为应用边界，见 docs/authorization.md。
-- 2026-10-27 密码策略与 MFA：**决定整体不实施**。原 B3 spec 5.3 要求的租户级密码策略（最小长度、复杂度、历史密码数、最长有效期、失败锁定）与 MFA 数据预留全部作废。MFA 不预留的理由：`mfa_method` 这类可空列「现在加」与「将来加」成本相同，而列的类型、长度与恢复码格式取决于最终选定的方案（TOTP / WebAuthn 各不相同），提前预留等于猜测，真做时一次性在专项 spec 中定清楚更省。**遗留缺口如实记录**：密码规则保持全局固定的 8～64 位含字母和数字，租户不可调整；**登录失败不做锁定或限流，在线猜测口令不受次数限制**；无密码历史、无过期强制。涉及的 spec、roadmap、identity-governance 与交接文件均已同步标注为不实施，不再作为待办跟踪。
-- 2026-10-27 邀请范围角色：**决定不实施**，账号邀请只支持租户级内置管理员/只读两种角色，这是最终形态而非过渡。需要项目/站点级范围的成员，由管理员在其接受邀请后到用户页配置资源权限（B2 已提供该能力），不在邀请环节重复一套范围校验。**V0.3-B3 至此收尾**，B 阶段剩余工作只有 B4 持久化审计。
-- 2026-10-27 V0.3-B3 身份治理切片：V9/V10 建立服务端会话、授权版本和一次性邀请；生产拒绝旧无 sid 令牌，refresh 哈希轮换；邮件经通知通道接口发送，独立演示包 Mailpit 接收。账号邀请只支持租户级内置管理员/只读角色（邀请携带完整范围角色已决定不实施，见下条）。详见 docs/identity-governance.md。
-- 2026-10-26 全局演示约定：新增功能必须配套可复现的演示数据、可操作入口、查看步骤和测试报告；不得只在当前 VM 手工造数或交付空页面；初始化不能覆盖人工配置与凭据。
-- 2026-10-28 性能观测栈：部署包新增 profile `metrics`（Prometheus + Grafana + node-exporter + cadvisor + redis-exporter，镜像固定版本、均设 mem_limit），面板按「设备→EMQX→transport→Redis→流水线→InfluxDB」逐跳对比并配积压、丢弃、资源。server 与 transport 加入 `micrometer-registry-prometheus` 并暴露 `/actuator/prometheus`。**未放开权限**：`/actuator/**` 仍仅平台管理员（凭据是 15 分钟 JWT 且依赖数据库会话，Prometheus 拿不到）。所有者决定 server 指标走新增的 `GET /internal/metrics`：`/internal/**` 在 SecurityConfig 中 permitAll，由 `InternalMetricsController` 自行校验 `X-Conduit-Internal-Token`（与 EMQX 鉴权回调同令牌、同常量时间比较），令牌不入日志；Prometheus 启动时把令牌渲染进容器内配置。transport 无 Spring Security、端口只在 compose 网络内，直接抓 `/actuator/prometheus`。若干 EMQX / redis_exporter 指标名与 EMQX Prometheus 端点是否需鉴权未经实际验证；InfluxDB 3 Core 未确认有 Prometheus 端点，未接入（**2026-10-29 已确认有并接入**，见同日「看板重排」条）。
-- 2026-10-28 吞吐对照与内存上限（`docs/test-reports/2026-10-28-throughput-ab.md`）：①**「`batch-size` 必须等于 `max_inflight`」被实测推翻**——早些时候写入计划、spec、本文件、两个 `.env.example` 与 `SessionMonitor` 判据的该规则是错的：相等的 32/32（2,605 条/秒）与 256/256（3,309）都不是最优，1024/64 达 4,000 条/秒（+54%）。原推理只有一半成立：批大于窗口确实攒不满；但窗口等于批是停等协议，窗口远大于批才流水线化。**正确规则：`batch-size ≤ max_inflight`，窗口为批的若干倍**；默认值初定为 `EMQX_MAX_INFLIGHT=1024` / `TRANSPORT_BUS_BATCH_SIZE=64`（后因信箱上限改为 512，见下一条）。`SessionMonitor` 判据由「不相等即告警」改为「批大于窗口才告警」，并输出 `inflightToBatchRatio`（原判据会把正确配置报成异常）。弱信号：256/256 与 256/32 仅差约 10%，可能在噪声内，不据此主张具体倍数。②**Java 服务设容器内存上限**：`java.Dockerfile` 的 `MaxRAMPercentage=75` 在容器无上限时按宿主机总内存算，实测四个 Java 容器各自自报最大堆 5.6 GB（宿主机 7.6 GB），压测后满 swap。standalone 编排为 server `1500m`、每个 transport `512m`、simulator `384m`（`SERVER_MEM_LIMIT` 等可覆盖），InfluxDB 由 `3g` 降为 `2g`。③`conduit.pipeline.batch-size` 由 `-1` 改为 `20000`：理论上限 2 万条/秒远高于实测约 4,000 条/秒排空能力，同时封住无界读流的内存；`-1` 仍合法。④不改 Redis `appendfsync`（保持 `always`：everysec 虽 +32%，但会使已向设备确认的消息在 Redis 崩溃时最多丢 1 秒）。未验证：设内存上限后吞吐、1024/64 长时间运行表现。
+**压测结论**（详见各报告）
+- 2026-10-29 单机部署压测 VM：可靠无损 11,500 条/秒，16,000 为硬件墙（`2026-10-29-vm-max-throughput.md`）。
+- 2026-10-30 拆分部署：
+  - 每 10 秒 1 条：2.5 万台无损（`2026-10-30-device-ladder-split.md`、`2026-10-30-ring-timeout-retest.md`）。
+  - 早先的掉线源于宿主机 CPU 紧张导致虚拟网卡丢包，而非连接半开（`2026-10-30-auth-timeout-investigation.md`）。
+  - 压测 VM 一律用 vmxnet3 网卡，接收环 4096（已持久化）。
+- 2026-11-01：每秒 1 条的设备数上限为 5,000～6,000 台，瓶颈是 EMQX 主机 VM 的内核收包 softirq，属本地虚拟化网络的上限。后续方向待所有者决定，见 `docs/handoffs/2026-11-02-split-loadtest-ceiling.md`。

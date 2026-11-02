@@ -217,7 +217,7 @@
 1. ~~接收环调到 4096 的对照是否做~~（2026-10-30 已做：宿主机 CPU 约 80% 时 1024 丢包 5,911、4096 为 0，见 [报告](test-reports/2026-10-30-ring-timeout-retest.md)）。~~4096 是否持久化~~（2026-11-01 所有者决定保留：129 以 `nmcli connection modify ens160 ethtool.ring-rx 4096` 写入连接配置；128 新增 systemd 单元 `nic-ring-rx.service`（开机执行 `ethtool -G ens33 rx 4096`，已 enable）。两台均未重启验证）。
 2. ~~EMQX 鉴权超时是否从 5 秒放宽到 10～15 秒~~（2026-10-30 所有者决定放宽到 10 秒，已改 `deploy/dev/emqx/base.hocon.tpl`）。
 3. ~~是否重测此前不合格的档位~~（2026-10-30 已重测：两档均通过，见 [报告](test-reports/2026-10-30-ring-timeout-retest.md)）。
-4. **每秒 1 条的设备数卡在 5,000～6,000 台，瓶颈是 EMQX 主机 VM 的内核收包（softirq 60%～84%，EMQX 自身约 1 核）**（2026-11-01，见 [报告](test-reports/2026-11-01-ladder-1s-higher.md)）。待定：是否尝试 EMQX 改宿主机网络（去掉 Docker 桥接与 DNAT）、开 RPS 分散收包，或改用物理机 / 分机发压重测。
+4. **每秒 1 条的设备数卡在 5,000～6,000 台，瓶颈是 EMQX 主机 VM 的内核收包（softirq 60%～84%，EMQX 自身约 1 核）**（2026-11-01，见 [报告](test-reports/2026-11-01-ladder-1s-higher.md)）。待定：是否尝试 EMQX 改宿主机网络（去掉 Docker 桥接与 DNAT）、开 RPS 分散收包，或改用物理机 / 分机发压重测。交接见 [`docs/handoffs/2026-11-02-split-loadtest-ceiling.md`](handoffs/2026-11-02-split-loadtest-ceiling.md)。
 
 详见 [设备数阶梯报告](test-reports/2026-10-30-device-ladder-split.md)。
 

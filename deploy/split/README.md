@@ -38,7 +38,7 @@ cp .env.example .env
 # 必改：CONDUIT_AUTH_URL=http://<应用主机地址>:8091；四个口令与应用主机一致
 docker compose up -d
 docker exec conduit-emqx emqx ctl status            # 运行中
-docker exec conduit-emqx emqx ctl conf show mqtt    # 回读：max_inflight = 65535、max_mqueue_len = infinity
+docker exec conduit-emqx emqx ctl conf show mqtt    # 回读：max_inflight = 1024、max_mqueue_len = 50000
 ```
 
 配置模板与 ACL 从 `deploy/dev/emqx/` 只读挂载，需对容器内 emqx 用户（uid 1000）可读（`chmod -R a+r deploy`）。
@@ -73,13 +73,14 @@ docker exec conduit-emqx emqx ctl broker stats | grep -E "^connections.count|sub
 
 ## 容量参数
 
-EMQX 主机按所有者要求（2026-10-30）取 EMQX 5.10.5 接受的最大值，压测后再调整。每项都用临时 EMQX 容器验证过能启动且生效。
+EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（2026-10-30 所有者要求）；会话三项（窗口、队列、强杀）
+2026-11-12 改回有上限的取值，见下方「为什么会话三项不取最大值」。每项都用临时 EMQX 容器验证过能启动且生效。
 
 | 参数（EMQX 主机 `.env`） | 本包取值 | EMQX 默认 | 其他部署包 | 说明 |
 |---|---|---|---|---|
-| `EMQX_MAX_INFLIGHT` | 65535（上限，65536 启动失败） | 32 | 512 | EMQX 推给每条连接、尚未确认的消息上限 |
-| `EMQX_MAX_MQUEUE_LEN` | infinity | 1000 | 100000 | 每个会话的内存队列 |
-| `EMQX_FORCE_SHUTDOWN_ENABLE` | false | true | true | 不再按信箱 / 堆强杀单个连接；信箱与堆两项保留为重新开启时的取值（10000 / 256MB） |
+| `EMQX_MAX_INFLIGHT` | 1024 | 32 | 512 | EMQX 推给每条连接、尚未确认的消息上限；须 ≥ 应用主机批大小，且远小于信箱上限 |
+| `EMQX_MAX_MQUEUE_LEN` | 50000 | 1000 | 100000 | 每个会话的内存队列，满了丢弃并计入 `mqueue_dropped`。10 万条在单连接堆上限内放不下，过载时连接被强杀（2026-11-12 实测） |
+| `EMQX_FORCE_SHUTDOWN_ENABLE` / `EMQX_MAX_MAILBOX_SIZE` / `EMQX_CONNECTION_MAX_HEAP_SIZE` | true / 10000 / 256MB | true / 1000 / 32MB | true / 1000 / 256MB | 单个连接信箱或堆超限时只强杀该连接 |
 | `EMQX_TCP_BACKLOG` / `EMQX_SOMAXCONN` | 65535 | 1024 / 4096 | 默认 | 大批设备同时重连时的连接队列 |
 | `EMQX_MAX_PACKET_SIZE` | 256MB（上限） | 1MB | 默认 | 单个 MQTT 报文上限 |
 | 文件描述符 | 1048576 | — | 1048576 | 在 dev 文件中设定，每条 MQTT 连接占一个 |
@@ -87,9 +88,15 @@ EMQX 主机按所有者要求（2026-10-30）取 EMQX 5.10.5 接受的最大值�
 应用主机：`TRANSPORT_BUS_BATCH_SIZE=512`、`TRANSPORT_MQTT_CONNECTIONS=4`（2026-10-29 验证值）。transport 对这两项没有上限，
 只要求批大小不超过 EMQX 的在途窗口。
 
-**代价**：关掉强杀、队列不限之后，过载不再表现为「单条连接被杀、丢一部分消息」，而是积压持续增长直到 EMQX 整个节点内存耗尽、
-所有设备一起断开。压测时盯 EMQX 主机的内存（`docker stats conduit-emqx`）。transport 会话监控的「队列水位」告警也不会触发：
-队列不限时 EMQX REST 接口报告的 `mqueue_max` 为 0（实测），监控在上限为 0 时跳过该项。
+**为什么会话三项不取最大值**：2026-10-30 起曾取窗口 65535、队列不限、关闭强杀。2026-11-12 压测到崩溃时，
+每秒 25,000～30,000 条下积压一路涨到整台主机内存耗尽，EMQX 被 Linux OOM killer 杀掉两次，内存中的积压全部丢失
+（约 932 万条已确认消息），所有设备一起断开（`docs/test-reports/2026-11-12-stress-to-failure.md`）。
+队列先取 10 万复测：EMQX 不再被杀，但 transport 订阅连接的堆先于队列满就超限、被反复强杀，15,000 条/秒起即丢数据。
+改为 5 万后，过载只表现为队列满后丢弃新消息，全程零强杀、零掉线，15,000 条/秒以内无损，丢弃数有 `mqueue_dropped` 计数可查。
+
+**告警**：transport 会话监控对每个会话的积压（默认 ≥ 5 万条，`CONDUIT_TRANSPORT_MONITOR_MQUEUE_WARN_LEN`）与
+EMQX 主机内存（默认 ≥ 80%，`CONDUIT_TRANSPORT_MONITOR_NODE_MEMORY_WARN_RATIO`）记 WARN，并发布仪表
+`conduit_transport_session_mqueue_len`、`conduit_transport_emqx_memory_used_ratio`。两者只告警、不改变健康检查。
 
 ## 观测
 

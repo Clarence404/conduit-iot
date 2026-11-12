@@ -13,6 +13,8 @@ import dev.conduit.transport.mqtt.MqttProtocolAdapter;
 import dev.conduit.transport.monitor.EmqxSessionClient;
 import dev.conduit.transport.monitor.SessionMonitor;
 import dev.conduit.transport.monitor.SessionMonitorGroup;
+import dev.conduit.transport.monitor.EmqxNodeClient;
+import dev.conduit.transport.monitor.NodeMemoryMonitor;
 import dev.conduit.transport.monitor.SessionMonitorProperties;
 import dev.conduit.transport.mqtt.MqttTransportProperties;
 import org.slf4j.Logger;
@@ -95,9 +97,11 @@ public class TransportApplication {
             // 单连接时不加 client 标签，指标名与改动前一致，既有面板不受影响
             members.put(a.clientId(), new SessionMonitor(new EmqxSessionClient(props, a.clientId()),
                     props.stallSamples(), props.heapLimit().toBytes(), mqtt.batchSize(), registry,
-                    mqtt.shared() ? a.clientId() : null));
+                    mqtt.shared() ? a.clientId() : null, props.mqueueWarnLen()));
         }
-        return new SessionMonitorGroup(members);
+        // EMQX 主机内存水位：会话积压耗尽内存时整个 EMQX 被系统杀掉、积压全丢（2026-11-12 压测实测），须提前告警
+        NodeMemoryMonitor node = new NodeMemoryMonitor(new EmqxNodeClient(props), props.nodeMemoryWarnRatio(), registry);
+        return new SessionMonitorGroup(members, node);
     }
 
     /**

@@ -58,6 +58,10 @@ conduit:
       stall-samples: 6
       # 须与 EMQX 的 EMQX_CONNECTION_MAX_HEAP_SIZE 一致：独立部署编排把本项与它接到同一个 .env 变量上，天然一致
       heap-limit: ${CONDUIT_TRANSPORT_MONITOR_HEAP_LIMIT:256MB}
+      # 单个会话队列积压达到多少条即告警（0 关闭）。不依赖 EMQX 队列上限：队列不限长时也能发现积压
+      mqueue-warn-len: ${CONDUIT_TRANSPORT_MONITOR_MQUEUE_WARN_LEN:50000}
+      # EMQX 主机内存已用占比达到多少即告警。只告警，不影响健康检查
+      node-memory-warn-ratio: ${CONDUIT_TRANSPORT_MONITOR_NODE_MEMORY_WARN_RATIO:0.8}
 
 management:
   endpoint:

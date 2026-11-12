@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
- * EMQX 会话健康判定：按固定间隔采样，对「队列溢出丢弃」「队列逼近容量」「会话进程内存逼近堆限」
- * 「投递停滞」「磁盘持久会话被意外启用」「批大小超过 inflight 窗口」六项给出结论。
+ * EMQX 会话健康判定：按固定间隔采样，对「队列溢出丢弃」「队列逼近容量」「队列积压超过绝对阈值」
+ * 「会话进程内存逼近堆限」「投递停滞」「磁盘持久会话被意外启用」「批大小超过 inflight 窗口」七项给出结论。
  *
  * <p>「投递停滞」是对 2026-10-28 定位的那次故障的兜底：当时 inflight 占满、队列非空、
  * 投递总数永久不变，而所有既有信号（连接、健康检查、日志、丢弃计数）都是绿的。
@@ -48,6 +48,8 @@ public class SessionMonitor {
     private final int stallSamples;
     private final long heapLimitBytes;
     private final int batchSize;
+    /** 队列积压绝对告警阈值，0 为关闭。 */
+    private final long mqueueWarnLen;
 
     private SessionSnapshot previous;
     private int unchangedSendSamples;
@@ -88,6 +90,19 @@ public class SessionMonitor {
      */
     public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
                           long heapLimitBytes, int batchSize, MeterRegistry registry, String client) {
+        this(source, stallSamples, heapLimitBytes, batchSize, registry, client, 0);
+    }
+
+    /**
+     * 完整构造。
+     *
+     * @param mqueueWarnLen 队列积压达到多少条即告警，0 为关闭。队列不限长时 EMQX 报告的容量为 0，
+     *                      「队列逼近容量」失效，只能靠这个绝对阈值发现积压（2026-11-12 压测到崩溃时积压约 268 万条无告警）
+     */
+    public SessionMonitor(Supplier<SessionSnapshot> source, int stallSamples,
+                          long heapLimitBytes, int batchSize, MeterRegistry registry, String client,
+                          long mqueueWarnLen) {
+        this.mqueueWarnLen = mqueueWarnLen;
         this.source = source;
         this.stallSamples = stallSamples;
         this.heapLimitBytes = heapLimitBytes;
@@ -187,6 +202,11 @@ public class SessionMonitor {
             details.put("mqueueNearCapacity", true);
             log.warn("EMQX queue at {}/{}: messages will be dropped if it fills",
                     now.mqueueLen(), now.mqueueMax());
+        }
+        if (mqueueWarnLen > 0 && now.mqueueLen() >= mqueueWarnLen) {
+            details.put("mqueueBacklogHigh", true);
+            log.warn("EMQX session backlog {} messages (warn at {}): delivery to transport is falling behind ingest",
+                    now.mqueueLen(), mqueueWarnLen);
         }
         long heapBytes = now.heapWords() * BYTES_PER_WORD;
         // 与 EMQX 实际触发强杀的值（配置值 ×1.5）比，而不是与配置值本身比

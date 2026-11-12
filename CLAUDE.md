@@ -214,7 +214,7 @@
 - EMQX 用**内存持久会话**；磁盘持久会话已关闭，积压下会静默楔死。
 - transport 写入总线成功后才回 PUBACK。
 - transport 离线期间，消息排在会话 mqueue 中，重连后补发。
-- 默认 `EMQX_MAX_MQUEUE_LEN` 100000：mqueue 与连接堆上限（256MB，实际按 1.5 倍触发）共享内存，**调大前必须确认 `heap_size` 余量，不得上调堆上限**。满载余量尚未实测。
+- 默认 `EMQX_MAX_MQUEUE_LEN` 100000：mqueue 与连接堆上限（256MB，实际按 1.5 倍触发）共享内存，**调大前必须确认 `heap_size` 余量，不得上调堆上限**。2026-11-12 拆分部署实测：过载时 10 万条放不下，连接先被堆超限强杀；5 万条零强杀。独立部署与开发包仍为 10 万，未实测。
 - 队列溢出会丢弃并计入 `dropped_msgs`；EMQX 重启会丢未投递的消息。
 
 **端到端可靠上报**（V0.2-R2）
@@ -276,10 +276,11 @@
   - 窗口应为批的若干倍：两者相等就成了停等协议；批大于窗口则永远攒不满，每批白等满 `batch-delay` 5ms。
   - 在途消息堆在连接进程的信箱里，越过 `max_mailbox_size` 即被强杀。
 - 默认值：`max_inflight` 512、`batch-size` 64，`max_mailbox_size` 为 EMQX 默认 1000。
-- 拆分部署的值：EMQX 主机 `max_inflight` 65535、信箱 10000、关闭 `force_shutdown`；应用主机 `batch-size` 512（由所有者要求取最大值）。
+- 拆分部署的值：EMQX 主机 `max_inflight` 1024、`max_mqueue_len` 50000、信箱 10000、开启 `force_shutdown`（2026-11-12 由最大值改回有上限，见第 4 节）；应用主机 `batch-size` 512。
 
 *会话监控*
-- 主实例经 EMQX REST API 按连接轮询会话指标。告警六项：丢弃、队列水位、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
+- 主实例经 EMQX REST API 按连接轮询会话指标。告警七项：丢弃、队列水位、积压绝对值（默认 ≥ 5 万条，队列不限时仍有效）、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
+- 另轮询 `/api/v5/nodes`，EMQX 主机内存占比 ≥ 80%（默认）时告警，仪表 `conduit.transport.emqx.memory.*`，明细在健康检查的 `emqxNode` 下。
 - **只有「投递停滞」把健康检查置为 DOWN**，任一连接停滞即判 DOWN。
 - 仪表带 `client` 标签。另暴露 `mailbox.len` 与 `reductions`，只暴露、不参与健康判定。
 
@@ -436,7 +437,7 @@
 - Docker 宿主机无外网时：开发机执行 `deploy/package.sh`，从干净检出编译，打包为 `target/conduit-standalone-<短提交>.tar.gz`。
 
 *`deploy/split`*
-- EMQX 主机：`split/emqx`，extends dev 的 emqx，容量参数取最大值。代价是过载时会把整个节点内存耗尽，而不只是单连接被杀。
+- EMQX 主机：`split/emqx`，extends dev 的 emqx。连接队列与报文上限取最大值；会话三项有上限（窗口 1024、队列 5 万、开启强杀）。不得改回「队列不限 + 关强杀」：过载时积压会耗尽整机内存，EMQX 被系统杀掉、积压全丢（2026-11-12 实测）。
 - 应用主机：`split/app`，逐个 extends standalone 的服务；`EMQX_REMOTE_HOST` 指向 EMQX 主机，`depends_on: !override`（需 Compose ≥ 2.24.4）。
 - 两边的 `deploy/` 须在同一绝对路径。
 - 鉴权回调是 EMQX → 应用主机的同步调用。EMQX 开源版没有 vhost，一台 EMQX 只对应一套环境。
@@ -547,6 +548,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-10-29：`LatestCoalescer` 同批合并最新值，`latest` 阶段 1,856ms → 98ms（`141bdd6`）。
 - 2026-10-29：transport 会话监控加信箱长度与 reductions，只暴露，不参与健康判定。
 - 2026-10-30：MQTT 鉴权按原因计数；模拟器排除压测产品；EMQX `nofile` 1048576；Tomcat keep-alive 修复鉴权回调偶发失败（`69ac212`）；鉴权超时由 5 秒放宽到 10 秒（`de5a237`）。
+- 2026-11-12：拆分部署 EMQX 会话三项由最大值（窗口 65535、队列不限、关强杀）改回有上限（1024 / 5 万 / 开启强杀），因压测到崩溃时积压耗尽整机内存、EMQX 被 OOM 杀两次、约 932 万条已确认消息丢失；队列先试 10 万，连接被堆超限反复强杀，15,000 条/秒起即丢，改 5 万后零强杀，15,000 条/秒以内无损，超出部分按满丢弃并可计数；transport 增加积压绝对值与 EMQX 主机内存告警（`2026-11-12-split-emqx-capped-session-design.md`、`2026-11-12-stress-to-failure.md`）。
 
 **租户、组织与身份**
 - 2026-10-16 V0.2-C：三种角色、JWT 声明、`SecurityConfig` 路径矩阵、强制改密码、平台接口与代入、停用租户（`2026-10-16-conduit-v0.2c-tenants-users-design.md`）。
@@ -587,4 +589,5 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
   - 早先的掉线源于宿主机 CPU 紧张导致虚拟网卡丢包，而非连接半开（`2026-10-30-auth-timeout-investigation.md`）。
   - 压测 VM 一律用 vmxnet3 网卡，接收环 4096（已持久化）。
 - 2026-11-12 拆分部署 1,000 台设备逐档提速：可靠无损入库 5,000 条/秒；8,000 条/秒共 3 次、2 过 1 不过（不过的一次仅因约 13 秒的 `runq_overload` 告警），均守恒、零掉线，属边缘，p99 在 37～766 毫秒间波动。四种压测方法（固定连接提速、固定频率加设备、同速率换连接形态、真实画像验收）见 `2026-11-12-loadtest-methods-plan.md`，对外容量以真实画像验收为准。另查明：旧报告的「发压机 CPU」实为宿主机整机 CPU，发压进程在 8,000 条/秒下只用约 2.2 个核；`ladder.py` 改为分别记录发压进程、整机与 VMware 的 CPU，可信度判据拆为「最忙发压进程 ≤ 单核 85%」与「整机平均 ≤ 85%」（`2026-11-12-qps-tps-1k-devices.md`）。
+- 2026-11-12 压力测试（拆分部署，1,000 台逐档提速至崩溃）：队列不限时 25,000 条/秒起 EMQX 被 OOM 杀；改为队列 5 万后至 30,000 条/秒 EMQX 与连接均不被杀，无损上限 15,000 条/秒，拐点为 EMQX 主机 CPU（`2026-11-12-stress-to-failure.md`）。对外仍按 5,000 条/秒可靠。
 - 2026-11-01：每秒 1 条的设备数上限为 5,000～6,000 台，瓶颈是 EMQX 主机 VM 的内核收包 softirq，属本地虚拟化网络的上限。后续方向待所有者决定，见 `docs/handoffs/2026-11-02-split-loadtest-ceiling.md`。

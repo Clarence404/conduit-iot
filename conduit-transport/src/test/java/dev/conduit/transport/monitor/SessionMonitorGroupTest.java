@@ -92,4 +92,20 @@ class SessionMonitorGroupTest {
         // 信箱已逼近强杀线，但阈值尚未经过载数据标定，此时不得据此把健康置为 DOWN
         assertThat(m.verdict().healthy()).isTrue();
     }
+
+    @Test
+    void 带EMQX节点内存监控时一并采样重置并写入明细且不影响健康结论() {
+        SessionMonitor m = monitor(true, "ok");
+        NodeMemoryMonitor node = mock(NodeMemoryMonitor.class);
+        when(node.details()).thenReturn(Map.of("usedRatio", 0.95, "memoryHigh", true));
+        SessionMonitorGroup g = new SessionMonitorGroup(Map.of("conduit-transport", m), node);
+
+        g.sample();
+        verify(node).sample();
+        SessionMonitor.Verdict v = g.verdict();
+        assertThat(v.healthy()).isTrue();
+        assertThat(v.details()).containsKey("emqxNode");
+        g.reset();
+        verify(node).reset();
+    }
 }

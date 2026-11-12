@@ -140,4 +140,28 @@ class SessionMonitorTest {
         assertThat(m.verdict().details()).doesNotContainKey("batchSizeExceedsInflight");
         assertThat(m.verdict().details()).containsEntry("inflightToBatchRatio", 1.0);
     }
+
+    @Test
+    void warnsOnAbsoluteBacklogEvenWhenTheQueueIsUnbounded() {
+        // 队列不限时 EMQX 报 mqueue_max=0，比例告警失效；2026-11-12 压测到崩溃时积压涨到约 268 万条却无任何告警
+        SessionMonitor m = new SessionMonitor(() -> snapshot(0, 60_000, 0, 0, 32, 1_000, 1_000, false),
+                6, 256L * 1024 * 1024, 32, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), null, 50_000);
+        m.sample();
+        assertThat(m.verdict().details()).containsEntry("mqueueBacklogHigh", true);
+        // 积压只告警，不置 DOWN：投递仍在推进
+        assertThat(m.verdict().healthy()).isTrue();
+    }
+
+    @Test
+    void doesNotWarnOnBacklogBelowTheThresholdOrWhenDisabled() {
+        SessionMonitor below = new SessionMonitor(() -> snapshot(0, 49_999, 0, 0, 32, 1_000, 1_000, false),
+                6, 256L * 1024 * 1024, 32, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), null, 50_000);
+        below.sample();
+        assertThat(below.verdict().details()).doesNotContainKey("mqueueBacklogHigh");
+
+        // 便捷构造不设阈值（0 = 关闭），旧行为不变
+        SessionMonitor disabled = monitorOf(() -> snapshot(0, 5_000_000, 0, 0, 32, 1_000, 1_000, false), 6);
+        disabled.sample();
+        assertThat(disabled.verdict().details()).doesNotContainKey("mqueueBacklogHigh");
+    }
 }

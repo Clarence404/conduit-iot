@@ -16,7 +16,9 @@
   4. PUBACK 时延 p99 ≤ --p99-limit（默认 1000 毫秒，多机时取各机 p99 的最大值）；
   5. 积压不堆积：稳态结束时总线积压（lag + 待确认）与 transport 会话队列均不超过 5 秒的流量；
   6. EMQX 日志中没有连接被强杀 / 队列满 / emfile，也没有过载告警（alarm_is_activated）；
-  7. 发压机 CPU 平均不超过 85%（Windows 上每档自动采样）。超过时测到的是发压机所在物理机的上限，结果不可信。
+  7. 结果可信：最忙的发压进程不超过单核 85%（进程自身计时），且宿主机整机 CPU 平均不超过 85%（Windows 上每档自动采样）。
+     前者超过说明发压端自己成了瓶颈；后者超过说明物理机打满，同机的被测 VM 抢不到 CPU。两者都意味着测到的不是平台上限。
+     宿主机 CPU 是整机数字（含同机 VMware 虚拟机与系统开销），不等于发压程序的占用；VMware 占用另列一栏。
 
 依赖：pip install paho-mqtt paramiko（paramiko 仅 check 需要）。
 设备与凭据取自同目录的 devices.json 与 config.json（均不入库）；多机时把这两个文件拷给各发压机，
@@ -37,7 +39,8 @@ import loadgen
 HERE = pathlib.Path(__file__).parent
 DEFAULT_PLAN = '2000,5000,8000,10000,12000,15000,18000,20000'
 DRAIN = 30       # 停止发压后等多久再核对（排空流水线与最后一次指标抓取）
-GEN_CPU_LIMIT = 85   # 发压机 CPU 平均超过它，本档测到的是发压机（或同机的被测 VM）的上限，不是平台的
+GEN_PROC_LIMIT = 85  # 最忙发压进程占单核的百分比超过它：发压端自己打满，测到的不是平台上限
+HOST_CPU_LIMIT = 85  # 宿主机整机 CPU 平均超过它：物理机打满，同机被测 VM 抢不到 CPU
 UP = '{stream="conduit:stream:up"}'
 
 
@@ -69,33 +72,38 @@ def start_time(s):
 
 
 def start_host_sampler(path):
-    """开始每 2 秒采本机 CPU% 与可用内存（Windows 用自带 typeperf）；其他系统暂不采，返回 None。"""
+    """开始每 2 秒采宿主机整机 CPU%、可用内存与 VMware 虚拟机进程的 CPU（Windows 用自带 typeperf）；
+    其他系统暂不采，返回 None。整机 CPU 包含同机的被测 VM 与系统开销，不等于发压程序自身的占用。"""
     if os.name == 'nt':
         return subprocess.Popen(['typeperf', r'\Processor(_Total)\% Processor Time', r'\Memory\Available MBytes',
+                                 r'\Process(vmware-vmx*)\% Processor Time',
                                  '-si', '2', '-o', str(path), '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return None
 
 
 def stop_host_sampler(proc, path):
-    """停止采样并汇总：CPU 平均 / 峰值、可用内存最低（MB）；无数据返回空 dict。"""
+    """停止采样并汇总：整机 CPU 平均 / 峰值、可用内存最低（MB）、VMware 进程合计占整机的平均百分比；
+    无数据返回空 dict。VMware 进程计数器以单核为 100%，按逻辑核数折算成整机百分比。"""
     if proc is None:
         return {}
     proc.terminate()
     proc.wait(timeout=30)
     vals = []
+    ncpu = os.cpu_count() or 1
     try:
         for line in path.read_text(encoding='utf-8', errors='replace').splitlines()[1:]:
             parts = line.strip().strip('"').split('","')
             try:
-                vals.append((float(parts[1]), float(parts[2])))
+                vm = sum(float(x) for x in parts[3:] if x.strip()) / ncpu
+                vals.append((float(parts[1]), float(parts[2]), vm))
             except (IndexError, ValueError):
                 pass          # typeperf 偶尔输出空白采样
     finally:
         path.unlink(missing_ok=True)
     if not vals:
         return {}
-    return {'gen_cpu_avg': round(sum(v[0] for v in vals) / len(vals), 1), 'gen_cpu_max': round(max(v[0] for v in vals), 1),
-            'gen_mem_min_mb': round(min(v[1] for v in vals))}
+    return {'host_cpu_avg': round(sum(v[0] for v in vals) / len(vals), 1), 'host_cpu_max': round(max(v[0] for v in vals), 1),
+            'host_mem_min_mb': round(min(v[1] for v in vals)), 'host_vm_cpu_avg': round(sum(v[2] for v in vals) / len(vals), 1)}
 
 
 def steps_of(a):
@@ -147,8 +155,9 @@ def cmd_run(a):
         f = out / f'{host}-shard{i}of{n}-{target:06d}.json'
         f.write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'  发出 {r["sent"]:,}，PUBACK {r["acked"]:,}，掉线 {r["disconnects"]}，首次被拒 {r["first_rejected"]}，'
-              f'最终被拒 {len(r["rejected"])}，p99 {r["p99_ms"]} ms，本机 CPU 平均 {r.get("gen_cpu_avg", "-")}% '
-              f'峰值 {r.get("gen_cpu_max", "-")}% → {f.name}')
+              f'最终被拒 {len(r["rejected"])}，p99 {r["p99_ms"]} ms，发压进程最忙 {r.get("gen_proc_cpu_max", "-")}% 单核 '
+              f'/ 合计 {r.get("gen_proc_cores", "-")} 核，宿主机 CPU 平均 {r.get("host_cpu_avg", "-")}% '
+              f'峰值 {r.get("host_cpu_max", "-")}%（其中 VMware {r.get("host_vm_cpu_avg", "-")}%）→ {f.name}')
         if n == 1 and not a.no_check:
             time.sleep(DRAIN)
             verdicts = check([out], only=target, p99_limit=a.p99_limit)
@@ -197,7 +206,12 @@ def check(dirs, only=None, p99_limit=1000.0):
                 'rejected': sum(len(r['rejected']) for r in rs), 'first_rejected': sum(r.get('first_rejected', 0) for r in rs),
                 'disconnects': sum(r['disconnects'] for r in rs),
                 'p99_ms': max((r['p99_ms'] or 0) for r in rs), 'max_ms': max((r['max_ms'] or 0) for r in rs),
-                'gen_cpu_avg': max((r.get('gen_cpu_avg') or 0) for r in rs) or None,
+                # 多机时取各发压机的最大值。旧结果只有 gen_cpu_avg（当时记的就是宿主机整机 CPU），按宿主机读取
+                'gen_proc_cpu_max': max((r.get('gen_proc_cpu_max') or 0) for r in rs) or None,
+                'gen_proc_cores': max((r.get('gen_proc_cores') or 0) for r in rs) or None,
+                'host_cpu_avg': max((r.get('host_cpu_avg', r.get('gen_cpu_avg')) or 0) for r in rs) or None,
+                'host_cpu_max': max((r.get('host_cpu_max', r.get('gen_cpu_max')) or 0) for r in rs) or None,
+                'host_vm_cpu_avg': max((r.get('host_vm_cpu_avg') or 0) for r in rs) or None,
             }
             # 计数器在空闲时刻取差值：负载中各组件抓取时刻不一致，差值会整体偏移
             after = t_end + DRAIN
@@ -234,8 +248,10 @@ def check(dirs, only=None, p99_limit=1000.0):
                 reasons.append(f'积压 总线 {v["backlog_end"] or 0:.0f} / 会话队列 {v["mqueue_end"] or 0:.0f} 超过 5 秒流量 {limit:.0f}')
             if v['emqx_kills'] or v['emqx_alarms']:
                 reasons.append(f'EMQX 强杀等 {v["emqx_kills"]} 行 / 过载告警 {v["emqx_alarms"]} 次')
-            if (v['gen_cpu_avg'] or 0) > GEN_CPU_LIMIT:
-                reasons.append(f'结果不可信：发压机 CPU 平均 {v["gen_cpu_avg"]:.0f}% > {GEN_CPU_LIMIT}%（测到的是发压机所在物理机的上限）')
+            if (v['gen_proc_cpu_max'] or 0) > GEN_PROC_LIMIT:
+                reasons.append(f'结果不可信：最忙发压进程占单核 {v["gen_proc_cpu_max"]:.0f}% > {GEN_PROC_LIMIT}%（发压端自己打满）')
+            if (v['host_cpu_avg'] or 0) > HOST_CPU_LIMIT:
+                reasons.append(f'结果不可信：宿主机 CPU 平均 {v["host_cpu_avg"]:.0f}% > {HOST_CPU_LIMIT}%（物理机打满，被测 VM 抢不到 CPU）')
             v['ok'] = not reasons
             v['reasons'] = reasons
             verdicts.append(v)
@@ -248,11 +264,14 @@ def check(dirs, only=None, p99_limit=1000.0):
 def print_table(verdicts, md_path, append=False):
     """打印并写入 Markdown 表格。"""
     head = ('| 设备数 | 消息/秒 | 结论 | PUBACK = InfluxDB 行 | 入库 TPS | 掉线 | 首次被拒 | p99 ms | 积压峰值 | '
-            '应用主机 CPU% | EMQX 主机 CPU% | 发压机 CPU% | 不合格原因 |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|')
+            '应用主机 CPU% | EMQX 主机 CPU% | 发压进程 最忙单核% / 合计核 | 宿主机 CPU% 平均 / 峰值（其中 VMware） | '
+            '不合格原因 |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
     fmt = lambda x, d=0: '-' if x is None else f'{x:,.{d}f}'
     lines = [f'| {v["devices"]:,} | {v["rate"]:,.0f} | {"✅" if v["ok"] else "❌"} | {v["acked"]:,} / {fmt(v["rows"])} | '
              f'{fmt(v["ingest_tps"])} | {v["disconnects"]} | {v["first_rejected"]} | {fmt(v["p99_ms"])} | '
-             f'{fmt(v["backlog_max"])} | {fmt(v["app_cpu"])} | {fmt(v["emqx_host_cpu"])} | {fmt(v["gen_cpu_avg"])} | '
+             f'{fmt(v["backlog_max"])} | {fmt(v["app_cpu"])} | {fmt(v["emqx_host_cpu"])} | '
+             f'{fmt(v["gen_proc_cpu_max"])} / {fmt(v["gen_proc_cores"], 1)} | '
+             f'{fmt(v["host_cpu_avg"])} / {fmt(v["host_cpu_max"])}（{fmt(v["host_vm_cpu_avg"])}） | '
              f'{"；".join(v["reasons"]) or "-"} |'
              for v in verdicts]
     text = '\n'.join(lines)

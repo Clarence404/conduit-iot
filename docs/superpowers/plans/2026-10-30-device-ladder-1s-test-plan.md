@@ -49,7 +49,7 @@ python ladder.py check results-a results-b results-c
 ## 4. 判据
 
 与 `ladder.py` 一致的 7 条：全部鉴权通过；PUBACK = InfluxDB 行数且丢弃、死信为 0；无运行中掉线；p99 ≤ 1 秒；积压不超过 5 秒流量；
-EMQX 无强杀 / 过载告警；发压机 CPU 平均 ≤ 85%（多机时取各机最大值）。
+EMQX 无强杀 / 过载告警；最忙发压进程 ≤ 单核 85% 且宿主机整机 CPU 平均 ≤ 85%（多机时取各机最大值；2026-11-12 起拆分，旧「发压机 CPU」实为整机 CPU）。
 
 ## 5. 记录
 

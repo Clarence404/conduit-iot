@@ -396,6 +396,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
 
     interval = 1.0 / rate
     t0 = time.time()
+    cpu0 = time.process_time()   # 本进程稳态期间自身占用的 CPU，用来判断发压进程是否打满（与整机 CPU 区分）
     heap = [(t0 + random.random() * interval, i) for i in range(len(clients))]
     heapq.heapify(heap)
     deadline = t0 + seconds
@@ -433,6 +434,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
                 cl.loop_misc()   # 保活心跳与超时检测；掉线经 on_disconnect 记入 dropped
             last_misc = now
     t_load_end = time.time()
+    cpu_busy = (time.process_time() - cpu0) / max(1e-6, t_load_end - t0)
     end = time.time() + 2
     while time.time() < end:
         pump(0.05)
@@ -445,7 +447,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
              'rejected': rejected, 'reasons': sorted(set(refused.values())),
              'connect_seconds': connect_seconds, 'disconnects': len(dropped), 'first_rejected': len(retry),
-             't_connected': t0, 't_load_end': t_load_end,
+             't_connected': t0, 't_load_end': t_load_end, 'cpu_busy': cpu_busy,
              'disc_reasons': disc_reasons, 'disc_first': min(disc_times) if disc_times else None,
              'disc_last': max(disc_times) if disc_times else None,
              'max_loop_gap_s': round(max_gap, 3), 'max_loop_gap_at': max_gap_at, 'loop_gaps_over_1s': gaps_over_1s})
@@ -507,6 +509,12 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
         'loop_gaps': [(round(r.get('max_loop_gap_s', 0), 2), r.get('max_loop_gap_at'), r.get('loop_gaps_over_1s', 0),
                        r.get('disconnects', 0)) for r in res],
         'connect_seconds': max((r.get('connect_seconds', 0) for r in res), default=0),
+        # 发压进程自身的 CPU（稳态期间）：最忙那个进程占单核的百分比，以及全部进程合计占用的核数。
+        # 每个 fleet 进程是单线程事件循环，接近 100% 说明发压端自己成了瓶颈。
+        'gen_proc_cpu_max': round(100 * max((r['cpu_busy'] for r in res if 'cpu_busy' in r), default=0), 1)
+                            if any('cpu_busy' in r for r in res) else None,
+        'gen_proc_cores': round(sum(r.get('cpu_busy', 0) for r in res), 2)
+                          if any('cpu_busy' in r for r in res) else None,
         'p50_ms': qt(.5), 'p95_ms': qt(.95), 'p99_ms': qt(.99), 'max_ms': round(lat[-1], 1) if lat else None,
         't_start': t0, 't_end': t_end,
         # 全部进程都建连完成、开始发压的时刻，与最后一个进程停止发压的时刻：判定时只看这段稳态

@@ -13,6 +13,12 @@
                                以 N 条 MQTT 连接按每设备每秒 R 条发布，统计吞吐与 PUBACK 时延；
                                --fleet 为海量低频设备模式（如 --devices 20000 --rate 0.1）
 
+设备画像（测法四，只在 --fleet 下生效）：
+  --points M                   每条报文带测点表的前 M 个测点（1～30，默认 3，与旧版报文相同）
+  --mix "60:0.7,15:0.25,1:0.05" 混合上报间隔：秒数:占比，占比之和为 1；给出时 --rate 不再使用，
+                               每台设备按序号确定性地分到一个间隔，多次运行同一台设备的间隔不变
+  --id-ratio F                 报文带 `id`（可靠上报）的设备占比，同样按序号确定性分配
+
 **必须先 refresh，否则测出来的全是废数据。** 压测产品带物模型，于是旧版演示模拟器会把它
 当成演示产品接管（2026-10-30 起模拟器默认以 SIM_EXCLUDE_PRODUCTS 排除「压测产品」）：`SIM_TENANTS=*` 让它扫描所有租户的物模型产品，并给每个产品的前
 `SIM_MAX_DEVICES_PER_PRODUCT` 台设备重置密钥（压测机上是 100）。被重置的那些设备在
@@ -48,14 +54,103 @@ import paho.mqtt.client as mqtt
 HERE = pathlib.Path(__file__).parent
 DEVICES_FILE = HERE / 'devices.json'
 PRODUCT_NAME = '压测产品'
+
+
+
+def _prop(identifier, name, unit, lo, hi, decimals, gen_lo=None, gen_hi=None):
+    """一个 DOUBLE 测点的物模型定义；gen_lo / gen_hi 为发压时取值范围（缺省同上下限）。"""
+    return {'identifier': identifier, 'name': name, 'dataType': 'DOUBLE', 'unit': unit,
+            'minValue': lo, 'maxValue': hi, 'decimals': decimals,
+            '_gen': (lo if gen_lo is None else gen_lo, hi if gen_hi is None else gen_hi)}
+
+
+# 测点表：一块三相电表的 30 个常见测点。前 3 个（Ua、Ia、P）是旧版报文的全部测点，顺序不可改：
+# --points 3 时与旧版报文逐字段相同。所有产品共用 InfluxDB 的 property 表，同名测点在全表必须同一类型，
+# 这里全部是 DOUBLE；2026-11-13 核对过表中已有的 Ua/Ub/Uc/Ia/Ib/Ic/P/EPimp 均为 Float，没有冲突。
 PROPS = [
-    {'identifier': 'Ua', 'name': 'A相电压', 'dataType': 'DOUBLE', 'unit': 'V',
-     'minValue': 0, 'maxValue': 500, 'decimals': 1},
-    {'identifier': 'Ia', 'name': 'A相电流', 'dataType': 'DOUBLE', 'unit': 'A',
-     'minValue': 0, 'maxValue': 100, 'decimals': 2},
-    {'identifier': 'P', 'name': '有功功率', 'dataType': 'DOUBLE', 'unit': 'kW',
-     'minValue': 0, 'maxValue': 1000, 'decimals': 2},
+    _prop('Ua', 'A相电压', 'V', 0, 500, 1, 215, 235),
+    _prop('Ia', 'A相电流', 'A', 0, 100, 2, 0, 60),
+    _prop('P', '有功功率', 'kW', 0, 1000, 2, 0, 800),
+    _prop('Ub', 'B相电压', 'V', 0, 500, 1, 215, 235),
+    _prop('Uc', 'C相电压', 'V', 0, 500, 1, 215, 235),
+    _prop('Uab', 'AB线电压', 'V', 0, 800, 1, 375, 405),
+    _prop('Ubc', 'BC线电压', 'V', 0, 800, 1, 375, 405),
+    _prop('Uca', 'CA线电压', 'V', 0, 800, 1, 375, 405),
+    _prop('Ib', 'B相电流', 'A', 0, 100, 2, 0, 60),
+    _prop('Ic', 'C相电流', 'A', 0, 100, 2, 0, 60),
+    _prop('In', '零线电流', 'A', 0, 100, 2, 0, 5),
+    _prop('Pa', 'A相有功功率', 'kW', 0, 400, 2, 0, 270),
+    _prop('Pb', 'B相有功功率', 'kW', 0, 400, 2, 0, 270),
+    _prop('Pc', 'C相有功功率', 'kW', 0, 400, 2, 0, 270),
+    _prop('Qa', 'A相无功功率', 'kvar', -400, 400, 2, -50, 50),
+    _prop('Qb', 'B相无功功率', 'kvar', -400, 400, 2, -50, 50),
+    _prop('Qc', 'C相无功功率', 'kvar', -400, 400, 2, -50, 50),
+    _prop('Q', '总无功功率', 'kvar', -1000, 1000, 2, -150, 150),
+    _prop('Sa', 'A相视在功率', 'kVA', 0, 400, 2, 0, 280),
+    _prop('Sb', 'B相视在功率', 'kVA', 0, 400, 2, 0, 280),
+    _prop('Sc', 'C相视在功率', 'kVA', 0, 400, 2, 0, 280),
+    _prop('S', '总视在功率', 'kVA', 0, 1000, 2, 0, 830),
+    _prop('PFa', 'A相功率因数', '', -1, 1, 3, 0.85, 1),
+    _prop('PFb', 'B相功率因数', '', -1, 1, 3, 0.85, 1),
+    _prop('PFc', 'C相功率因数', '', -1, 1, 3, 0.85, 1),
+    _prop('PF', '总功率因数', '', -1, 1, 3, 0.85, 1),
+    _prop('F', '频率', 'Hz', 45, 65, 2, 49.9, 50.1),
+    _prop('EPimp', '正向有功电能', 'kWh', 0, 1e9, 2, 0, 1e6),
+    _prop('EPexp', '反向有功电能', 'kWh', 0, 1e9, 2, 0, 1e4),
+    _prop('EQimp', '正向无功电能', 'kvarh', 0, 1e9, 2, 0, 1e5),
 ]
+MAX_POINTS = len(PROPS)
+
+
+def _params(points):
+    """按测点表的前 points 个测点生成一条报文的 params。"""
+    return {p['identifier']: round(random.uniform(*p['_gen']), p['decimals']) for p in PROPS[:points]}
+
+
+def parse_mix(text):
+    """解析混合上报间隔 "秒:占比,秒:占比"，返回 [(间隔秒, 占比)]；占比之和须为 1（容差 1e-6）。"""
+    mix = []
+    for part in text.split(','):
+        sec, frac = part.split(':')
+        sec, frac = float(sec), float(frac)
+        if sec <= 0 or frac < 0:
+            raise SystemExit(f'--mix 非法：{part}（间隔须为正、占比非负）')
+        mix.append((sec, frac))
+    if abs(sum(f for _, f in mix) - 1) > 1e-6:
+        raise SystemExit(f'--mix 的占比之和须为 1，当前为 {sum(f for _, f in mix)}')
+    return mix
+
+
+def mix_rate(mix):
+    """混合画像下每台设备的平均速率（条/秒）。"""
+    return sum(f / sec for sec, f in mix)
+
+
+def _frac(index, salt):
+    """设备序号 → [0,1) 的确定性伪随机数：同一台设备每次运行分到的间隔与是否带 id 都不变，且两者互不相关。"""
+    import hashlib
+    h = hashlib.blake2b(f'{salt}:{index}'.encode(), digest_size=8).digest()
+    return int.from_bytes(h, 'big') / 2 ** 64
+
+
+def assign_profile(count, offset, rate, mix, id_ratio):
+    """给 devices.json 中 [offset, offset+count) 这段设备各分配（上报间隔秒, 是否带 id）。
+
+    不给 mix 时所有设备间隔都是 1/rate。按设备在 devices.json 中的绝对序号计算，多台发压机分片时结果一致。
+    """
+    out = []
+    for i in range(offset, offset + count):
+        if mix:
+            x, acc, interval = _frac(i, 'mix'), 0.0, mix[-1][0]
+            for sec, f in mix:
+                acc += f
+                if x < acc:
+                    interval = sec
+                    break
+        else:
+            interval = 1.0 / rate
+        out.append((interval, _frac(i, 'id') < id_ratio))
+    return out
 
 
 def load_config():
@@ -100,6 +195,11 @@ class Api:
         return s
 
 
+def _items(resp):
+    """接口返回可能是数组，也可能是分页对象 {items: [...]}；统一成列表。"""
+    return resp.get('items', []) if isinstance(resp, dict) else (resp or [])
+
+
 def provision(count, concurrency=8):
     """补齐压测产品与设备到 N 台，密钥写入 devices.json。幂等：产品已存在则复用，已有设备保留。
 
@@ -116,11 +216,18 @@ def provision(count, concurrency=8):
     if p is None:
         p = api.call('POST', '/products', {'name': PRODUCT_NAME, 'description': '压测用，可随时删除',
                                            'codec': 'standard-json'})
-        for prop in PROPS:
-            api.call('POST', f'/products/{p["productKey"]}/properties', prop)
-        print(f'  已建产品 {p["productKey"]} 与 {len(PROPS)} 个测点')
+        print(f'  已建产品 {p["productKey"]}')
     else:
         print(f'  复用已有产品 {p["productKey"]}')
+    # 补齐测点表中缺少的测点（已有的不动）：测点表扩充后，旧产品与其设备照常可用
+    have = {x['identifier'] for x in _items(api.call('GET', f'/products/{p["productKey"]}/properties'))}
+    added = 0
+    for prop in PROPS:
+        if prop['identifier'] not in have:
+            api.call('POST', f'/products/{p["productKey"]}/properties',
+                     {k: v for k, v in prop.items() if not k.startswith('_')})
+            added += 1
+    print(f'  测点 {len(PROPS)} 个，本次补建 {added} 个')
     devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8')) if DEVICES_FILE.exists() else []
     devices = [d for d in devices if d['productKey'] == p['productKey']]
     need = count - len(devices)
@@ -288,13 +395,16 @@ def _worker(devices, host, port, rate, seconds, out):
              'rejected': rejected, 'reasons': sorted(set(refused.values()))})
 
 
-def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_timeout, out):
+def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_timeout, out, profile=None, points=3):
     """海量低频设备的发压进程：单个事件循环驱动数千条连接，不为每条连接开线程。
 
     _worker 给每条连接 loop_start()，每个客户端一个线程外加一对唤醒用的回环套接字（Windows 上
     占用临时端口），几万台设备时线程、内存与端口都会先于服务端耗尽。这里改由本进程自己 select
     所有连接的套接字并调用 loop_read / loop_write / loop_misc，publish 时 paho 会直接写出。
     Windows 的 select 每次最多 512 个套接字，所以分组轮询。
+
+    profile 与 devices 一一对应，为 [(上报间隔秒, 是否带 id)]；为 None 时全部按 1/rate、不带 id（旧行为）。
+    points 为每条报文的测点数（取测点表前 points 个）。
     """
     import heapq
     import select
@@ -303,12 +413,23 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     # 运行中掉线的设备（按设备去重；收尾时主动断开的不算）
     dropped, closing = set(), False
 
+    prof = {d['deviceKey']: (profile[n] if profile else (1.0 / rate, False)) for n, d in enumerate(devices)}
+    ack_topic = {}      # id(client) → 回执主题；只有带 id 的设备订阅，像真实设备一样接收平台回执
+    acks = 0
+
     def on_conn(client, userdata, flags, reason, *a):
         code = getattr(reason, 'value', reason)
         if code == 0:
             accepted.add(id(client))
+            t = ack_topic.get(id(client))
+            if t:
+                client.subscribe(t, qos=0)
         else:
             refused[id(client)] = str(reason)
+
+    def on_msg(client, userdata, msg):
+        nonlocal acks
+        acks += 1
 
     disc_reasons, disc_times = {}, []
 
@@ -357,6 +478,9 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         cl.on_connect = on_conn
         cl.on_disconnect = on_disc
         cl.on_publish = on_pub
+        if prof[d['deviceKey']][1]:
+            ack_topic[id(cl)] = f'conduit/{d["productKey"]}/{d["deviceKey"]}/down/ack'
+            cl.on_message = on_msg
         try:
             cl.connect(host, port, keepalive=60)
             opened.append((cl, d))
@@ -394,10 +518,12 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     rejected = [d['deviceKey'] for cl, d in opened if id(cl) not in accepted]
     connect_seconds = time.time() - t_start
 
-    interval = 1.0 / rate
+    intervals = [prof[d['deviceKey']][0] for _, d in clients]
+    with_id = [prof[d['deviceKey']][1] for _, d in clients]
+    seq = [0] * len(clients)
     t0 = time.time()
     cpu0 = time.process_time()   # 本进程稳态期间自身占用的 CPU，用来判断发压进程是否打满（与整机 CPU 区分）
-    heap = [(t0 + random.random() * interval, i) for i in range(len(clients))]
+    heap = [(t0 + random.random() * intervals[i], i) for i in range(len(clients))]
     heapq.heapify(heap)
     deadline = t0 + seconds
     # 本进程事件循环的停顿：两次循环之间隔太久说明发压端自己卡住（不读连接时 PUBACK 堆在套接字里，
@@ -413,12 +539,14 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             gaps_over_1s += 1
         while heap and heap[0][0] <= now:
             due, i = heapq.heappop(heap)
-            heapq.heappush(heap, (due + interval, i))
+            heapq.heappush(heap, (due + intervals[i], i))
             cl, d = clients[i]
-            payload = json.dumps({'ts': int(now * 1000), 'params': {
-                'Ua': round(random.uniform(215, 235), 1),
-                'Ia': round(random.uniform(0, 60), 2),
-                'P': round(random.uniform(0, 800), 2)}})
+            msg = {'ts': int(now * 1000), 'params': _params(points)}
+            if with_id[i]:
+                # 可靠上报：带 id 即启用，transport 持久接收后向设备的 down/ack 回 QoS 0 回执（连接时已订阅，收到即计数）
+                seq[i] += 1
+                msg = {'id': f'{d["deviceKey"]}-{int(t0)}-{seq[i]}', **msg}
+            payload = json.dumps(msg)
             try:
                 info = cl.publish(f'conduit/{d["productKey"]}/{d["deviceKey"]}/up/property', payload, qos=1)
                 if info.rc == 0:
@@ -447,6 +575,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     out.put({'sent': sent, 'acked': acked, 'errors': errors, 'lat': lat, 'conns': len(clients),
              'rejected': rejected, 'reasons': sorted(set(refused.values())),
              'connect_seconds': connect_seconds, 'disconnects': len(dropped), 'first_rejected': len(retry),
+             'id_sent': sum(seq), 'acks': acks,
              't_connected': t0, 't_load_end': t_load_end, 'cpu_busy': cpu_busy,
              'disc_reasons': disc_reasons, 'disc_first': min(disc_times) if disc_times else None,
              'disc_last': max(disc_times) if disc_times else None,
@@ -454,12 +583,13 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
 
 
 def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, connect_timeout=120,
-            offset=0, per_process=2500, quiet=False):
+            offset=0, per_process=2500, quiet=False, points=3, mix=None, id_ratio=0.0):
     """多进程发压并返回汇总结果（不打印结论、不退出），供 run() 与 ladder.py 调用。
 
     使用 devices.json 中 [offset, offset+count) 这一段设备——多台发压机各取不相交的一段，同一台设备不会被两处同时登录。
     workers 默认取 CPU 核数；fleet 模式默认每 per_process 台一个进程（每台每秒 1 条时宜取 1,000，单进程才跟得上）。
     fleet=True 用单事件循环的 _fleet_worker，适合海量设备；connect_rate 为每个进程每秒新建连接数。
+    points / mix / id_ratio 为设备画像（只在 fleet 下生效）：给出 mix 时 rate 被忽略，返回值的 rate 为画像的平均每台速率。
 
     :return: dict，含 sent / acked / errors / conns / rejected / disconnects / 时延分位（毫秒）/ 起止时间（epoch 秒）
     """
@@ -467,22 +597,31 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
     devices = json.loads(DEVICES_FILE.read_text(encoding='utf-8'))[offset:offset + count]
     if len(devices) < count:
         raise SystemExit(f'devices.json 从第 {offset} 台起只有 {len(devices)} 台，不足 {count} 台；先跑 provision')
+    if not 1 <= points <= MAX_POINTS:
+        raise SystemExit(f'--points 须在 1～{MAX_POINTS} 之间')
+    if (points != 3 or mix or id_ratio) and not fleet:
+        raise SystemExit('--points / --mix / --id-ratio 只在 --fleet 模式下生效')
+    profile = assign_profile(count, offset, rate, mix, id_ratio)
+    if mix:
+        rate = mix_rate(mix)
     if fleet:
         workers = workers or max(1, -(-count // per_process))
     workers = workers or min(os.cpu_count() or 4, count)
     chunks = [devices[i::workers] for i in range(workers)]
+    prof_chunks = [profile[i::workers] for i in range(workers)]
     out = mp.Queue()
     host, port = cfg['mqtt_host'], int(cfg['mqtt_port'])
     if fleet:
         procs = [mp.Process(target=_fleet_worker,
-                            args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out),
-                            daemon=True) for ch in chunks if ch]
+                            args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out, pc, points),
+                            daemon=True) for ch, pc in zip(chunks, prof_chunks) if ch]
     else:
         procs = [mp.Process(target=_worker, args=(ch, host, port, rate, seconds, out), daemon=True)
                  for ch in chunks if ch]
     if not quiet:
-        print(f'{len(devices)} 台设备 × {rate}/秒 = 目标 {len(devices) * rate:,.0f}/秒，'
-              f'{len(procs)} 个进程，持续 {seconds} 秒')
+        print(f'{len(devices)} 台设备 × {rate:g}/秒 = 目标 {len(devices) * rate:,.0f}/秒，'
+              f'{len(procs)} 个进程，持续 {seconds} 秒；每条 {points} 个测点'
+              + (f'，混合间隔 {mix}' if mix else '') + (f'，带 id 占比 {id_ratio:g}' if id_ratio else ''))
     t0 = time.time()
     for p in procs:
         p.start()
@@ -494,6 +633,10 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
     qt = lambda f: round(lat[min(len(lat) - 1, int(len(lat) * f))], 1) if lat else None
     return {
         'devices': len(devices), 'offset': offset, 'rate': rate, 'seconds': seconds, 'processes': len(procs),
+        # 设备画像：每条测点数、混合上报间隔、带 id 的设备数
+        'points': points, 'mix': mix, 'with_id': sum(1 for _, w in profile if w),
+        # 可靠上报：带 id 发出的条数与收到的平台回执数（回执是 QoS 0，过载时可能少于发出数）
+        'id_sent': sum(r.get('id_sent', 0) for r in res), 'acks': sum(r.get('acks', 0) for r in res),
         'sent': sum(r['sent'] for r in res), 'acked': sum(r['acked'] for r in res),
         'errors': sum(r['errors'] for r in res), 'conns': sum(r['conns'] for r in res),
         'rejected': [k for r in res for k in r.get('rejected', [])],
@@ -524,9 +667,11 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
 
 
 def run(count, rate, seconds, workers, fleet=False, connect_rate=200.0, connect_timeout=120,
-        offset=0, per_process=2500, result_file=None):
+        offset=0, per_process=2500, result_file=None, points=3, mix=None, id_ratio=0.0):
     """命令行 run：发压一次并打印结果；有设备未通过鉴权时以退出码 2 结束。"""
-    r = execute(count, rate, seconds, workers, fleet, connect_rate, connect_timeout, offset, per_process)
+    r = execute(count, rate, seconds, workers, fleet, connect_rate, connect_timeout, offset, per_process,
+                points=points, mix=mix, id_ratio=id_ratio)
+    rate = r['rate']
     if result_file:
         pathlib.Path(result_file).write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding='utf-8')
     el = r['t_end'] - r['t_start']
@@ -575,6 +720,9 @@ if __name__ == '__main__':
     rp.add_argument('--offset', type=int, default=0, help='从 devices.json 第几台开始取（多台发压机各取不相交的一段）')
     rp.add_argument('--per-process', type=int, default=2500, help='fleet 模式每个进程负责的设备数')
     rp.add_argument('--result-file', help='把结果另存为 JSON')
+    rp.add_argument('--points', type=int, default=3, help=f'每条报文的测点数（1～{MAX_POINTS}，fleet 模式）')
+    rp.add_argument('--mix', help='混合上报间隔，如 60:0.7,15:0.25,1:0.05（给出时忽略 --rate，fleet 模式）')
+    rp.add_argument('--id-ratio', type=float, default=0.0, help='带 id 可靠上报的设备占比（fleet 模式）')
     a = ap.parse_args()
     if a.cmd == 'provision':
         provision(a.devices, a.concurrency)
@@ -582,4 +730,4 @@ if __name__ == '__main__':
         refresh()
     else:
         run(a.devices, a.rate, a.seconds, a.workers, a.fleet, a.connect_rate, a.connect_timeout,
-            a.offset, a.per_process, a.result_file)
+            a.offset, a.per_process, a.result_file, a.points, parse_mix(a.mix) if a.mix else None, a.id_ratio)

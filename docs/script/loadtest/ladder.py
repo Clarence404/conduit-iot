@@ -107,7 +107,13 @@ def stop_host_sampler(proc, path):
 
 
 def steps_of(a):
-    """档位列表 [(总设备数, 每台每秒条数)]：--rate-plan 时设备数固定、逐档提速，否则逐档加设备、速率固定。"""
+    """档位列表 [(总设备数, 每台每秒条数)]：--rate-plan 时设备数固定、逐档提速，否则逐档加设备、速率固定。
+    给出 --mix（设备画像）时，速率取画像的平均每台速率，只能与 --plan 搭配。"""
+    if getattr(a, 'mix', None):
+        if a.rate_plan:
+            raise SystemExit('--mix 不能与 --rate-plan 同用：画像决定了每台速率')
+        rate = loadgen.mix_rate(loadgen.parse_mix(a.mix))
+        return [(int(x), rate) for x in a.plan.split(',')]
     if a.rate_plan:
         return [(a.devices, float(x)) for x in a.rate_plan.split(',')]
     return [(int(x), a.rate) for x in a.plan.split(',')]
@@ -115,6 +121,7 @@ def steps_of(a):
 
 def cmd_run(a):
     steps = steps_of(a)
+    mix = loadgen.parse_mix(a.mix) if a.mix else None
     i, n = parse_shard(a.shard)
     max_dev = max(d for d, _ in steps)
     block = math.ceil(max_dev / n)        # 每台发压机独占 devices.json 中的一段，互不重叠
@@ -148,16 +155,19 @@ def cmd_run(a):
         perf = out / f'.perf-{target}.csv'
         sampler = start_host_sampler(perf)
         r = loadgen.execute(mine, rate, a.hold, fleet=True, connect_rate=a.connect_rate,
-                            connect_timeout=120, offset=offset, per_process=per_process, quiet=True)
+                            connect_timeout=120, offset=offset, per_process=per_process, quiet=True,
+                            points=a.points, mix=mix, id_ratio=a.id_ratio)
         r.update(stop_host_sampler(sampler, perf))
         r.update({'step_target': target, 'step_total': total, 'shard': f'{i}/{n}', 'host': host,
-                  'rate_per_device': rate, 'hold': a.hold})
+                  'rate_per_device': rate, 'hold': a.hold, 'id_ratio': a.id_ratio})
         f = out / f'{host}-shard{i}of{n}-{target:06d}.json'
         f.write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding='utf-8')
         print(f'  发出 {r["sent"]:,}，PUBACK {r["acked"]:,}，掉线 {r["disconnects"]}，首次被拒 {r["first_rejected"]}，'
               f'最终被拒 {len(r["rejected"])}，p99 {r["p99_ms"]} ms，发压进程最忙 {r.get("gen_proc_cpu_max", "-")}% 单核 '
               f'/ 合计 {r.get("gen_proc_cores", "-")} 核，宿主机 CPU 平均 {r.get("host_cpu_avg", "-")}% '
-              f'峰值 {r.get("host_cpu_max", "-")}%（其中 VMware {r.get("host_vm_cpu_avg", "-")}%）→ {f.name}')
+              f'峰值 {r.get("host_cpu_max", "-")}%（其中 VMware {r.get("host_vm_cpu_avg", "-")}%）'
+              + (f'，可靠上报回执 {r.get("acks", 0):,} / 带 id 发出 {r.get("id_sent", 0):,}' if r.get('id_sent') else '')
+              + f' → {f.name}')
         if n == 1 and not a.no_check:
             time.sleep(DRAIN)
             verdicts = check([out], only=target, p99_limit=a.p99_limit)
@@ -301,6 +311,9 @@ def main():
     r.add_argument('--out', help='结果目录')
     r.add_argument('--no-check', action='store_true', help='单机时也不自动判定')
     r.add_argument('--p99-limit', type=float, default=1000.0, help='p99 时延上限（毫秒）')
+    r.add_argument('--points', type=int, default=3, help='设备画像：每条报文的测点数（1～30）')
+    r.add_argument('--mix', help='设备画像：混合上报间隔，如 60:0.7,15:0.25,1:0.05；给出时以画像平均速率代替 --rate')
+    r.add_argument('--id-ratio', type=float, default=0.0, help='设备画像：带 id 可靠上报的设备占比')
     k = sub.add_parser('check')
     k.add_argument('dirs', nargs='+', help='各发压机的结果目录')
     k.add_argument('--p99-limit', type=float, default=1000.0)

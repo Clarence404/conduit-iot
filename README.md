@@ -90,6 +90,16 @@ conduit/
 └── .run/                            IntelliJ IDEA 共享运行配置
 ```
 
+## 部署形态
+
+| 形态 | 机器 | 组成 | 适用 | 状态 |
+|---|---|---|---|---|
+| 独立部署（`deploy/standalone`） | 1 台 | 全部组件同机 | 演示、小规模私有部署 | 已实现 |
+| 拆分部署（`deploy/split`，见其 README） | 2 台 | EMQX 一台，其余一台 | 单套环境需要更多设备连接 | 已实现 |
+| 分布式部署 | 多台 | EMQX 集群、应用多实例、存储高可用 | 高可用与水平扩展 | 规划中（V0.8） |
+
+前两种使用同一代码、镜像与会话上限，都只有一个 EMQX 节点；容量与限制见 `CLAUDE.md`「部署形态」与「容量结论」。
+
 ## 部署：开发环境包与独立部署包
 
 `deploy/` 下有两个可以直接放到 Linux 上用 Docker Compose（v2）启动的目录。两者项目名都是 `conduit`，数据卷相同（`conduit_pg-data` 等），同一台宿主机上二选一，切换时数据沿用。从一个包切换到另一个包时，先在旧包目录执行 `docker compose down`（不加 `-v`），并在新包的 `.env` 中沿用相同的共用口令与密钥（`POSTGRES_PASSWORD`、`INFLUX_TOKEN`、`INFLUX_EXPLORER_SESSION_KEY`、`CONDUIT_INTERNAL_TOKEN`、`EMQX_DASHBOARD_PASSWORD`）。

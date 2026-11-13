@@ -18,9 +18,6 @@ services:
     environment:
       # 是否按信箱长度 / 堆大小强杀单个连接进程。关闭后单个连接不再被杀，但积压会一直涨到整个节点内存耗尽
       EMQX_FORCE_SHUTDOWN__ENABLE: ${EMQX_FORCE_SHUTDOWN_ENABLE:-true}
-      # 连接进程信箱上限（EMQX 默认 1000）。transport 的在途消息堆在其连接进程信箱里，
-      # 本值必须显著大于 EMQX_MAX_INFLIGHT，否则负载下 transport 连接被 mailbox_overflow 强杀
-      EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-1000}
       # 设备接入监听的 TCP 监听队列（EMQX 默认 1024），受上面 somaxconn 约束
       EMQX_LISTENERS__TCP__DEFAULT__TCP_OPTIONS__BACKLOG: ${EMQX_TCP_BACKLOG:-1024}
       # 单个 MQTT 报文上限（EMQX 默认 1MB，最大 256MB）

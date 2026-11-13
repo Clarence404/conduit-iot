@@ -25,19 +25,19 @@
         "description": "「连接信箱 / 强杀线」的分母，按实际部署的 force_shutdown.max_mailbox_size 选",
         "query": "1000,10000",
         "current": {
-          "text": "1000",
-          "value": "1000"
+          "text": "10000",
+          "value": "10000"
         },
         "options": [
           {
             "text": "1000",
             "value": "1000",
-            "selected": true
+            "selected": false
           },
           {
             "text": "10000",
             "value": "10000",
-            "selected": false
+            "selected": true
           }
         ],
         "hide": 0,
@@ -779,7 +779,7 @@
       "id": 12,
       "type": "stat",
       "title": "连接信箱 / 强杀线",
-      "description": "各条 transport 连接进程 Erlang 信箱中待处理消息数的最大值，占 EMQX max_mailbox_size 的百分比。到 100% 该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。强杀线取看板顶部的变量 max_mailbox_size（仓库默认 1000，压测 VM 为 10000，按实际部署选）。2026-10-29 实测健康 8,000 条/秒时信箱最大 31，过载 16,000 条/秒时最大 2,194。会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
+      "description": "各条 transport 连接进程 Erlang 信箱中待处理消息数的最大值，占 EMQX max_mailbox_size 的百分比。到 100% 该连接即被强杀、缓冲消息丢失——这是连接被杀的直接前兆。强杀线取看板顶部的变量 max_mailbox_size（仓库默认 10000，2026-11-13 前为 1000，按实际部署选）。2026-10-29 实测健康 8,000 条/秒时信箱最大 31，过载 16,000 条/秒时最大 2,194。会话监控每 30 秒采一次，更短的尖峰可能被漏掉。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -2178,7 +2178,7 @@
           "id": 28,
           "type": "timeseries",
           "title": "各连接进程信箱",
-          "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 1000，压测 VM 为 10000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
+          "description": "每条连接进程信箱中待处理的消息数。超过 max_mailbox_size 即被强杀（仓库默认 10000，2026-11-13 前为 1000）。健康时接近 0（实测 8,000 条/秒最大 31），持续上涨说明该连接进程处理不过来。会话监控 30 秒一采，短尖峰可能漏掉。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

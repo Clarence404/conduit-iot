@@ -79,8 +79,8 @@ EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（20
 | 参数（EMQX 主机 `.env`） | 本包取值 | EMQX 默认 | 其他部署包 | 说明 |
 |---|---|---|---|---|
 | `EMQX_MAX_INFLIGHT` | 1024 | 32 | 512 | EMQX 推给每条连接、尚未确认的消息上限；须 ≥ 应用主机批大小，且远小于信箱上限 |
-| `EMQX_MAX_MQUEUE_LEN` | 50000 | 1000 | 100000 | 每个会话的内存队列，满了丢弃并计入 `mqueue_dropped`。10 万条在单连接堆上限内放不下，过载时连接被强杀（2026-11-12 实测） |
-| `EMQX_FORCE_SHUTDOWN_ENABLE` / `EMQX_MAX_MAILBOX_SIZE` / `EMQX_CONNECTION_MAX_HEAP_SIZE` | true / 10000 / 256MB | true / 1000 / 32MB | true / 1000 / 256MB | 单个连接信箱或堆超限时只强杀该连接 |
+| `EMQX_MAX_MQUEUE_LEN` | 50000 | 1000 | 50000 | 每个会话的内存队列，满了丢弃并计入 `mqueue_dropped`。10 万条在单连接堆上限内放不下，过载时连接被强杀（2026-11-12 实测） |
+| `EMQX_FORCE_SHUTDOWN_ENABLE` / `EMQX_MAX_MAILBOX_SIZE` / `EMQX_CONNECTION_MAX_HEAP_SIZE` | true / 10000 / 256MB | true / 1000 / 32MB | true / 10000 / 256MB | 单个连接信箱或堆超限时只强杀该连接 |
 | `EMQX_TCP_BACKLOG` / `EMQX_SOMAXCONN` | 65535 | 1024 / 4096 | 默认 | 大批设备同时重连时的连接队列 |
 | `EMQX_MAX_PACKET_SIZE` | 256MB（上限） | 1MB | 默认 | 单个 MQTT 报文上限 |
 | 文件描述符 | 1048576 | — | 1048576 | 在 dev 文件中设定，每条 MQTT 连接占一个 |
@@ -93,6 +93,7 @@ EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（20
 （约 932 万条已确认消息），所有设备一起断开（`docs/test-reports/2026-11-12-stress-to-failure.md`）。
 队列先取 10 万复测：EMQX 不再被杀，但 transport 订阅连接的堆先于队列满就超限、被反复强杀，15,000 条/秒起即丢数据。
 改为 5 万后，过载只表现为队列满后丢弃新消息，全程零强杀、零掉线，15,000 条/秒以内无损，丢弃数有 `mqueue_dropped` 计数可查。
+2026-11-13 起，会话上限（队列 5 万、信箱 10000、开启强杀、堆 256MB）统一用于全部部署包，由 `deploy/dev/docker-compose.yml` 定义，本包只在 `.env` 中取同样的值（`docs/test-reports/2026-11-13-standalone-session-limits.md`）。
 
 **告警**：transport 会话监控对每个会话的积压（默认 ≥ 5 万条，`CONDUIT_TRANSPORT_MONITOR_MQUEUE_WARN_LEN`）与
 EMQX 主机内存（默认 ≥ 80%，`CONDUIT_TRANSPORT_MONITOR_NODE_MEMORY_WARN_RATIO`）记 WARN，并发布仪表

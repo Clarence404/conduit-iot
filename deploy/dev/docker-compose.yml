@@ -136,12 +136,14 @@ services:
       # 端到端不丢由设备侧的消息 id + 业务回执负责，见 docs/device-integration.md。
       EMQX_DURABLE_SESSIONS__ENABLE: "false"
       # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
-      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警
-      EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-100000}
+      # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警。
+      # 5 万而不是 10 万：队列驻留在连接进程堆内，过载时 10 万条撑破堆上限、连接被强杀、积压整段丢失；
+      # 5 万条在独立部署与拆分部署上实测零强杀（2026-11-12/13，docs/test-reports/2026-11-13-standalone-session-limits.md）
+      EMQX_MQTT__MAX_MQUEUE_LEN: ${EMQX_MAX_MQUEUE_LEN:-50000}
       # 在途窗口：EMQX 最多允许多少条已投递未确认的消息。transport 的待提交批就被它硬限，
       # 规则是 conduit.transport.mqtt.batch-size <= 本值，且本值应为批的若干倍：相等时是停等协议
       # （发 N 条、等全部确认、再发 N 条），窗口远大于批才能流水线化。实测 1024/64 约 4000 条/秒，32/32 约 2600。
-      # 在途窗口。必须显著小于 force_shutdown.max_mailbox_size（默认 1000）：
+      # 在途窗口。必须显著小于 force_shutdown.max_mailbox_size（本包默认 10000，见下）：
       # 在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 mailbox_overflow 强杀
       # （2026-10-28 实测：配 1024 时负载下必然被杀，且先于队列溢出与堆超限发生）
       EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-512}
@@ -156,6 +158,10 @@ services:
       # 单连接进程堆上限（实际按 1.5 倍触发，即 384MB）。mqueue 驻留在会话进程堆内，
       # 与本项共享同一上限：调大 MAX_MQUEUE_LEN 前必须确认 heap_size 余量，不得反过来上调本项
       EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}
+      # 单连接进程信箱上限（EMQX 默认 1000）。transport 的在途消息与待处理投递堆在其连接进程信箱里，
+      # 默认 1000 在独立部署每秒 8,000 条时就触发 mailbox_overflow 强杀（2026-11-13 实测），改为 10000 后零强杀。
+      # 规则 batch-size <= max_inflight << 本值
+      EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-10000}
     volumes:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读

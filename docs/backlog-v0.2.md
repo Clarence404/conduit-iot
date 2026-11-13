@@ -192,9 +192,10 @@
 详见 [测试报告](test-reports/2026-10-29-vm-max-throughput.md)。
 
 - **把 VM 上验证过的配置写成仓库默认值**（所有者决定暂缓）：EMQX `max_mailbox_size` 10000、`max_inflight` 1024、transport `batch-size` 512。
+  2026-11-13：其中 `max_mailbox_size` 10000 已写入仓库默认（会话上限统一，见 `docs/test-reports/2026-11-13-standalone-session-limits.md`）；窗口与批仍为 512 / 64。
   这三项目前只在压测 VM 上，按仓库默认部署**无法复现**报告中的容量数字。写入前需确认约束 `batch ≤ inflight ≪ mailbox` 仍成立，
   且 `max_mailbox_size` 只调信箱、堆上限 256MB 不动（见 `CLAUDE.md` 第 4 节「方向调整」条）。
-- 信箱 1000 与 transport 共享订阅的组合未测：拆成 4 条连接后单进程信箱压力已大幅下降，可能不再需要调大信箱。
+- ~~信箱 1000 与 transport 共享订阅的组合未测~~（2026-11-13 已测：独立部署每秒 8,000 条即被 `mailbox_overflow` 强杀，信箱默认已改为 10000）。
 - **海量连接的容量未测**：现有数字来自 600 条连接各发高频消息，不能换算成设备数。真实设备约 10 秒一报，
   10,000 条/秒对应约 10 万条连接，EMQX 维持连接的内存与调度、鉴权回调压力、在线状态写入量都需单独压测。
 - 需要 Docker 的集成测试未在本轮运行（所有者决定不跟进）：`MqttProtocolAdapterIT`（含共享订阅退订旧过滤器的真实 broker 行为）、
@@ -238,3 +239,18 @@
     首次被拒数，压测不再因此作废。
 - 本地三机（发压机与两台 VM）同在一台物理机，2.5 万台以上的结论受宿主机 CPU 与内存争用影响；测平台本身的上限需要
   发压机与被测机分开（`ladder.py` 已支持多台电脑分担发压，同事电脑连 EMQX 需在宿主机做 VMware NAT 端口转发）。
+
+## 2026-11-13 断电恢复与积压监控遗留
+
+宿主机 2026-11-13 01:14 断电重启后发现，经过见 [`2026-11-13-standalone-session-limits.md`](test-reports/2026-11-13-standalone-session-limits.md) 第 5 节。所有者决定记入 backlog，暂不实施。
+
+- **InfluxDB 断电后不能自愈**：WAL 目录留下 0 字节文件。InfluxDB 3 Core 启动时跳过它们，但下次写入用到同一编号即判定「另一进程在写 WAL」而主动退出（退出码 0），被 Docker 拉起后无限循环。
+  - 方向：InfluxDB 启动前清理 0 字节 WAL 文件（entrypoint 或 init 容器），清理前记日志并移到备份目录；同时向上游确认是否已修。
+  - 2026-10-20 的零字节 catalog 启动失败（本文件开头）属同一类问题，应一并处理。
+- **InfluxDB 循环重启没有告警**：容器在跑、健康检查偶尔为 healthy，server 写入失败只按可恢复错误原地退避，一小时内没有任何显眼信号。
+  - 方向：server 对 InfluxDB 连续不可写超过阈值告警，或在健康检查中体现；观测栈对容器重启次数告警。
+- **总线截断即丢数据**：上行流 `MAXLEN` 100 万条，下游停摆约 2 分钟（每秒 8,000 条）即开始截断最旧数据。本次约 143 万条被截断丢失。
+  - 方向：截断前告警（流长度接近上限、或 lag 增长）；评估按下游可用性对接入侧背压，或增大 `MAXLEN` 并核算 Redis 内存。
+- **截断后积压指标永久虚高**：Redis 消费组 `lag = entries-added − entries-read`，被截掉的条目不计入已读，lag 多出被截断的条数且不会回落，看板与压测脚本都会误判积压。
+  - 本次以 `XGROUP SETID conduit:stream:up conduit-server <last-delivered-id> ENTRIESREAD <entries-added>` 校正。
+  - 方向：积压指标改用「流尾 id 与 last-delivered-id 之差」等不受截断影响的口径，或在检测到截断后自动校正并记 WARN（被截断的条数即丢失条数，应计入指标）。

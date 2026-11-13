@@ -52,3 +52,17 @@
 ## 4. 架构影响
 
 transport 原本就经 EMQX REST API 轮询会话，本次只多读一个接口，模块职责、拓扑与数据流不变，架构图无需修改。
+
+## 5. 推广到全部部署包（2026-11-13）
+
+- 所有者决定：会话上限统一，独立部署、拆分部署与开发环境包取同一套值。
+- 依据：[`2026-11-13-standalone-session-limits.md`](../../test-reports/2026-11-13-standalone-session-limits.md)。
+  - 独立部署按旧默认（信箱 1000、队列 10 万）在每秒 8,000 条时就被 `mailbox_overflow` 强杀；
+  - 改为信箱 10000、队列 5 万后零强杀，15,000 条/秒以内无损，与拆分部署相同。
+- 改动：
+  - `deploy/dev/docker-compose.yml`：队列默认 50000，新增 `EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-10000}`。独立部署经 extends 继承。
+  - `deploy/split/emqx/docker-compose.yml`：删去自带的信箱定义（原默认 1000），改由 dev 文件统一定义。
+  - 三个 `.env.example`：队列 50000，新增 `EMQX_MAX_MAILBOX_SIZE=10000`。
+  - Grafana 看板「强杀线」变量默认改为 10000。
+- 不变：窗口与批（独立部署与开发包 512 / 64，拆分部署 1024 / 512）、堆上限 256MB、开启强杀（EMQX 默认即开启）。
+- 分布式部署按路线图放到 V0.8，届时沿用这套单连接上限，单独压测容量。

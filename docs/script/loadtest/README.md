@@ -12,6 +12,7 @@
 | `loadgen.py` | 多进程 MQTT 发压器：建设备、刷新密钥、按速率发布、统计 PUBACK 时延 |
 | `ladder.py` | 阶梯压测：逐档加设备、按守恒与稳定性判据自动判定；支持多台电脑一起发压 |
 | `capacity_test.py` | 容量测试：逐级加压，找积压不增长的最大稳态速率 |
+| `tb_bench.py` | ThingsBoard 对照压测：建设备、复用 ladder 发压、数 `ts_kv` 行、采样容器指标（见下文「与 ThingsBoard 对照」） |
 | `remote.py` | 压测机远程助手：SSH 执行、上传、查 Prometheus、数 InfluxDB 行数、数 EMQX 日志 |
 | `config.example.json` | 配置模板 |
 | `LOADGEN.md` | 发压器的设计说明（为什么是多进程） |
@@ -232,6 +233,16 @@ python loadgen.py run --devices 600 --rate 16.7 --seconds 120 --workers 28
 
 还有一条操作纪律：**测量期间不要在压测机上做别的事**。曾因一边测一边推面板、
 重启 Grafana，把中位数压到 397 而峰值是 3,624，整组数据作废。
+
+## 与 ThingsBoard 对照
+
+`tb_bench.py` 用同一个发压器、同一套判据压 ThingsBoard，结果见 `docs/test-reports/2026-11-14-thingsboard-comparison.md`。
+
+- `provision --devices N`：在 Demo 租户下逐台建设备（令牌即 access token），写入 `tb-devices.json`；账号读环境变量 `TB_USER` / `TB_PASSWORD`。
+- `run`：每档调用 `ladder.py run --no-check`，经环境变量 `LOADGEN_DEVICES`、`LOADGEN_MQTT_HOST` 把发压器指向 ThingsBoard；负载结束后自己判定守恒、积压、掉线、p99。
+- `TB_STACK=kc`：切换到 Kafka + Cassandra 部署，设备文件为 `tb-devices-kc.json`，在 Cassandra 中逐设备数行，积压取 Kafka 消费组滞后。
+- 设备文件含 access token，已在 `.gitignore` 中。
+- ThingsBoard 没有业务回执，fleet 模式对 ThingsBoard 设备不发 `id`。
 
 ## 已知限制
 

@@ -597,6 +597,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-10-30：拆分部署包 `deploy/split`；容器名全部固定，EMQX 统一为 `conduit-emqx`（`2026-10-30-split-deployment.md`）。
 - 2026-11-14：与 ThingsBoard 架构对照后，把三处架构短板记入 `roadmap-saas.md` 第 2 节：按设备分区归属（V0.5 前定）、总线磁盘保留（V0.8）、时序库高可用（V0.8 前定）。
 - 2026-11-14：明确三种部署形态：独立部署（1 台）、拆分部署（EMQX 单独 1 台）、分布式部署（多节点，V0.8）。定义写在 1.2「日志与部署」与 README（所有者要求）。
+- 2026-11-14：与 ThingsBoard 4.3 同机对照（8 vCPU，默认配置）：3 测点无损吞吐 Conduit 12,000 条/秒、ThingsBoard Kafka+Cassandra 3,000、默认部署 1,000。ThingsBoard 主队列默认超时跳过，过载会静默丢已确认数据。发压器补发同 ts 会被幂等覆盖而误判丢数，已改为同设备 ts 严格递增（`2026-11-14-thingsboard-comparison.md`）。
 - 2026-11-02：交接文件只放 `docs/handoffs/`，全局 `~/.codex/AGENTS.md` 已同步。
 
 **方法教训**

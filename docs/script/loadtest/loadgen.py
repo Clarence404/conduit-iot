@@ -52,7 +52,8 @@ import urllib.request
 import paho.mqtt.client as mqtt
 
 HERE = pathlib.Path(__file__).parent
-DEVICES_FILE = HERE / 'devices.json'
+# 环境变量 LOADGEN_DEVICES 可换成另一份设备清单（如 ThingsBoard 对照压测的 tb-devices.json）
+DEVICES_FILE = pathlib.Path(os.environ.get('LOADGEN_DEVICES') or HERE / 'devices.json')
 PRODUCT_NAME = '压测产品'
 
 
@@ -405,6 +406,8 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
 
     profile 与 devices 一一对应，为 [(上报间隔秒, 是否带 id)]；为 None 时全部按 1/rate、不带 id（旧行为）。
     points 为每条报文的测点数（取测点表前 points 个）。
+    设备带 'platform': 'thingsboard' 时按 ThingsBoard 的约定发压（对照压测用）：MQTT 3.1.1，用户名为访问令牌，
+    主题 v1/devices/me/telemetry，报文 {"ts", "values"}；ThingsBoard 没有业务回执，忽略 id。
     """
     import heapq
     import select
@@ -471,14 +474,16 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     # 按 connect_rate 匀速建连，边建边处理 CONNACK，避免几万台同时打到鉴权回调
     t_start = time.time()
     for n, d in enumerate(devices):
-        cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=d['deviceKey'], protocol=mqtt.MQTTv5)
-        cl.username_pw_set(d['deviceKey'], d['secret'])
+        tb = d.get('platform') == 'thingsboard'
+        cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=d['deviceKey'],
+                         protocol=mqtt.MQTTv311 if tb else mqtt.MQTTv5)
+        cl.username_pw_set(d['deviceKey'], None if tb else d['secret'])
         cl.max_inflight_messages_set(1000)
         cl.max_queued_messages_set(0)
         cl.on_connect = on_conn
         cl.on_disconnect = on_disc
         cl.on_publish = on_pub
-        if prof[d['deviceKey']][1]:
+        if prof[d['deviceKey']][1] and not tb:
             ack_topic[id(cl)] = f'conduit/{d["productKey"]}/{d["deviceKey"]}/down/ack'
             cl.on_message = on_msg
         try:
@@ -519,8 +524,11 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     connect_seconds = time.time() - t_start
 
     intervals = [prof[d['deviceKey']][0] for _, d in clients]
-    with_id = [prof[d['deviceKey']][1] for _, d in clients]
+    with_id = [prof[d['deviceKey']][1] and d.get('platform') != 'thingsboard' for _, d in clients]
     seq = [0] * len(clients)
+    # 每台设备上一条的 ts：发压进程卡顿后补发时同一轮循环共用 now，同设备会出现同 ts，
+    # 平台按（设备, ts）幂等覆盖，行数就会少于 PUBACK，被误判为丢数。补发时把 ts 顺延 1 ms 保证唯一
+    last_ts = [0] * len(clients)
     t0 = time.time()
     cpu0 = time.process_time()   # 本进程稳态期间自身占用的 CPU，用来判断发压进程是否打满（与整机 CPU 区分）
     heap = [(t0 + random.random() * intervals[i], i) for i in range(len(clients))]
@@ -541,14 +549,20 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             due, i = heapq.heappop(heap)
             heapq.heappush(heap, (due + intervals[i], i))
             cl, d = clients[i]
-            msg = {'ts': int(now * 1000), 'params': _params(points)}
+            ts = last_ts[i] = max(int(now * 1000), last_ts[i] + 1)
+            if d.get('platform') == 'thingsboard':
+                topic = 'v1/devices/me/telemetry'
+                msg = {'ts': ts, 'values': _params(points)}
+            else:
+                topic = f'conduit/{d["productKey"]}/{d["deviceKey"]}/up/property'
+                msg = {'ts': ts, 'params': _params(points)}
             if with_id[i]:
                 # 可靠上报：带 id 即启用，transport 持久接收后向设备的 down/ack 回 QoS 0 回执（连接时已订阅，收到即计数）
                 seq[i] += 1
                 msg = {'id': f'{d["deviceKey"]}-{int(t0)}-{seq[i]}', **msg}
             payload = json.dumps(msg)
             try:
-                info = cl.publish(f'conduit/{d["productKey"]}/{d["deviceKey"]}/up/property', payload, qos=1)
+                info = cl.publish(topic, payload, qos=1)
                 if info.rc == 0:
                     pending[(id(cl), info.mid)] = time.time()
                     sent += 1
@@ -610,7 +624,9 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
     chunks = [devices[i::workers] for i in range(workers)]
     prof_chunks = [profile[i::workers] for i in range(workers)]
     out = mp.Queue()
-    host, port = cfg['mqtt_host'], int(cfg['mqtt_port'])
+    # 环境变量 LOADGEN_MQTT_HOST / LOADGEN_MQTT_PORT 可临时改打另一台 broker（如 ThingsBoard 对照压测）
+    host = os.environ.get('LOADGEN_MQTT_HOST') or cfg['mqtt_host']
+    port = int(os.environ.get('LOADGEN_MQTT_PORT') or cfg['mqtt_port'])
     if fleet:
         procs = [mp.Process(target=_fleet_worker,
                             args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out, pc, points),

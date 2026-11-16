@@ -48,7 +48,8 @@ services:
     extends: { <<: *standalone, service: conduit-transport }
     environment:
       EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
-      EMQX_PORT: ${MQTT_PORT:-1883}
+      # transport 连 EMQX 主机上只供它使用的内部监听器
+      EMQX_PORT: ${MQTT_INTERNAL_PORT:-1884}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
     # 原定义依赖本机 emqx（service_healthy）；EMQX 在远端，由 transport 自己重连等待
     depends_on: !override
@@ -61,7 +62,8 @@ services:
     extends: { <<: *standalone, service: conduit-transport-2 }
     environment:
       EMQX_HOST: ${EMQX_REMOTE_HOST:?EMQX_REMOTE_HOST is required}
-      EMQX_PORT: ${MQTT_PORT:-1883}
+      # transport 连 EMQX 主机上只供它使用的内部监听器
+      EMQX_PORT: ${MQTT_INTERNAL_PORT:-1884}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://${EMQX_REMOTE_HOST}:${EMQX_DASHBOARD_PORT:-18083}
     depends_on: !override
       redis:

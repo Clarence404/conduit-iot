@@ -113,4 +113,25 @@ class MqttAuthIT extends IntegrationTestBase {
         auth(null, "c", "u", "p").andExpect(status().isUnauthorized());
         auth("wrong", "c", "u", "p").andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void 内部监听器的回调只放行transport() throws Exception {
+        TestDevice d = createDevice(defaultTenantId(), "ENABLED");
+
+        mvc.perform(post("/internal/mqtt/auth").contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Conduit-Internal-Token", "test-internal-token")
+                        .header("X-Conduit-Listener", "internal")
+                        .content("""
+                                {"clientid":"%s","username":"%s","password":"%s"}""".formatted(
+                                d.deviceKey(), d.deviceKey(), d.secret())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("deny"));
+        mvc.perform(post("/internal/mqtt/auth").contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Conduit-Internal-Token", "test-internal-token")
+                        .header("X-Conduit-Listener", "internal")
+                        .content("""
+                                {"clientid":"conduit-transport-5","username":"conduit-transport","password":"transport-pass"}"""))
+                .andExpect(jsonPath("$.result").value("allow"))
+                .andExpect(jsonPath("$.is_superuser").value(true));
+    }
 }

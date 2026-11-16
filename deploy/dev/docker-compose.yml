@@ -162,6 +162,11 @@ services:
       # 默认 1000 在独立部署每秒 8,000 条时就触发 mailbox_overflow 强杀（2026-11-13 实测），改为 10000 后零强杀。
       # 规则 batch-size <= max_inflight << 本值
       EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-10000}
+      # transport 专用 zone（内部监听器 tcp:internal，1884）：只放宽信箱与会话队列，堆上限与在途窗口沿用上面的全局值（堆上限不得上调）。
+      # 2026-11-16 实测：2.5 万台断网 5 分钟后同时补传，订阅连接信箱冲到 1.3 万～4.4 万被强杀、内存会话丢失；
+      # 放宽后 8 条连接 × 10 万条队列 ≈ 80 万条缓冲。见 docs/superpowers/specs/2026-11-16-conduit-transport-internal-listener-design.md
+      EMQX_ZONES__TRANSPORT__FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_TRANSPORT_MAX_MAILBOX_SIZE:-200000}
+      EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN: ${EMQX_TRANSPORT_MAX_MQUEUE_LEN:-100000}
     volumes:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读
@@ -170,6 +175,8 @@ services:
       - ./emqx/acl.conf:/opt/emqx/etc/conduit-acl.conf:ro
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${MQTT_PORT:-1883}:1883"
+      # transport 专用内部监听器：开发机 IDE 中的 transport 要连它；只许 transport 鉴权通过，设备连上会被拒绝
+      - "${BIND_ADDR:-127.0.0.1}:${MQTT_INTERNAL_PORT:-1884}:1884"
       - "${BIND_ADDR:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}:18083"
     # 不依赖 conduit-server：server 未运行或未就绪时，EMQX 对鉴权回调自行重试
     healthcheck:

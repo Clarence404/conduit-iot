@@ -38,7 +38,9 @@ public class MqttAuthService {
     enum Outcome {
         TRANSPORT(true), DEVICE(true),
         MISSING_CREDENTIALS(false), TRANSPORT_REJECTED(false), CLIENT_ID_MISMATCH(false),
-        UNKNOWN_DEVICE(false), DEVICE_DISABLED(false), TENANT_DISABLED(false), WRONG_SECRET(false);
+        UNKNOWN_DEVICE(false), DEVICE_DISABLED(false), TENANT_DISABLED(false), WRONG_SECRET(false),
+        /** 设备连到了只供 transport 使用的内部监听器（EMQX 的 tcp:internal，所属 zone 信箱与队列更宽松）。 */
+        DEVICE_ON_INTERNAL_LISTENER(false);
 
         final boolean allow;
 
@@ -79,8 +81,24 @@ public class MqttAuthService {
      * 拒绝原因只记 debug 日志与计数器，不返回给调用方。
      */
     public Decision authenticate(String clientId, String username, String password) {
+        return authenticate(clientId, username, password, false);
+    }
+
+    /**
+     * 同 {@link #authenticate(String, String, String)}，并区分连接来自哪个 EMQX 监听器。
+     * 内部监听器（{@code internalListener = true}）只许 transport 连接：其 zone 的信箱与会话队列放宽，
+     * 设备若能连上就能借它占用 EMQX 内存，所以用户名不是 transport 的一律拒绝（原因 device_on_internal_listener）。
+     * transport 连设备监听器仍然放行（回退与老部署兼容）。
+     *
+     * @param internalListener EMQX 回调请求头 {@code X-Conduit-Listener: internal} 时为 true；该请求头写死在
+     *                         内部监听器的鉴权链配置里，设备无法伪造
+     */
+    public Decision authenticate(String clientId, String username, String password, boolean internalListener) {
         if (clientId == null || username == null || password == null) {
             return deny(Outcome.MISSING_CREDENTIALS, clientId);
+        }
+        if (internalListener && !username.equals(props.transportUsername())) {
+            return deny(Outcome.DEVICE_ON_INTERNAL_LISTENER, clientId);
         }
         if (username.equals(props.transportUsername())) {
             boolean ok = props.transportPassword() != null && !props.transportPassword().isBlank()

@@ -19,8 +19,10 @@
 | 方向 | 用途 | 端口 |
 |---|---|---|
 | 设备 → EMQX 主机 | MQTT 接入 | 1883 |
-| 应用主机 → EMQX 主机 | transport 连 EMQX、会话监控与 Prometheus 访问 REST API | 1883、18083 |
+| 应用主机 → EMQX 主机 | transport 连内部监听器；会话监控与 Prometheus 访问 REST API | 1884、18083 |
 | **EMQX 主机 → 应用主机** | **每次设备连接的鉴权回调**（同步，不通则设备全部连不上） | server 的 API 端口（默认 8091） |
+
+1884 是只供 transport 使用的内部监听器：server 会拒绝设备连它，但仍建议防火墙只对应用主机放行。
 
 两台都是同一 VMware NAT 网段内的虚拟机时互相直连即可。若应用主机在 NAT 后、EMQX 主机在 NAT 外，最后一行不通：
 在 VMware「虚拟网络编辑器 → NAT 设置 → 端口转发」把宿主机端口转发到应用主机的 8091（并在宿主机防火墙放行），
@@ -67,9 +69,19 @@ docker compose --profile metrics up -d          # 可选：观测栈
 ```bash
 # 应用主机：transport 主实例已连上远端 EMQX（leader.connected = true）
 docker exec conduit-transport-1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
-# EMQX 主机：transport 的 4 条共享订阅与模拟器设备都在
+# EMQX 主机：transport 的 8 条共享订阅（都在 tcp:internal 上）与模拟器设备都在
 docker exec conduit-emqx emqx ctl broker stats | grep -E "^connections.count|subscriptions.shared.count"
 ```
+
+### 4. 从 1883 升级到内部监听器（2026-11-16）
+
+EMQX 的会话参数在创建时固定，transport 改连 1884 后会接管原来在 1883 上创建的会话，队列上限仍是旧 zone 的值。升级后在空闲时把旧会话丢弃一次，transport 会立即按新 zone 重建：
+
+```bash
+for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-transport$i; done
+```
+
+丢弃时会话里尚未投递的消息会丢失，所以要在设备流量低的时候做；第 4～7 条连接是新 clientId，不受影响。
 
 ## 容量参数
 

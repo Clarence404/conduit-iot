@@ -19,7 +19,10 @@ import java.time.Duration;
  *                             窗口远大于批时提交当前批的同时下一批已在途，深度为 窗口/批（实测 1024/64 优于 32/32）
  * @param batchDelay           攒批的最长等待：不足 batchSize 时最多等这么久也要提交，
  *                             直接体现为 PUBACK 的最坏额外延迟
- * @param connections          主实例连接 EMQX 的条数，默认 4，必须 ≥ 1。
+ * @param port                 EMQX 端口，默认 1884：只供 transport 使用的内部监听器 tcp:internal，所属 zone transport
+ *                             的信箱（20 万）与会话队列（10 万）放宽，补传洪峰下订阅连接不被强杀；
+ *                             改回 1883 即连设备监听器（回退开关）。见 2026-11-16 transport 内部监听器设计
+ * @param connections          主实例连接 EMQX 的条数，默认 8（2026-11-16 由 4 调整：总缓冲 8 × 10 万条扛住断网补传洪峰），必须 ≥ 1。
  *                             为什么要多条：EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程
  *                             单核封顶（2026-10-29 recon 实测 9,000 条/秒时该进程已顶在单调度器上限，
  *                             信箱持续增长直至 mailbox_overflow 被强杀）。多于 1 条时改用共享订阅
@@ -33,7 +36,7 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "conduit.transport.mqtt")
 public record MqttTransportProperties(
         @DefaultValue("localhost") String host,
-        @DefaultValue("1883") int port,
+        @DefaultValue("1884") int port,
         @DefaultValue("conduit-transport") String clientId,
         String username,
         String password,
@@ -41,7 +44,7 @@ public record MqttTransportProperties(
         @DefaultValue("conduit-") String ownClientPrefix,
         @DefaultValue("64") int batchSize,
         @DefaultValue("5ms") Duration batchDelay,
-        @DefaultValue("4") int connections,
+        @DefaultValue("8") int connections,
         @DefaultValue("conduit-transport") String sharedGroup) {
 
     public MqttTransportProperties {

@@ -38,6 +38,10 @@ services:
     environment:
       # 独立部署包中鉴权回调固定指向容器内的 conduit-server（.env 中的同名变量只用于满足 dev 文件的必填检查）
       CONDUIT_AUTH_URL: http://conduit-server:8080
+    # 内部监听器 1884 只在 compose 网络内给 transport 用，不发布到宿主机
+    ports: !override
+      - "${BIND_ADDR:-127.0.0.1}:${MQTT_PORT:-1883}:1883"
+      - "${BIND_ADDR:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}:18083"
 
   # 性能观测栈（profile: metrics，默认不启动；定义见 dev 文件，extends 会带入 profiles 与 mem_limit）
   # 启用：docker compose --profile metrics up -d
@@ -166,6 +170,8 @@ services:
     environment: &transport-env
       REDIS_HOST: redis
       EMQX_HOST: emqx
+      # transport 连只供它使用的内部监听器（zone transport 信箱与队列放宽）；设备与模拟器仍连 1883
+      EMQX_PORT: "1884"
       TRANSPORT_CLIENT_ID: ${TRANSPORT_CLIENT_ID:-conduit-transport}
       TRANSPORT_MQTT_USERNAME: ${TRANSPORT_MQTT_USERNAME:-conduit-transport}
       TRANSPORT_MQTT_PASSWORD: ${TRANSPORT_MQTT_PASSWORD}
@@ -175,7 +181,7 @@ services:
       TRANSPORT_BUS_BATCH_SIZE: ${TRANSPORT_BUS_BATCH_SIZE:-64}
       TRANSPORT_BUS_BATCH_DELAY: ${TRANSPORT_BUS_BATCH_DELAY:-5ms}
       # 主实例连接 EMQX 的条数（共享订阅分摊投递），1 即退回单连接；见 transport 的 application.yml
-      TRANSPORT_MQTT_CONNECTIONS: ${TRANSPORT_MQTT_CONNECTIONS:-4}
+      TRANSPORT_MQTT_CONNECTIONS: ${TRANSPORT_MQTT_CONNECTIONS:-8}
       CONDUIT_TRANSPORT_MONITOR_BASE_URL: http://emqx:18083
       # 监控的堆限阈值与 EMQX 的连接进程堆限取同一个 .env 变量，调整时两者天然一致
       CONDUIT_TRANSPORT_MONITOR_HEAP_LIMIT: ${EMQX_CONNECTION_MAX_HEAP_SIZE:-256MB}

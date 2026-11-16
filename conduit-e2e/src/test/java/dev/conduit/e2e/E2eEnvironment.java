@@ -54,6 +54,8 @@ final class E2eEnvironment implements AutoCloseable {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int EMQX_MQTT_PORT = 1883;
+    /** 只供 transport 使用的内部监听器（tcp:internal，zone transport），与部署编排一致。 */
+    private static final int EMQX_INTERNAL_PORT = 1884;
 
     private final Path root = root();
     private final Path logDir = root.resolve("conduit-e2e/target/e2e-logs")
@@ -74,6 +76,7 @@ final class E2eEnvironment implements AutoCloseable {
     private GenericContainer<?> influx;
     private GenericContainer<?> emqx;
     private int emqxPort;
+    private int emqxInternalPort;
     private int serverPort;
     private AppProcess server;
 
@@ -160,7 +163,8 @@ final class E2eEnvironment implements AutoCloseable {
             transportEnv.put("REDIS_HOST", redis.getHost());
             transportEnv.put("REDIS_PORT", String.valueOf(redis.getMappedPort(6379)));
             transportEnv.put("EMQX_HOST", emqx.getHost());
-            transportEnv.put("EMQX_PORT", String.valueOf(emqxPort));
+            // transport 连内部监听器，设备（测试中的发压客户端）连 1883
+            transportEnv.put("EMQX_PORT", String.valueOf(emqxInternalPort));
             transportEnv.put("TRANSPORT_MQTT_USERNAME", "conduit-transport");
             transportEnv.put("TRANSPORT_MQTT_PASSWORD", transportPassword);
             // e2e 验证接入可靠性，不验证会话监控（需 EMQX API key）；名字必须是 TRANSPORT_*，CONDUIT_* 会被 AppProcess 清掉
@@ -174,7 +178,7 @@ final class E2eEnvironment implements AutoCloseable {
     }
 
     /**
-     * 启动 EMQX：配置由部署模板渲染，内存持久会话（关闭磁盘持久会话）与固定节点名同 compose；宿主机端口在 20000～29999 中随机固定
+     * 启动 EMQX：配置由部署模板渲染，内存持久会话（关闭磁盘持久会话）与固定节点名同 compose；设备端口在 20000～29999 中随机固定、内部监听器端口为其 +10000
      * （docker restart 后端口不变），被占用时换端口重试，最多 5 次。
      */
     private GenericContainer<?> startEmqx() throws IOException {
@@ -184,10 +188,12 @@ final class E2eEnvironment implements AutoCloseable {
         RuntimeException last = null;
         for (int attempt = 1; attempt <= 5; attempt++) {
             int hostPort = 20000 + ThreadLocalRandom.current().nextInt(10000);
+            int internalHostPort = hostPort + 10000;
             GenericContainer<?> c = new GenericContainer<>(DockerImageName.parse("emqx/emqx:5.10.5"))
-                    .withExposedPorts(EMQX_MQTT_PORT)
+                    .withExposedPorts(EMQX_MQTT_PORT, EMQX_INTERNAL_PORT)
                     .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig().withPortBindings(
-                            new PortBinding(Ports.Binding.bindPort(hostPort), new ExposedPort(EMQX_MQTT_PORT))))
+                            new PortBinding(Ports.Binding.bindPort(hostPort), new ExposedPort(EMQX_MQTT_PORT)),
+                            new PortBinding(Ports.Binding.bindPort(internalHostPort), new ExposedPort(EMQX_INTERNAL_PORT))))
                     .withCopyToContainer(Transferable.of(hocon.getBytes(StandardCharsets.UTF_8)),
                             "/opt/emqx/etc/base.hocon")
                     .withCopyToContainer(Transferable.of(acl), "/opt/emqx/etc/conduit-acl.conf")
@@ -197,6 +203,9 @@ final class E2eEnvironment implements AutoCloseable {
                     .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
                     .withEnv("EMQX_MQTT__MAX_INFLIGHT", "512")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
+                    // transport 专用 zone：与部署编排默认值一致（信箱 20 万、会话队列 10 万）
+                    .withEnv("EMQX_ZONES__TRANSPORT__FORCE_SHUTDOWN__MAX_MAILBOX_SIZE", "200000")
+                    .withEnv("EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN", "100000")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")
                     .withEnv("EMQX_DASHBOARD__DEFAULT_PASSWORD", hex(16))
@@ -205,6 +214,7 @@ final class E2eEnvironment implements AutoCloseable {
             try {
                 c.start();
                 emqxPort = hostPort;
+                emqxInternalPort = internalHostPort;
                 containers.add(c);
                 log.info("EMQX is running on {}:{} with in-memory persistent sessions", c.getHost(), hostPort);
                 return c;

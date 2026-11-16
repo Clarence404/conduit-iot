@@ -28,16 +28,20 @@ public class MqttAuthController {
     /**
      * 处理一次设备/transport 的连接鉴权。先以常量时间比较内部 token（缺失或不匹配抛 401，且未配置 token 时一律拒绝），
      * 再交给 {@link MqttAuthService} 判定；允许时返回 is_superuser，供 EMQX 对 transport 放开 ACL。
+     * 请求头 {@code X-Conduit-Listener: internal} 表示连接来自只供 transport 使用的内部监听器。
      */
     @PostMapping("/internal/mqtt/auth")
     public Map<String, Object> authenticate(
             @RequestHeader(value = "X-Conduit-Internal-Token", required = false) String token,
+            @RequestHeader(value = "X-Conduit-Listener", required = false) String listener,
             @RequestBody MqttAuthRequest request) {
         if (token == null || props.token() == null || props.token().isBlank()
                 || !MqttAuthService.constantEquals(token, props.token())) {
             throw ApiException.unauthorized("invalid internal token");
         }
-        Decision decision = service.authenticate(request.clientid(), request.username(), request.password());
+        // 内部监听器（tcp:internal）的鉴权链在回调中带 X-Conduit-Listener: internal，只许 transport 连接
+        boolean internal = "internal".equals(listener);
+        Decision decision = service.authenticate(request.clientid(), request.username(), request.password(), internal);
         if (!decision.allow()) {
             return Map.of("result", "deny");
         }

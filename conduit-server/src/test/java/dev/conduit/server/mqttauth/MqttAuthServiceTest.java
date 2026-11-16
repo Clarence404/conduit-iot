@@ -61,7 +61,21 @@ class MqttAuthServiceTest {
 
     @Test
     void 启动即注册全部原因的序列使从未发生的原因显示为0而不是无数据() {
-        assertThat(reg.find("conduit.mqtt.auth").counters()).hasSize(9);
+        assertThat(reg.find("conduit.mqtt.auth").counters()).hasSize(10);
         assertThat(count("deny", "wrong_secret")).isZero();
+    }
+
+    @Test
+    void 内部监听器只许transport连接() {
+        device("d1", "ENABLED", "ACTIVE");
+
+        assertThat(service.authenticate("conduit-transport-3", "transport", "tp", true))
+                .isEqualTo(new MqttAuthService.Decision(true, true));
+        assertThat(service.authenticate("d1", "d1", "s3cret", true).allow()).isFalse();
+        assertThat(service.authenticate("d1", "d1", "s3cret", false).allow()).isTrue();
+
+        assertThat(count("allow", "transport")).isEqualTo(1);
+        assertThat(count("deny", "device_on_internal_listener")).isEqualTo(1);
+        assertThat(count("allow", "device")).isEqualTo(1);
     }
 }

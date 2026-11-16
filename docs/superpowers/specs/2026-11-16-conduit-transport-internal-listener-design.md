@@ -1,6 +1,6 @@
 # transport 独立内部监听器与 zone 设计（2026-11-16）
 
-- 状态：所有者已确定方向（根治断网补传丢数），参数取方案 B，内部监听器只许 transport 连接。
+- 状态：已实施并验收（2026-11-16）。所有者确定方向（根治断网补传丢数），参数取方案 B，内部监听器只许 transport 连接。验收：断网补传守恒、零强杀，见 [`2026-11-16-transport-internal-listener.md`](../../test-reports/2026-11-16-transport-internal-listener.md)。
 - 起因：[`2026-11-16-connect-storm-outage-replay.md`](../../test-reports/2026-11-16-connect-storm-outage-replay.md)。2.5 万台设备断网 5 分钟后同时补传，补传洪峰让 transport 订阅连接的 EMQX 进程信箱超过 10,000 条，连接被 `force_shutdown` 强杀，内存会话随之销毁，少了 25 万条。
 
 ## 1. 目标与不做的事

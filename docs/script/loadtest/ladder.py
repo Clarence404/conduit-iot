@@ -119,9 +119,25 @@ def steps_of(a):
     return [(int(x), a.rate) for x in a.plan.split(',')]
 
 
+def parse_outage(text):
+    """--outage 开始秒:时长秒:设备占比，如 120:300:0.5 → (120.0, 300.0, 0.5)；未给出返回 None。"""
+    if not text:
+        return None
+    try:
+        at, dur, frac = (float(x) for x in text.split(':'))
+    except ValueError:
+        raise SystemExit(f'--outage {text} 不合法：应为 开始秒:时长秒:设备占比，如 120:300:0.5')
+    if at < 0 or dur <= 0 or not 0 < frac <= 1:
+        raise SystemExit(f'--outage {text} 不合法：开始秒 ≥ 0、时长 > 0、占比在 (0, 1]')
+    return at, dur, frac
+
+
 def cmd_run(a):
     steps = steps_of(a)
     mix = loadgen.parse_mix(a.mix) if a.mix else None
+    outage = parse_outage(a.outage)
+    if outage and outage[0] + outage[1] >= a.hold:
+        raise SystemExit('--outage 须在稳态内结束：开始秒 + 时长 < --hold，留出补传时间')
     i, n = parse_shard(a.shard)
     max_dev = max(d for d, _ in steps)
     block = math.ceil(max_dev / n)        # 每台发压机独占 devices.json 中的一段，互不重叠
@@ -156,7 +172,8 @@ def cmd_run(a):
         sampler = start_host_sampler(perf)
         r = loadgen.execute(mine, rate, a.hold, fleet=True, connect_rate=a.connect_rate,
                             connect_timeout=120, offset=offset, per_process=per_process, quiet=True,
-                            points=a.points, mix=mix, id_ratio=a.id_ratio)
+                            points=a.points, mix=mix, id_ratio=a.id_ratio,
+                            connect_retries=a.connect_retries, outage=outage, replay_rate=a.replay_rate)
         r.update(stop_host_sampler(sampler, perf))
         r.update({'step_target': target, 'step_total': total, 'shard': f'{i}/{n}', 'host': host,
                   'rate_per_device': rate, 'hold': a.hold, 'id_ratio': a.id_ratio})
@@ -168,6 +185,15 @@ def cmd_run(a):
               f'峰值 {r.get("host_cpu_max", "-")}%（其中 VMware {r.get("host_vm_cpu_avg", "-")}%）'
               + (f'，可靠上报回执 {r.get("acks", 0):,} / 带 id 发出 {r.get("id_sent", 0):,}' if r.get('id_sent') else '')
               + f' → {f.name}')
+        if r.get('connack_ms'):
+            c = r['connack_ms']
+            print(f'  建连 {r["conns"]:,} 台用时 {r["connect_seconds"]:.0f} 秒，CONNACK p50 {c["p50"]} / p99 {c["p99"]} / '
+                  f'最长 {c["max"]} ms，退避重连 {r.get("retry_rounds", 0)} 轮')
+        if r.get('outage'):
+            rc, rp = r.get('reconnack_ms') or {}, r.get('replay_s') or {}
+            print(f'  断网 {r["outage_devices"]:,} 台，本地积压 {r["outage_buffered"]:,} 条；重连 {r["recon_tries"]:,} 次，'
+                  f'CONNACK p99 {rc.get("p99", "-")} ms；补完积压 p50 {rp.get("p50", "-")} / 最长 {rp.get("max", "-")} 秒；'
+                  f'未补完 {r["replay_unfinished"]:,} 条，未连回 {r["outage_not_back"]} 台')
         if n == 1 and not a.no_check:
             time.sleep(DRAIN)
             verdicts = check([out], only=target, p99_limit=a.p99_limit)
@@ -242,6 +268,22 @@ def check(dirs, only=None, p99_limit=1000.0):
                                                     t_start, c, until=after)
             v['emqx_alarms'] = remote.emqx_log_count('alarm_is_activated', t_start, c, until=after)
             v['auth_req_failed'] = remote.emqx_log_count('http_connector_do_request_failed', t_start, c, until=after)
+            # 鉴权回调按结论与原因的计数增量（集中上线、断网重连时看鉴权有没有被冲垮）
+            auth = remote.prom_vector('sum by (result, reason) (conduit_mqtt_auth_total)', c, at=after) or {}
+            auth0 = remote.prom_vector('sum by (result, reason) (conduit_mqtt_auth_total)', c, at=t_start - 5) or {}
+            v['auth'] = {k: round(n - auth0.get(k, 0)) for k, n in auth.items() if round(n - auth0.get(k, 0))}
+            # 集中上线与断网补传的发压端结果（多机时取最差值或合计）
+            v['connack_p99'] = max(((r.get('connack_ms') or {}).get('p99') or 0) for r in rs) or None
+            v['connack_max'] = max(((r.get('connack_ms') or {}).get('max') or 0) for r in rs) or None
+            v['connect_seconds'] = max(r.get('connect_seconds', 0) for r in rs)
+            v['outage'] = rs[0].get('outage')
+            v['outage_devices'] = sum(r.get('outage_devices', 0) for r in rs)
+            v['outage_buffered'] = sum(r.get('outage_buffered', 0) for r in rs)
+            v['reconnack_p99'] = max(((r.get('reconnack_ms') or {}).get('p99') or 0) for r in rs) or None
+            v['recon_tries'] = sum(r.get('recon_tries', 0) for r in rs)
+            v['replay_max_s'] = max(((r.get('replay_s') or {}).get('max') or 0) for r in rs) or None
+            v['replay_unfinished'] = sum(r.get('replay_unfinished', 0) for r in rs)
+            v['outage_not_back'] = sum(r.get('outage_not_back', 0) for r in rs)
             limit = rate * 5
             reasons = []
             if v['rejected']:
@@ -252,6 +294,8 @@ def check(dirs, only=None, p99_limit=1000.0):
                 reasons.append(f'丢弃 {v["dropped"]:.0f} / 死信 {v["dead"]:.0f}')
             if v['disconnects']:
                 reasons.append(f'{v["disconnects"]} 台运行中掉线')
+            if v['outage_not_back'] or v['replay_unfinished']:
+                reasons.append(f'断网后 {v["outage_not_back"]} 台未连回、{v["replay_unfinished"]:,} 条未补完')
             if v['p99_ms'] > p99_limit:
                 reasons.append(f'p99 {v["p99_ms"]:.0f} ms > {p99_limit:.0f}')
             if (v['backlog_end'] or 0) > limit or (v['mqueue_end'] or 0) > limit:
@@ -284,6 +328,14 @@ def print_table(verdicts, md_path, append=False):
              f'{fmt(v["host_cpu_avg"])} / {fmt(v["host_cpu_max"])}（{fmt(v["host_vm_cpu_avg"])}） | '
              f'{"；".join(v["reasons"]) or "-"} |'
              for v in verdicts]
+    for v in verdicts:
+        if v.get('connack_p99') is not None:
+            lines.append(f'| ↳ 建连 | | | {v["devices"]:,} 台用时 {v["connect_seconds"]:.0f} 秒 | CONNACK p99 {v["connack_p99"]} ms、'
+                         f'最长 {v["connack_max"]} ms | | | | | | | | | 鉴权 {v.get("auth") or "-"} |')
+        if v.get('outage'):
+            lines.append(f'| ↳ 断网补传 | | | 断网 {v["outage_devices"]:,} 台、积压 {v["outage_buffered"]:,} 条 | '
+                         f'重连 {v["recon_tries"]:,} 次、CONNACK p99 {v["reconnack_p99"]} ms | 补完最长 {v["replay_max_s"]} 秒 | '
+                         f'| | | | | | | 未补完 {v["replay_unfinished"]:,} 条、未连回 {v["outage_not_back"]} 台 |')
     text = '\n'.join(lines)
     print('\n' + head + '\n' + text)
     if append and md_path.exists():
@@ -304,7 +356,10 @@ def main():
     r.add_argument('--hold', type=int, default=300, help='每档建连后的稳态秒数')
     r.add_argument('--gap', type=int, default=60, help='档与档之间的间隔秒数（排空与判定）')
     r.add_argument('--connect-budget', type=int, default=120, help='多机模式下为建连预留的秒数（决定换档节奏）')
-    r.add_argument('--connect-rate', type=float, default=200.0, help='每个发压进程每秒建连数')
+    r.add_argument('--connect-rate', type=float, default=200.0, help='每个发压进程每秒建连数；0 为不限速（集中上线）')
+    r.add_argument('--connect-retries', type=int, default=1, help='被拒或超时的设备退避重连的最多轮数（2、4、8… 秒）')
+    r.add_argument('--outage', help='断网补传：开始秒:时长秒:设备占比，如 120:300:0.5（稳态开始后计时）')
+    r.add_argument('--replay-rate', type=float, default=5.0, help='断网恢复后每台设备补传积压的条数/秒')
     r.add_argument('--per-process', type=int, default=0, help='每个发压进程负责的设备数；0 为按 --msgs-per-process 自动')
     r.add_argument('--shard', help='多机分担时本机是第几台/共几台，如 2/3')
     r.add_argument('--start-at', help='多机约定的开始时刻 HH:MM[:SS] 或 epoch 秒')

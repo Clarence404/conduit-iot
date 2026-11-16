@@ -396,7 +396,8 @@ def _worker(devices, host, port, rate, seconds, out):
              'rejected': rejected, 'reasons': sorted(set(refused.values()))})
 
 
-def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_timeout, out, profile=None, points=3):
+def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_timeout, out, profile=None, points=3,
+                  connect_retries=1, outage=None, replay_rate=5.0):
     """海量低频设备的发压进程：单个事件循环驱动数千条连接，不为每条连接开线程。
 
     _worker 给每条连接 loop_start()，每个客户端一个线程外加一对唤醒用的回环套接字（Windows 上
@@ -408,11 +409,23 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     points 为每条报文的测点数（取测点表前 points 个）。
     设备带 'platform': 'thingsboard' 时按 ThingsBoard 的约定发压（对照压测用）：MQTT 3.1.1，用户名为访问令牌，
     主题 v1/devices/me/telemetry，报文 {"ts", "values"}；ThingsBoard 没有业务回执，忽略 id。
+
+    集中上线：connect_rate 为本进程每秒建连数（≤0 表示不限速，能多快就多快），逐台记录 connect() 到 CONNACK 的时延；
+    被拒或超时的设备按 2、4、8… 秒退避重连，最多 connect_retries 轮。
+    断网补传：outage=(开始秒, 时长秒, 设备占比)。稳态开始后第「开始秒」把该占比的设备断开（先停发、等在途确认收完再断，
+    避免「已发未确认」的条目让 PUBACK 与入库行数对不上）；断网期间照常按画像生成报文、原样（含原始 ts 与 id）存在本地，
+    像真实设备持久化的待发队列。断网结束时这些设备同时重连，连上后先按每台 replay_rate 条/秒补传积压，
+    补传期间新产生的报文排在积压之后，补完转为正常上报。稳态结束时仍未补完的会继续补，最多再等 900 秒。
     """
     import heapq
     import select
+    from collections import deque
     sent = acked = errors = 0
     lat, pending, accepted, refused = [], {}, set(), {}
+    conn_lat, recon_lat = [], []      # connect() 到 CONNACK 的秒数：首次上线、断网后重连
+    t_call, connack_at = {}, {}       # id(client) → 最近一次发起连接 / 最近一次成功 CONNACK 的时刻
+    pend_cnt = {}                     # id(client) → 在途未确认条数（断网前要等它归零）
+    quiet = set()                     # 计划内断网 / 重连中的连接：其断开不算运行中掉线
     # 运行中掉线的设备（按设备去重；收尾时主动断开的不算）
     dropped, closing = set(), False
 
@@ -424,6 +437,11 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         code = getattr(reason, 'value', reason)
         if code == 0:
             accepted.add(id(client))
+            now = time.time()
+            connack_at[id(client)] = now
+            t = t_call.get(id(client))
+            if t is not None:
+                (recon_lat if id(client) in quiet else conn_lat).append(now - t)
             t = ack_topic.get(id(client))
             if t:
                 client.subscribe(t, qos=0)
@@ -437,7 +455,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     disc_reasons, disc_times = {}, []
 
     def on_disc(client, userdata=None, flags=None, reason=None, *a):
-        if not closing and id(client) in accepted:
+        if not closing and id(client) in accepted and id(client) not in quiet:
             dropped.add(id(client))
             key = str(reason)
             disc_reasons[key] = disc_reasons.get(key, 0) + 1
@@ -449,6 +467,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         if t is not None:
             acked += 1
             _sample(lat, acked, (time.time() - t) * 1000)
+            pend_cnt[id(client)] = pend_cnt.get(id(client), 1) - 1
 
     opened = []
 
@@ -487,12 +506,16 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             ack_topic[id(cl)] = f'conduit/{d["productKey"]}/{d["deviceKey"]}/down/ack'
             cl.on_message = on_msg
         try:
+            t_call[id(cl)] = time.time()
             cl.connect(host, port, keepalive=60)
             opened.append((cl, d))
         except Exception:
             errors += 1
-        lag = t_start + (n + 1) / connect_rate - time.time()
-        pump(max(0.0, lag))
+        if connect_rate > 0:
+            lag = t_start + (n + 1) / connect_rate - time.time()
+            pump(max(0.0, lag))
+        elif n % 50 == 49:
+            pump(0)      # 不限速时也要定期读 CONNACK，否则接收缓冲堆满
     deadline_conn = time.time() + connect_timeout
     last_misc = 0.0
     while time.time() < deadline_conn and len(accepted) + len(refused) < len(opened):
@@ -501,24 +524,30 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             for cl, _ in opened:
                 cl.loop_misc()
             last_misc = time.time()
-    # 首次被拒的设备像真实设备一样 2 秒后重连一次：EMQX 到 server 的鉴权长连接偶发「半开」，请求超时、
-    # 被判未授权，约 10 秒后 EMQX 自行重建连接（2026-10-30 实测，原因未查明）。首次被拒数照实上报。
+    # 被拒或超时的设备像真实设备一样退避重连（2、4、8… 秒），最多 connect_retries 轮。首次被拒数照实上报。
     retry = [(cl, d) for cl, d in opened if id(cl) not in accepted]
-    if retry:
-        time.sleep(2)
-        for cl, _ in retry:
+    retry_rounds = 0
+    left = retry
+    while left and retry_rounds < connect_retries:
+        wait_until = time.time() + 2 * 2 ** retry_rounds
+        while time.time() < wait_until:
+            pump(0.05)
+        retry_rounds += 1
+        for cl, _ in left:
             refused.pop(id(cl), None)
             try:
+                t_call[id(cl)] = time.time()
                 cl.reconnect()
             except Exception:
                 pass
         deadline_conn = time.time() + connect_timeout
-        while time.time() < deadline_conn and any(id(cl) not in accepted and id(cl) not in refused for cl, _ in retry):
+        while time.time() < deadline_conn and any(id(cl) not in accepted and id(cl) not in refused for cl, _ in left):
             pump(0.05)
             if time.time() - last_misc > 1:
                 for cl, _ in opened:
                     cl.loop_misc()
                 last_misc = time.time()
+        left = [(cl, d) for cl, d in left if id(cl) not in accepted]
     clients = [(cl, d) for cl, d in opened if id(cl) in accepted]
     rejected = [d['deviceKey'] for cl, d in opened if id(cl) not in accepted]
     connect_seconds = time.time() - t_start
@@ -534,10 +563,26 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     heap = [(t0 + random.random() * intervals[i], i) for i in range(len(clients))]
     heapq.heapify(heap)
     deadline = t0 + seconds
+    for cl, _ in clients:
+        pend_cnt[id(cl)] = 0
+    # 断网补传的状态：0 在线，1 停发等在途确认，2 已断开，3 重连中，4 补传中
+    state = [0] * len(clients)
+    buf = [deque() for _ in clients]
+    out_set, t_out, t_back = [], None, None
+    if outage:
+        at, dur, frac = outage
+        out_set = sorted(random.Random(len(clients) * 7919 + int(at)).sample(range(len(clients)),
+                                                                             int(round(frac * len(clients)))))
+        t_out, t_back = t0 + at, t0 + at + dur
+    stage = 0                     # 0 未开始，1 断网中，2 已恢复
+    buffered = recon_tries = 0
+    allowance = [0.0] * len(clients)
+    replay_done = []              # 每台补完积压距恢复时刻的秒数
+    last_replay = t0
     # 本进程事件循环的停顿：两次循环之间隔太久说明发压端自己卡住（不读连接时 PUBACK 堆在套接字里，
     # EMQX 发不出去，send_timeout 到期就会主动断开这条连接）
     prev_iter, max_gap, max_gap_at, gaps_over_1s = t0, 0.0, None, 0
-    while time.time() < deadline:
+    while time.time() < deadline or (stage and any(state) and time.time() < deadline + 900):
         now = time.time()
         gap = now - prev_iter
         prev_iter = now
@@ -545,7 +590,78 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             max_gap, max_gap_at = gap, now
         if gap > 1:
             gaps_over_1s += 1
-        while heap and heap[0][0] <= now:
+        if outage and stage == 0 and now >= t_out:
+            stage = 1
+            for i in out_set:
+                state[i] = 1
+        if stage == 1:
+            for i in out_set:
+                cl = clients[i][0]
+                if state[i] == 1 and (pend_cnt[id(cl)] <= 0 or now - t_out > 10):
+                    quiet.add(id(cl))
+                    state[i] = 2
+                    try:
+                        cl.disconnect()
+                    except Exception:
+                        pass
+            if now >= t_back:
+                # 网络恢复：断开的设备同时开始重连。connect() 是阻塞调用，2,500 台接连调用会让本进程 20～40 秒
+                # 不读套接字（2026-11-16 实测），所以按 connect_rate 匀速发起，每发起 50 台读一次；
+                # connect_rate ≤ 0 时不限速，但同样每 50 台读一次
+                stage = 2
+                last_replay = now
+                for k, i in enumerate(out_set):
+                    cl = clients[i][0]
+                    if state[i] == 1:  # 在途确认一直没收完、没断成的，直接转补传
+                        state[i] = 4
+                        continue
+                    state[i] = 3
+                    t_call[id(cl)] = time.time()
+                    try:
+                        cl.reconnect()
+                    except Exception:
+                        pass
+                    recon_tries += 1
+                    if connect_rate > 0:
+                        pump(max(0.0, t_back + (k + 1) / connect_rate - time.time()))
+                    elif k % 50 == 49:
+                        pump(0)
+                pump(0)
+                prev_iter = time.time()   # 重连期间一直在读套接字，不算事件循环停顿
+        if stage == 2:
+            dt, last_replay = now - last_replay, now
+            for i in out_set:
+                cl = clients[i][0]
+                if state[i] == 3:
+                    if connack_at.get(id(cl), 0) >= t_call[id(cl)]:
+                        state[i] = 4
+                    elif now - t_call[id(cl)] > 15:          # 15 秒没连上（被拒或超时）就再重连
+                        t_call[id(cl)] = now
+                        try:
+                            cl.reconnect()
+                        except Exception:
+                            pass
+                        recon_tries += 1
+                elif state[i] == 4:
+                    quiet.discard(id(cl))
+                    allowance[i] = min(allowance[i] + dt * replay_rate, max(1.0, replay_rate))
+                    while buf[i] and allowance[i] >= 1:
+                        allowance[i] -= 1
+                        topic, payload = buf[i].popleft()
+                        try:
+                            info = cl.publish(topic, payload, qos=1)
+                            if info.rc == 0:
+                                pending[(id(cl), info.mid)] = time.time()
+                                pend_cnt[id(cl)] += 1
+                                sent += 1
+                            else:
+                                errors += 1
+                        except Exception:
+                            errors += 1
+                    if not buf[i]:
+                        state[i] = 0
+                        replay_done.append(now - t_back)
+        while now < deadline and heap and heap[0][0] <= now:
             due, i = heapq.heappop(heap)
             heapq.heappush(heap, (due + intervals[i], i))
             cl, d = clients[i]
@@ -561,19 +677,28 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
                 seq[i] += 1
                 msg = {'id': f'{d["deviceKey"]}-{int(t0)}-{seq[i]}', **msg}
             payload = json.dumps(msg)
+            if state[i]:
+                # 断网中或补传中：存进本地待发队列，补传时原样发出（ts 与 id 不变）
+                buf[i].append((topic, payload))
+                buffered += 1
+                continue
             try:
                 info = cl.publish(topic, payload, qos=1)
                 if info.rc == 0:
                     pending[(id(cl), info.mid)] = time.time()
+                    pend_cnt[id(cl)] += 1
                     sent += 1
                 else:
                     errors += 1
             except Exception:
                 errors += 1
-        pump(min(0.05, max(0.0, heap[0][0] - time.time())) if heap else 0.05)
+        busy = stage == 2 and any(x == 4 for x in state)
+        pump(0.01 if busy or now >= deadline else
+             (min(0.05, max(0.0, heap[0][0] - time.time())) if heap else 0.05))
         if now - last_misc > 1:
-            for cl, _ in clients:
-                cl.loop_misc()   # 保活心跳与超时检测；掉线经 on_disconnect 记入 dropped
+            for k, (cl, _) in enumerate(clients):
+                if state[k] not in (2, 3):
+                    cl.loop_misc()   # 保活心跳与超时检测；掉线经 on_disconnect 记入 dropped
             last_misc = now
     t_load_end = time.time()
     cpu_busy = (time.process_time() - cpu0) / max(1e-6, t_load_end - t0)
@@ -593,17 +718,24 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
              't_connected': t0, 't_load_end': t_load_end, 'cpu_busy': cpu_busy,
              'disc_reasons': disc_reasons, 'disc_first': min(disc_times) if disc_times else None,
              'disc_last': max(disc_times) if disc_times else None,
-             'max_loop_gap_s': round(max_gap, 3), 'max_loop_gap_at': max_gap_at, 'loop_gaps_over_1s': gaps_over_1s})
+             'max_loop_gap_s': round(max_gap, 3), 'max_loop_gap_at': max_gap_at, 'loop_gaps_over_1s': gaps_over_1s,
+             'conn_lat': conn_lat, 'retry_rounds': retry_rounds,
+             'outage_devices': len(out_set), 'outage_buffered': buffered, 'recon_lat': recon_lat,
+             'recon_tries': recon_tries, 'replay_done': replay_done,
+             'replay_unfinished': sum(len(b) for b in buf), 'outage_not_back': sum(1 for x in state if x in (2, 3)),
+             't_outage': t_out, 't_back': t_back})
 
 
 def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, connect_timeout=120,
-            offset=0, per_process=2500, quiet=False, points=3, mix=None, id_ratio=0.0):
+            offset=0, per_process=2500, quiet=False, points=3, mix=None, id_ratio=0.0,
+            connect_retries=1, outage=None, replay_rate=5.0):
     """多进程发压并返回汇总结果（不打印结论、不退出），供 run() 与 ladder.py 调用。
 
     使用 devices.json 中 [offset, offset+count) 这一段设备——多台发压机各取不相交的一段，同一台设备不会被两处同时登录。
     workers 默认取 CPU 核数；fleet 模式默认每 per_process 台一个进程（每台每秒 1 条时宜取 1,000，单进程才跟得上）。
     fleet=True 用单事件循环的 _fleet_worker，适合海量设备；connect_rate 为每个进程每秒新建连接数。
     points / mix / id_ratio 为设备画像（只在 fleet 下生效）：给出 mix 时 rate 被忽略，返回值的 rate 为画像的平均每台速率。
+    connect_retries / outage / replay_rate 为集中上线与断网补传（只在 fleet 下生效），含义见 _fleet_worker。
 
     :return: dict，含 sent / acked / errors / conns / rejected / disconnects / 时延分位（毫秒）/ 起止时间（epoch 秒）
     """
@@ -629,7 +761,8 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
     port = int(os.environ.get('LOADGEN_MQTT_PORT') or cfg['mqtt_port'])
     if fleet:
         procs = [mp.Process(target=_fleet_worker,
-                            args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out, pc, points),
+                            args=(ch, host, port, rate, seconds, connect_rate, connect_timeout, out, pc, points,
+                                  connect_retries, outage, replay_rate),
                             daemon=True) for ch, pc in zip(chunks, prof_chunks) if ch]
     else:
         procs = [mp.Process(target=_worker, args=(ch, host, port, rate, seconds, out), daemon=True)
@@ -647,6 +780,14 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
     t_end = time.time()
     lat = sorted(x for r in res for x in r['lat'])
     qt = lambda f: round(lat[min(len(lat) - 1, int(len(lat) * f))], 1) if lat else None
+
+    def pct(key, scale=1000.0):
+        """把各进程的样本合并后取 p50 / p99 / max（默认秒 → 毫秒）。"""
+        v = sorted(x for r in res for x in r.get(key, []))
+        if not v:
+            return None
+        q = lambda f: round(v[min(len(v) - 1, int(len(v) * f))] * scale, 1)
+        return {'n': len(v), 'p50': q(.5), 'p99': q(.99), 'max': round(v[-1] * scale, 1)}
     return {
         'devices': len(devices), 'offset': offset, 'rate': rate, 'seconds': seconds, 'processes': len(procs),
         # 设备画像：每条测点数、混合上报间隔、带 id 的设备数
@@ -676,6 +817,18 @@ def execute(count, rate, seconds, workers=0, fleet=False, connect_rate=200.0, co
                           if any('cpu_busy' in r for r in res) else None,
         'p50_ms': qt(.5), 'p95_ms': qt(.95), 'p99_ms': qt(.99), 'max_ms': round(lat[-1], 1) if lat else None,
         't_start': t0, 't_end': t_end,
+        # 集中上线：connect() 到 CONNACK 的毫秒分位，以及退避重连用了几轮
+        'connack_ms': pct('conn_lat'), 'retry_rounds': max((r.get('retry_rounds', 0) for r in res), default=0),
+        # 断网补传：断网台数、断网期间本地积压条数、重连 CONNACK 分位、重连次数、补完积压用时（秒）、未补完 / 未连回
+        'outage': outage, 'replay_rate': replay_rate if outage else None,
+        'outage_devices': sum(r.get('outage_devices', 0) for r in res),
+        'outage_buffered': sum(r.get('outage_buffered', 0) for r in res),
+        'reconnack_ms': pct('recon_lat'), 'recon_tries': sum(r.get('recon_tries', 0) for r in res),
+        'replay_s': pct('replay_done', 1.0),
+        'replay_unfinished': sum(r.get('replay_unfinished', 0) for r in res),
+        'outage_not_back': sum(r.get('outage_not_back', 0) for r in res),
+        't_outage': min((r['t_outage'] for r in res if r.get('t_outage')), default=None),
+        't_back': max((r['t_back'] for r in res if r.get('t_back')), default=None),
         # 全部进程都建连完成、开始发压的时刻，与最后一个进程停止发压的时刻：判定时只看这段稳态
         't_load_start': max((r.get('t_connected', t0) for r in res), default=t0),
         't_load_end': max((r.get('t_load_end', t_end) for r in res), default=t_end),

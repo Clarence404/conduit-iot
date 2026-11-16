@@ -81,6 +81,23 @@ def prom(expr, c=None, at=None):
         return None
 
 
+def prom_vector(expr, c=None, at=None):
+    """查 Prometheus 的瞬时向量，返回 {"标签值/标签值": 数值}（键按标签名排序后用 / 连接）；失败返回 None。"""
+    enc = urllib.parse.quote(expr, safe='')
+    if at is not None:
+        enc += '&time={:.3f}'.format(at)
+    rc, o = run(f"docker exec conduit-prometheus wget -qO- --post-data='query={enc}' "
+                f"'http://localhost:9090/api/v1/query' 2>/dev/null", timeout=200, c=c)
+    try:
+        d = json.loads(o.strip())
+        if d.get('status') != 'success':
+            return None
+        return {'/'.join(x['metric'][k] for k in sorted(x['metric'])): float(x['value'][1])
+                for x in d['data']['result'] if x['value'][1] != 'NaN'}
+    except Exception:
+        return None
+
+
 def influx_rows(product_key, start_ms, end_ms, c=None):
     """问 InfluxDB：[start_ms, end_ms) 内该产品实际写进了多少行（守恒判据的「真值」）；查询失败返回 None。
 

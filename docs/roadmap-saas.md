@@ -192,3 +192,10 @@ Conduit 的核心价值是可靠设备接入、统一物模型、实时数据处
 - [Azure IoT 多租户架构](https://learn.microsoft.com/en-us/azure/architecture/guide/multitenant/approaches/iot)：接入、处理与存储层的共享及分区选择。
 - [AWS IoT 数据管理](https://docs.aws.amazon.com/wellarchitected/latest/iot-lens/data-management.html)：时间戳与消息元数据。
 - [AWS IoT Jobs 配置](https://docs.aws.amazon.com/iot/latest/developerguide/jobs-configurations-details.html)：任务灰度、调度、中止、超时与重试。
+
+**开源平台测评（非官方资料，所有者推荐，2026-11-16 起参考）**
+
+- 微信公众号「万物联动WWLD」的「IoT Platform 1000」系列：逐个测评开源物联网平台，2026-11 开始每天一篇，从 0101 起编号。每篇按固定模板写：速览、功能、协议、架构、安装、优缺点、评分，评价落在代码层面（能否构建、硬编码、测试、架构取舍）。
+  - 示例：[0114 aiot-data](https://mp.weixin.qq.com/s/ote-3te79h40kcheei-ZFg)，讲协议插件隔离、解码脚本经 TCP 调用、规则表达式符号白名单、多时序库抽象。
+  - 适合在做协议接入（Modbus、DL/T 645 等）、解码器、V0.5 规则引擎之前，查同类开源方案的做法与坑。
+  - 用法：文章是个人测评，结论须回到源码核实后才能采用。

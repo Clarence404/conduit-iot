@@ -42,6 +42,7 @@
 | `mvn -o test`（conduit-transport） | 115 个全部通过。`MqttTransportPropertiesTest` 先失败（期望 1884，实际 1883），改默认值后通过 |
 | `mvn -B verify -pl conduit-server`（2026-11-17，129 上 Maven 容器内） | 单测 2,284 个、集成测试 280 个全部通过，含新增的「内部监听器的回调只放行 transport」 |
 | `mvn -B verify -Pe2e -pl conduit-e2e`（同上，`E2E_DEV_HOST` 为 129） | `ReliabilityE2EIT` 5 个故障场景全部通过（271.6 秒），transport 走内部监听器 |
+| 同上，新增场景 0「设备连内部监听器必须被拒」（2026-11-17） | `ReliabilityE2EIT` 6 个用例全部通过（254.4 秒）。在真实 EMQX 上验证：内部监听器的鉴权回调确实带 `X-Conduit-Listener`，设备得到 `NOT_AUTHORIZED` |
 
 JDK 用的是 `ms-21.0.8`（shell 默认的 JDK 不是 21）。
 

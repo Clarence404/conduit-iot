@@ -1,5 +1,9 @@
 package dev.conduit.e2e;
 
+import com.hivemq.client.mqtt.MqttClient;
+import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
+import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5ConnAckException;
+import com.hivemq.client.mqtt.mqtt5.message.connect.connack.Mqtt5ConnAckReasonCode;
 import dev.conduit.simulator.ConduitApiClient;
 import dev.conduit.simulator.DeviceCredentials;
 import org.junit.jupiter.api.AfterAll;
@@ -13,6 +17,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,12 +25,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 /**
  * V0.2-R 可靠性端到端测试（spec 第 4 节）：在独立临时环境中，10 台设备 × 50 条 QoS1 上报的发送中途分别
  * ①强制结束 server 数秒后重启；②强制结束主 transport；③两个 transport 都结束、设备继续上报约 20 秒后重启；④重启 EMQX 容器（带 id 的可靠设备，靠设备重发不丢）；
  * ⑤可靠上报期间强杀 EMQX 后原地启动。
+ * 另有场景 0：设备凭据连只供 transport 使用的内部监听器必须被拒（验证 EMQX 回调确实带上 X-Conduit-Listener）。
  * 每个场景断言：InfluxDB 中该产品恰好 500 条、死信流中没有该产品、消费组 conduit-server 没有待确认消息；结束时删除所建产品与设备。
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -61,6 +68,40 @@ class ReliabilityE2EIT {
     @BeforeEach
     void everyProcessIsRunning() throws Exception {
         env.ensureRunning();
+    }
+
+    /**
+     * 场景 0：同一台设备连设备监听器成功、连内部监听器被拒（NOT_AUTHORIZED）。
+     * MqttAuthIT 只验证了 server 见到请求头后会拒绝；这里在真实 EMQX 上验证内部监听器的鉴权链确实带上了该请求头，
+     * 防止模板改动漏掉它而让设备进入信箱与队列放宽的 transport zone。
+     */
+    @Test
+    @Order(0)
+    void devicesAreRejectedOnTheInternalListener() throws Exception {
+        try (ConduitApiClient api = env.api()) {
+            String productKey = api.findOrCreateProduct("e2e 内部监听器隔离 电表", "standard-json");
+            try {
+                DeviceCredentials d = api.createDevice(productKey, "e2e 内部监听器隔离 电表01");
+                Mqtt5BlockingClient onDevicePort = deviceClient(d, env.mqttPort());
+                onDevicePort.connect();
+                onDevicePort.disconnect();
+
+                assertThatThrownBy(() -> deviceClient(d, env.mqttInternalPort()).connect())
+                        .isInstanceOfSatisfying(Mqtt5ConnAckException.class, e -> assertThat(
+                                e.getMqttMessage().getReasonCode()).isEqualTo(Mqtt5ConnAckReasonCode.NOT_AUTHORIZED));
+            } finally {
+                cleanUp(api, productKey);
+            }
+        }
+    }
+
+    /** 用设备自己的凭据（clientId = 用户名 = deviceKey）建一个连指定端口的阻塞客户端。 */
+    private Mqtt5BlockingClient deviceClient(DeviceCredentials d, int port) {
+        return MqttClient.builder().useMqttVersion5().identifier(d.deviceKey())
+                .serverHost(env.mqttHost()).serverPort(port)
+                .simpleAuth().username(d.deviceKey()).password(d.secret().getBytes(StandardCharsets.UTF_8))
+                .applySimpleAuth()
+                .buildBlocking();
     }
 
     /** 场景 1：发送中途强制结束 server，3 秒后重启，数据一条不丢。 */

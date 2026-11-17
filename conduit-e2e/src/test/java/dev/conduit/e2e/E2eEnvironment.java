@@ -248,6 +248,11 @@ final class E2eEnvironment implements AutoCloseable {
         return emqxPort;
     }
 
+    /** 只供 transport 使用的内部监听器（tcp:internal）在宿主机上的端口；设备连上来应被鉴权拒绝。 */
+    int mqttInternalPort() {
+        return emqxInternalPort;
+    }
+
     /** 启动（或重启）server 并等到 readiness 为 UP，最多 3 分钟；进程提前退出时报错并指明日志。 */
     void startServer() throws IOException {
         server.start();

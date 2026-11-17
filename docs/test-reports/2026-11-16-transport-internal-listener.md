@@ -40,10 +40,15 @@
 |---|---|
 | `mvn -o test -Dtest='MqttAuthServiceTest,MqttAuthPropertiesTest'`（conduit-server） | 6 个全部通过。新用例先编译失败（缺少四参数 `authenticate`），实现后通过 |
 | `mvn -o test`（conduit-transport） | 115 个全部通过。`MqttTransportPropertiesTest` 先失败（期望 1884，实际 1883），改默认值后通过 |
-| `mvn -o -Pe2e -pl conduit-e2e test-compile` | 编译通过，**未运行** |
-| `MqttAuthIT`（含新增的「内部监听器只放行 transport」用例） | **阻塞，未运行**：Testcontainers 需要 Docker。本机没有 Docker；128 不能联网，拉不到 `testcontainers/ryuk`、`postgres:16.8`、`redis:7.4.2`；129 没有开放 Docker API |
+| `mvn -B verify -pl conduit-server`（2026-11-17，129 上 Maven 容器内） | 单测 2,284 个、集成测试 280 个全部通过，含新增的「内部监听器的回调只放行 transport」 |
+| `mvn -B verify -Pe2e -pl conduit-e2e`（同上，`E2E_DEV_HOST` 为 129） | `ReliabilityE2EIT` 5 个故障场景全部通过（271.6 秒），transport 走内部监听器 |
 
 JDK 用的是 `ms-21.0.8`（shell 默认的 JDK 不是 21）。
+
+**集成测试与 e2e 的运行方式**
+- 本机没有 Docker，128 不能联网，所以在 129 上用 `maven:3.9.9-eclipse-temurin-21` 容器跑：host 网络，挂载 `/var/run/docker.sock`，源码是 main HEAD 的 `git archive`。
+- 前两次全部失败，报「Could not find a valid Docker environment」。原因是 129 的 Docker 29.9.2 最低只接受 API 1.40，而 Testcontainers 1.21.3 默认用 1.32。设 `DOCKER_API_VERSION` 环境变量无效。
+- 挂载 `~/.docker-java.properties`（`api.version=1.44`）后解决。
 
 ## 3. 压测验收
 
@@ -62,8 +67,7 @@ JDK 用的是 `ms-21.0.8`（shell 默认的 JDK 不是 21）。
 
 ## 4. 跳过、阻塞与遗留
 
-- `MqttAuthIT` 与 e2e 未运行（原因见第 2 节），需要在有 Docker 且能拉镜像的机器上补跑。
-- 判据改进：`ladder.py` 统计 EMQX 丢弃时，应排除负载结束后发给已断开设备的回执，例如只统计到 `t_load_end` 之后几秒，或按主题区分上行与回执。本次没改，在报告中逐项说明。
-- 补传洪峰期间 p99 超过 1 秒，还有 1 次过载告警，是 EMQX 主机 CPU 的限制。是否把它纳入验收、是否限制设备补传节奏，待定。
-- Redis AOF 重写引起命令超时、触发 transport 主备切换（数据不丢），建议另案评估。
+- **判据改进（2026-11-17 已改）**：发压器在断网前和收尾时，先等业务回执收齐（最多 10 秒）再断开设备，与真实设备「收到回执才删待确认消息」一致，回执不再发给已断开的设备。冒烟测试：2,500 台全部断网 30 秒、每台每秒补 5 条，守恒 24,353 = 24,353，回执 10,155 / 10,155，EMQX 丢弃 0，判定合格。
+- **补传洪峰期间 p99 超过 1 秒、出现 1 次过载告警**：所有者决定不作为验收不通过，作为已知限制写进设备接入规范 4.3 节。
+- **Redis AOF 重写引起命令超时、触发 transport 主备切换（数据不丢）**：已另立项，记入 `docs/backlog-v0.2.md`。
 - 结果 JSON 在 `docs/script/loadtest/results-internal-*`，不入库。

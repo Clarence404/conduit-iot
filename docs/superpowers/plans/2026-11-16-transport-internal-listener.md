@@ -1,7 +1,7 @@
 # transport 内部监听器实施计划（2026-11-16）
 
 - spec：[`2026-11-16-conduit-transport-internal-listener-design.md`](../specs/2026-11-16-conduit-transport-internal-listener-design.md)
-- 状态：已完成（2026-11-16），验收见 [`2026-11-16-transport-internal-listener.md`](../../test-reports/2026-11-16-transport-internal-listener.md)；`MqttAuthIT` 与 e2e 因本环境无可用 Docker 未运行。
+- 状态：已完成（2026-11-16），验收见 [`2026-11-16-transport-internal-listener.md`](../../test-reports/2026-11-16-transport-internal-listener.md)；server 集成测试 280 个与 e2e 5 个场景于 2026-11-17 在 129 上补跑，全部通过。
 
 ## 全局约束
 

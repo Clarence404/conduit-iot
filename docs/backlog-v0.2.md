@@ -254,3 +254,8 @@
 - **截断后积压指标永久虚高**：Redis 消费组 `lag = entries-added − entries-read`，被截掉的条目不计入已读，lag 多出被截断的条数且不会回落，看板与压测脚本都会误判积压。
   - 本次以 `XGROUP SETID conduit:stream:up conduit-server <last-delivered-id> ENTRIESREAD <entries-added>` 校正。
   - 方向：积压指标改用「流尾 id 与 last-delivered-id 之差」等不受截断影响的口径，或在检测到截断后自动校正并记 WARN（被截断的条数即丢失条数，应计入指标）。
+
+## 2026-11-16 transport 内部监听器遗留
+
+- **Redis AOF 重写拖慢命令导致 transport 主备切换**（所有者 2026-11-17 决定另立项，排在后面）：2026-11-16 画像压测中，129 上 Redis 后台 AOF 重写期间（`appendfsync always`）命令超时超过 2 秒，transport 主实例续锁失败、按设计断开，另一实例约 23 秒后接管；计数守恒、未丢数，但切换期间入库停顿、PUBACK 时延升高。待查：重写期间 fsync 的耗时分布、`no-appendfsync-on-rewrite` 与磁盘 I/O 的取舍、选主锁 ttl 15 秒 / Redis 命令超时 2 秒是否偏紧。见 [验收报告](test-reports/2026-11-16-transport-internal-listener.md) 第 3 节。
+- **补传洪峰的时延**：断网补传期间 p99 约 1.7 秒、EMQX 1 次过载告警，所有者决定不作为验收不通过，作为已知限制写进设备接入规范（重连随机延迟、每台每秒补传不超过 1 条），见 `docs/device-integration.md` 4.3 节。

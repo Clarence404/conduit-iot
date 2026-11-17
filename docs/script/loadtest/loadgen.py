@@ -426,6 +426,9 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     t_call, connack_at = {}, {}       # id(client) → 最近一次发起连接 / 最近一次成功 CONNACK 的时刻
     pend_cnt = {}                     # id(client) → 在途未确认条数（断网前要等它归零）
     quiet = set()                     # 计划内断网 / 重连中的连接：其断开不算运行中掉线
+    # id(client) → 已发出、尚未收到业务回执的带 id 报文数。真实设备收到回执才删待确认消息，
+    # 所以断网与收尾时都先等回执收齐再断开：否则回执发给已断开的设备，EMQX 计为 no_subscribers 丢弃，误判为丢数
+    id_out = {}
     # 运行中掉线的设备（按设备去重；收尾时主动断开的不算）
     dropped, closing = set(), False
 
@@ -451,6 +454,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
     def on_msg(client, userdata, msg):
         nonlocal acks
         acks += 1
+        id_out[id(client)] = id_out.get(id(client), 0) - 1
 
     disc_reasons, disc_times = {}, []
 
@@ -597,7 +601,7 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
         if stage == 1:
             for i in out_set:
                 cl = clients[i][0]
-                if state[i] == 1 and (pend_cnt[id(cl)] <= 0 or now - t_out > 10):
+                if state[i] == 1 and ((pend_cnt[id(cl)] <= 0 and id_out.get(id(cl), 0) <= 0) or now - t_out > 10):
                     quiet.add(id(cl))
                     state[i] = 2
                     try:
@@ -654,6 +658,8 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
                                 pending[(id(cl), info.mid)] = time.time()
                                 pend_cnt[id(cl)] += 1
                                 sent += 1
+                                if with_id[i]:
+                                    id_out[id(cl)] = id_out.get(id(cl), 0) + 1
                             else:
                                 errors += 1
                         except Exception:
@@ -688,6 +694,8 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
                     pending[(id(cl), info.mid)] = time.time()
                     pend_cnt[id(cl)] += 1
                     sent += 1
+                    if with_id[i]:
+                        id_out[id(cl)] = id_out.get(id(cl), 0) + 1
                 else:
                     errors += 1
             except Exception:
@@ -702,8 +710,9 @@ def _fleet_worker(devices, host, port, rate, seconds, connect_rate, connect_time
             last_misc = now
     t_load_end = time.time()
     cpu_busy = (time.process_time() - cpu0) / max(1e-6, t_load_end - t0)
-    end = time.time() + 2
-    while time.time() < end:
+    # 收尾：至少再读 2 秒；带 id 的设备等业务回执收齐（最多 10 秒，回执是 QoS 0，过载时可能永远收不到）再断开
+    end, end_max = time.time() + 2, time.time() + 10
+    while time.time() < end or (time.time() < end_max and any(v > 0 for v in id_out.values())):
         pump(0.05)
     closing = True
     for cl, _ in opened:

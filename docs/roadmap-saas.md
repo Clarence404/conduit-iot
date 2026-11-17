@@ -30,8 +30,8 @@ Conduit 的核心价值是可靠设备接入、统一物模型、实时数据处
 
 1. **没有按设备的分区归属**：transport 单活多备，server 多实例只共享消费组，靠写入幂等与时间戳守护容忍乱序。transport 多开、规则引擎的有状态处理（持续时间、累加、去抖）都依赖「每台设备在任一时刻只归一个实例处理」。**在 V0.5 开工前定方案**。
    - **「单活多备 + 选主」是历史包袱**（2026-11-17 所有者确认）。V0.1 的 connector 本来就按共享订阅多实例设计。10-16 的 V0.2-R 为了用 EMQX 5.8.6 的磁盘持久会话（它不支持共享订阅），被迫改成单活与 Redis 选主。10-28 已关掉磁盘持久会话，10-29 已恢复共享订阅，但单活一直没拆。
-   - **先验证能否去掉 transport**（2026-11-17 所有者决定）：所有者计划改用 EMQX 与 InfluxDB 的商业版。用 EMQX 的 Kafka 数据集成直接写 Kafka，server 消费 Kafka，业务回执改为 server 处理后发出。需要验证 PUBACK 的时机，以及 Kafka 不可用、写入变慢、补传洪峰、强杀 EMQX 时是否守恒。验证计划见 `superpowers/plans/2026-11-17-emqx-kafka-sink-spike.md`。
-   - 验证不通过时的备选：transport 改为多活。固定一个身份池（建议 K = 64 个 clientId，只是共享订阅成员的身份，不承载数据）；实例按 Redis 租约自动领取和迁移身份，无需人工重分；总线按 `hash(deviceKey)` 分区，与身份解耦。原因是 EMQX 的 `hash_clientid` 按成员数取模，成员数必须固定。
+   - **决定保留 transport，改为横向扩展**（2026-11-17 所有者决定）。之前验证过 EMQX 直写：直写 Kafka 可以替代 transport；直写 Redis Streams 会超时丢弃，没有持久缓冲，补传洪峰时会耗尽 EMQX 内存，比 transport 弱（`test-reports/2026-11-17-transport-necessity.md`）。所有者选择保留 transport。
+   - 方案：transport 改为多活。固定一个身份池（建议 K = 64 个 clientId，只是共享订阅成员的身份，不承载数据）；实例按 Redis 租约自动领取和迁移身份，无需人工重分；总线按 `hash(deviceKey)` 分区，与身份解耦。原因是 EMQX 的 `hash_clientid` 按成员数取模，成员数必须固定。
 2. **总线受内存限制、保留期短**：Redis Streams 的 `MAXLEN` 为 100 万条，下游长时间故障时会被截断丢数据（2026-11-13 断电后 InfluxDB 起不来时实际发生）。需要按磁盘与时间保留的实现（如 Kafka），经 `MessageBus` 替换。**在 V0.8 落地**；在此之前，至少要有积压接近截断的告警，见 `backlog-v0.2.md` 2026-11-13 一节。
 3. **时序库没有高可用**：InfluxDB 3 Core 是单节点，不支持集群。V0.8 需要选型：换支持集群的版本或别的时序库，或者接受单点，靠总线保留与遥测重放补数据。**在 V0.8 部署形态设计前决定**。
 

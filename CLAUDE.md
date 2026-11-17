@@ -234,7 +234,7 @@
 
 **transport 单活多备与共享订阅**（V0.2-R；共享订阅 10-29）
 
-> 2026-11-17：单活多备是 V0.2-R 为了磁盘持久会话而被迫采用的，其前提已不存在，属于历史包袱。下一步先验证「EMQX 直写 Kafka、去掉 transport」，不通过再改为身份池多活，见 `docs/roadmap-saas.md` 第 2 节架构短板第 1 项。
+> 2026-11-17：单活多备是 V0.2-R 为了磁盘持久会话而被迫采用的，其前提已不存在，属于历史包袱。所有者决定保留 transport，改为身份池多活的横向扩展，见 `docs/roadmap-saas.md` 第 2 节架构短板第 1 项。
 
 *连接与会话*
 - 主实例开 `conduit.transport.mqtt.connections` 条连接（默认 8，2026-11-16 由 4 调整），`cleanStart=false`，会话保留 86400 秒，订阅选项 `retainHandling=DO_NOT_SEND`。
@@ -628,3 +628,4 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-11-16：断网补传对照——修正发压器后仍少 25 万条（transport 订阅连接被强杀 5 次）；`max_conn_rate=200/s` 能止损但 2.5 万台上线需 723 秒；EMQX 每连接 `messages_rate` 无全体合计且会限住 transport，不可用。推荐方向：transport 独立内部监听器与 zone（关闭强杀、放大队列），待所有者决定。RPS 无收益，每秒 1 条 10,000 台通过（`2026-11-16-connect-storm-outage-replay.md`）。
 - 2026-11-16：transport 改连 EMQX 内部监听器 `tcp:internal`（1884，zone `transport`：信箱 20 万、会话队列 10 万，堆上限不变），默认 8 条连接，内部监听器只许 transport；根治断网补传洪峰下订阅连接被强杀丢数（`2026-11-16-conduit-transport-internal-listener-design.md`）。
 - 2026-11-17：transport「单活多备 + 选主」认定为历史包袱：10-16 为磁盘持久会话（不支持共享订阅）被迫采用，前提已于 10-28 / 10-29 消失。所有者决定先验证「EMQX（商业版）Kafka 数据集成直写、去掉 transport」，不通过再做身份池多活（`roadmap-saas.md` 第 2 节）。
+- 2026-11-17：验证 EMQX 直写后，所有者决定**保留 transport，改为横向扩展**。直写 Kafka 可以替代 transport；直写 Redis Streams 有超时丢弃、无持久缓冲、洪峰耗尽内存的问题，比 transport 弱（`2026-11-17-transport-necessity.md`）。

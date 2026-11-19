@@ -5,7 +5,7 @@
 **Goal:** 把 transport 从「单活多备 + 选主」改为「身份池多活」：所有实例按 Redis 租约分摊 K 个共享订阅身份，K 可在线调大，同一实例内各连接的消息合并成批写总线。
 
 **Architecture:**
-- 新增 `IdentityAllocator`，取代 `LeaderElection`。它周期性地做三件事：写心跳；按 ⌈K/N⌉ 抢占或让出身份；按身份启停对应的 `MqttProtocolAdapter`。
+- 新增 `IdentityAllocator`，取代 `LeaderElection`。它周期性地做三件事：写心跳；按精确配额抢占或让出身份；按身份启停对应的 `MqttProtocolAdapter`。
 - 租约、心跳、K 都存在 Redis，读写由 `IdentityLeaseStore` 的 Lua 实现完成。
 - 适配器不再各自攒批，改为把消息交给实例级的 `SharedBatcher`。批写入总线成功后，按原顺序回调各连接，先发业务回执，再回 PUBACK。
 
@@ -21,7 +21,7 @@
   - `conduit:transport:id:{i}`（租约，值为 instanceId，带 TTL）；
   - `conduit:transport:members`（zset，score 为毫秒，时间取 Redis 服务端 `TIME`）。
 - 分配参数，前缀 `conduit.transport.allocation`，默认值：`initial-pool-size` 64、`lease-ttl` 15s、`renew-interval` 5s、`tick-interval` 2s、`member-ttl` 15s、`rebalance-stable` 10s、`pool-alert-ratio` 0.5。
-- 份额 `share = ceil(K / N)`。偏好顺序为 rendezvous hash `hash(instanceId, i)`，降序。
+- 配额 `quota = floor(K / N) + (p < K mod N ? 1 : 0)`，p 为本实例在存活实例 id 字典序列表中的位置；配额合计恰为 K，各实例持有数相差不超过 1。偏好顺序为 rendezvous hash `hash(instanceId, i)`，降序。
 - K 只允许调大；Redis 里的值小于当前 K 时，忽略并记 WARN。
 - 回退开关：`initial-pool-size = 1` 时只有一个身份，使用普通订阅，等价于单活。共享订阅与否在启动时按 `initial-pool-size > 1` 确定；从 1 调大不受支持，记 WARN 并忽略。
 - 约束保持不变：`batch-size ≤ max_inflight ≪ max_mailbox_size`。

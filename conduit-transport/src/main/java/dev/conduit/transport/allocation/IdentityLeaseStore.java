@@ -1,6 +1,7 @@
 package dev.conduit.transport.allocation;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * 身份池的共享状态存储：身份租约（每个 MQTT 身份一把带过期的锁）、实例心跳（存活实例集合）与身份池大小。
@@ -22,10 +23,12 @@ public interface IdentityLeaseStore {
     boolean release(int identity);
 
     /**
-     * 上报本实例心跳并返回存活实例数 N：以 Redis 服务器时间为准，写入本实例、清除超过 memberTtl 未心跳的成员后计数。
+     * 上报本实例心跳并返回存活实例 id：以 Redis 服务器时间为准，写入本实例、清除超过 memberTtl 未心跳的成员。
      * 用服务器时间而非本机时间，避免各实例时钟偏差影响成员判定。
+     *
+     * @return 存活实例 id，按字典序升序（各实例据此算出一致的配额位置），总是包含本实例
      */
-    int heartbeat(Duration memberTtl);
+    List<String> heartbeat(Duration memberTtl);
 
     /** 把本实例从存活集合中移除（正常停止时调用，让其他实例尽快重新分摊）。 */
     void leave();

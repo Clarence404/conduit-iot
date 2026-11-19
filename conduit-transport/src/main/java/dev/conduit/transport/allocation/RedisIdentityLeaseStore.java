@@ -6,6 +6,8 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,13 +37,14 @@ public class RedisIdentityLeaseStore implements IdentityLeaseStore {
     private static final DefaultRedisScript<Long> RELEASE = new DefaultRedisScript<>(
             "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
             Long.class);
-    /** 心跳：服务器时间戳写入本实例，清除严格早于 now - ttl 的成员，返回存活数。 */
-    private static final DefaultRedisScript<Long> HEARTBEAT = new DefaultRedisScript<>(
+    /** 心跳：服务器时间戳写入本实例，清除严格早于 now - ttl 的成员，返回存活成员。 */
+    @SuppressWarnings("rawtypes")
+    private static final DefaultRedisScript<List> HEARTBEAT = new DefaultRedisScript<>(
             "local t = redis.call('TIME') "
                     + "local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) "
                     + "redis.call('ZADD', KEYS[1], now, ARGV[1]) "
                     + "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. (now - tonumber(ARGV[2]))) "
-                    + "return redis.call('ZCARD', KEYS[1])", Long.class);
+                    + "return redis.call('ZRANGE', KEYS[1], 0, -1)", List.class);
 
     private final StringRedisTemplate redis;
     private final Duration leaseTtl;
@@ -83,11 +86,17 @@ public class RedisIdentityLeaseStore implements IdentityLeaseStore {
         return Long.valueOf(1).equals(result);
     }
 
+    /** 执行心跳脚本；返回的成员在本地按字典序重排（ZRANGE 按分值排序，各实例看到的顺序不同）。 */
     @Override
-    public int heartbeat(Duration memberTtl) {
-        Long result = redis.execute(HEARTBEAT, List.of(MEMBERS_KEY), instanceId,
+    public List<String> heartbeat(Duration memberTtl) {
+        List<?> result = redis.execute(HEARTBEAT, List.of(MEMBERS_KEY), instanceId,
                 Long.toString(memberTtl.toMillis()));
-        return result == null ? 0 : result.intValue();
+        List<String> members = new ArrayList<>();
+        if (result != null) {
+            result.forEach(m -> members.add(String.valueOf(m)));
+        }
+        Collections.sort(members);
+        return members;
     }
 
     @Override

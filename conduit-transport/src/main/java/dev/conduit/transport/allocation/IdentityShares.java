@@ -5,7 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 身份池的份额与偏好序计算（纯函数，无状态）。
+ * 身份池的配额、偏好序与告警判断（纯函数，无状态）。
  *
  * <p>偏好序采用 rendezvous（最高随机权重）思想：每个（实例, 身份序号）对有一个确定性分数，
  * 分数只取决于实例 id 与序号本身，与池大小无关，因此 K 调大时已有序号的相对顺序不变。
@@ -18,15 +18,23 @@ public final class IdentityShares {
     }
 
     /**
-     * 每个成员的目标份额：池大小除以成员数，向上取整。
+     * 本实例应持有的身份数（精确配额）：按存活成员的字典序位置 p 分配，
+     * {@code ⌊K/N⌋ + (p < K mod N ? 1 : 0)}。各成员用同一份有序列表计算，配额合计恰为 K、两两相差不超过 1，
+     * 因此全部身份都有人持有；只给上限（如 ⌈K/N⌉）会让各实例停在 6/6/4 这类不均的状态。
      *
-     * @param poolSize 身份池大小 K
-     * @param members  当前成员数；小于等于 0 时按 1 计算
-     * @return 目标份额
+     * @param poolSize      身份池大小 K
+     * @param sortedMembers 存活实例 id，按字典序升序
+     * @param self          本实例 id；不在列表中时视为排在末尾（p = N，N 加 1），末位永远分不到余数
+     * @return 本实例的配额，0 ≤ 配额 ≤ K
      */
-    public static int share(int poolSize, int members) {
-        int m = Math.max(members, 1);
-        return (poolSize + m - 1) / m;
+    public static int quota(int poolSize, List<String> sortedMembers, String self) {
+        int n = sortedMembers.size();
+        int p = sortedMembers.indexOf(self);
+        if (p < 0) {
+            p = n;
+            n++;
+        }
+        return poolSize / n + (p < poolSize % n ? 1 : 0);
     }
 
     /**

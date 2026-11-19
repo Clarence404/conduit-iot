@@ -30,8 +30,9 @@ import java.util.function.IntFunction;
  * transport 身份池分配器（多活 spec 3.3～3.5）：把 K 个 MQTT 身份按 Redis 租约分摊到 N 个存活实例，
  * 本实例只为自己持有的身份运行协议适配器。
  *
- * <p>每次检查（tick，默认每 2 秒）：写心跳读 N 与 K → 计算份额 ⌈K/N⌉ → 续期全部持有的身份（失败立即停适配器）
- * → 检查断线的适配器（续期确认仍持有后重连）→ 不足份额时按偏好序抢占 → 超出份额且成员数已稳定
+ * <p>每次检查（tick，默认每 2 秒）：写心跳读存活成员列表与 K → 按本实例在成员列表（字典序）中的位置计算精确配额
+ * （{@link IdentityShares#quota}，各实例配额合计恰为 K、相差不超过 1）→ 续期全部持有的身份（失败立即停适配器）
+ * → 检查断线的适配器（续期确认仍持有后重连）→ 不足配额时按偏好序抢占 → 超出配额且成员列表已稳定
  * rebalance-stable 时按偏好序从后往前让出一个。另有 renewTick 每 renew-interval 单独续期一次。
  *
  * <p>安全规则：任何续期失败（返回 false 或抛异常）都先把该身份移出持有表（使适配器的 stillValid 立即为 false），
@@ -79,8 +80,11 @@ public class IdentityAllocator implements SmartLifecycle {
     // 以下字段只由调度线程（测试中为调用 tick 的线程）读写
     /** 当前 K 下本实例的偏好顺序，K 变化时重算。 */
     private List<Integer> preference = List.of();
-    /** 上一次心跳读到的 N 及其开始的时刻，用于判断成员数是否已稳定 rebalance-stable。 */
-    private int lastMembers = -1;
+    /**
+     * 上一次心跳读到的成员列表及其开始的时刻，用于判断成员是否已稳定 rebalance-stable。
+     * 按列表而非人数判断：一个实例下线、另一个同时加入时人数不变，但各实例的配额位置已变。
+     */
+    private List<String> lastMembers;
     private Instant membersSince;
     private Instant lastPoolAlert;
     /** 上一次被忽略的更小 K：同一个值只 WARN 一次。 */
@@ -125,7 +129,7 @@ public class IdentityAllocator implements SmartLifecycle {
         return new TreeSet<>(held.keySet());
     }
 
-    /** 最近一次心跳读到的存活实例数 N；尚未成功心跳时为 0。 */
+    /** 最近一次心跳读到的存活实例数 N（成员列表的长度）；尚未成功心跳时为 0。 */
     public int members() {
         return members;
     }
@@ -226,10 +230,10 @@ public class IdentityAllocator implements SmartLifecycle {
      * 续期或抢占中出现 Redis 错误时同样跳过后续的抢占与让出，避免在 Redis 不稳定时迁移身份。
      */
     public void tick() {
-        int n;
+        List<String> memberList;
         int k;
         try {
-            n = store.heartbeat(props.memberTtl());
+            memberList = store.heartbeat(props.memberTtl());
             k = store.poolSize(props.initialPoolSize());
         } catch (RuntimeException e) {
             redisFailed("heartbeat", e);
@@ -238,19 +242,19 @@ public class IdentityAllocator implements SmartLifecycle {
         }
         redisRecovered();
         Instant now = clock.instant();
-        updateMembers(n, now);
+        updateMembers(memberList, now);
         updatePoolSize(k);
         alertIfPoolTooSmall(now);
 
-        int share = IdentityShares.share(poolSize, members);
+        int quota = IdentityShares.quota(poolSize, memberList, store.instanceId());
         boolean renewOk = renewAll();
         superviseAdapters();
         if (!renewOk) {
             return;
         }
-        if (held.size() < share) {
-            acquireUpTo(share);
-        } else if (held.size() > share && isMembershipStable(now)) {
+        if (held.size() < quota) {
+            acquireUpTo(quota);
+        } else if (held.size() > quota && isMembershipStable(now)) {
             releaseOne();
         }
     }
@@ -260,17 +264,20 @@ public class IdentityAllocator implements SmartLifecycle {
         renewAll();
     }
 
-    /** N 变化时记下新的起始时刻；首次心跳也算一次变化，所以刚启动的实例要等 rebalance-stable 后才会让出。 */
-    private void updateMembers(int n, Instant now) {
-        if (n != lastMembers) {
-            if (lastMembers >= 0) {
-                log.info("Transport members changed from {} to {} (instance {})", lastMembers, n,
-                        store.instanceId());
+    /**
+     * 成员列表变化时记下新的起始时刻；首次心跳也算一次变化，所以刚启动的实例要等 rebalance-stable 后才会让出。
+     * 列表变化时记一行 INFO（人数与成员 id）。
+     */
+    private void updateMembers(List<String> memberList, Instant now) {
+        if (!memberList.equals(lastMembers)) {
+            if (lastMembers != null) {
+                log.info("Transport members changed from {} to {} (instance {}): {}", lastMembers.size(),
+                        memberList.size(), store.instanceId(), memberList);
             }
-            lastMembers = n;
+            lastMembers = List.copyOf(memberList);
             membersSince = now;
         }
-        members = n;
+        members = memberList.size();
     }
 
     /**
@@ -398,12 +405,12 @@ public class IdentityAllocator implements SmartLifecycle {
     }
 
     /**
-     * 按偏好顺序抢占空闲身份，直到持有数达到 share；每抢到一个就提交启动其适配器。
-     * 抢占出现 Redis 错误时停止本轮抢占。
+     * 按偏好顺序抢占空闲身份，直到持有数达到配额；每抢到一个就提交启动其适配器。
+     * 空闲身份不够时（他人尚未让出超出配额的部分）本轮少抢，之后的检查再补。抢占出现 Redis 错误时停止本轮抢占。
      */
-    private void acquireUpTo(int share) {
+    private void acquireUpTo(int quota) {
         for (int i : preference) {
-            if (held.size() >= share) {
+            if (held.size() >= quota) {
                 return;
             }
             if (held.containsKey(i)) {

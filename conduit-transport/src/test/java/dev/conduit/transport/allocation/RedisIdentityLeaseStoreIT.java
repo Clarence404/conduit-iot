@@ -10,7 +10,7 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** RedisIdentityLeaseStore 集成测试（真实 Redis）：身份租约的归属校验与过期、实例心跳计数、身份池大小的一次性初始化。 */
+/** RedisIdentityLeaseStore 集成测试（真实 Redis）：身份租约的归属校验与过期、心跳返回按字典序排列的存活成员、身份池大小的一次性初始化。 */
 class RedisIdentityLeaseStoreIT {
 
     static final String MEMBERS_KEY = "conduit:transport:members";
@@ -71,9 +71,11 @@ class RedisIdentityLeaseStoreIT {
         RedisIdentityLeaseStore a = store(leaseTtl, "instance-a");
         RedisIdentityLeaseStore b = store(leaseTtl, "instance-b");
 
-        assertThat(a.heartbeat(Duration.ofSeconds(5))).isEqualTo(1);
-        assertThat(b.heartbeat(Duration.ofSeconds(5))).isEqualTo(2);
-        assertThat(a.heartbeat(Duration.ofSeconds(5))).as("a repeated heartbeat does not double count").isEqualTo(2);
+        assertThat(b.heartbeat(Duration.ofSeconds(5))).containsExactly("instance-b");
+        // a 后加入、分值更大，返回值仍按字典序排列
+        assertThat(a.heartbeat(Duration.ofSeconds(5))).containsExactly("instance-a", "instance-b");
+        assertThat(b.heartbeat(Duration.ofSeconds(5))).as("a repeated heartbeat does not double count")
+                .containsExactly("instance-a", "instance-b");
     }
 
     @Test
@@ -85,7 +87,7 @@ class RedisIdentityLeaseStoreIT {
 
         a.leave();
 
-        assertThat(b.heartbeat(Duration.ofSeconds(5))).isEqualTo(1);
+        assertThat(b.heartbeat(Duration.ofSeconds(5))).containsExactly("instance-b");
     }
 
     @Test
@@ -97,7 +99,7 @@ class RedisIdentityLeaseStoreIT {
         a.heartbeat(memberTtl);
         Thread.sleep(400);
 
-        assertThat(b.heartbeat(memberTtl)).isEqualTo(1);
+        assertThat(b.heartbeat(memberTtl)).containsExactly("instance-b");
     }
 
     @Test

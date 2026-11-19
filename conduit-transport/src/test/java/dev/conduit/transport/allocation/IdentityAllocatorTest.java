@@ -23,14 +23,18 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.function.BooleanSupplier;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * IdentityAllocator 单元测试：内存版租约存储（可指定存活实例数 N、池大小 K、模拟 Redis 出错与其他实例持有身份）、
  * 记录启停的假适配器、可拨动的时钟与同步执行器，测试直接调用 tick / renewTick，不依赖真实时间。
- * 覆盖：按份额与偏好抢占、成员稳定后逐个让出、续期失败或出错立即停适配器、K 只增不减、扩容告警限频、
+ * 另以多个真实分配器共用一份内存 Redis（租约与心跳按测试时钟过期），验证收敛到精确配额。
+ * 覆盖：按配额与偏好抢占、成员稳定后逐个让出、多实例收敛（含崩溃与重启）、续期失败或出错立即停适配器、K 只增不减、扩容告警限频、
  * 断线重连先续期、停止时释放全部租约并离开。
  */
 class IdentityAllocatorTest {
@@ -87,7 +91,7 @@ class IdentityAllocatorTest {
     }
 
     @Test
-    void acquiresOnlyUpToShare() {
+    void acquiresOnlyUpToQuota() {
         store.members = 2;
         store.pool = 4;
 
@@ -379,6 +383,98 @@ class IdentityAllocatorTest {
         assertThat(events.lastIndexOf("stop 0")).isLessThan(events.indexOf("release 0"));
     }
 
+    @Test
+    void threeInstancesConvergeToExactQuotasAcrossCrashAndRestart() {
+        SharedLeases redis = new SharedLeases(clock, PROPS.leaseTtl(), 16);
+        Map<String, IdentityAllocator> live = new TreeMap<>();
+        for (String id : List.of("a", "b", "c")) {
+            live.put(id, member(redis, id, 16));
+        }
+
+        settle(redis, live, 60);
+        assertExactQuotas(redis, live, 16);
+        assertThat(holdings(live)).containsExactly(6, 5, 5);
+        // 已收敛后不再迁移
+        Map<String, Set<Integer>> before = heldBy(live);
+        settle(redis, live, 30);
+        assertThat(heldBy(live)).isEqualTo(before);
+
+        // b 崩溃：不再续期、不再心跳，租约与心跳自然过期
+        live.remove("b");
+        settle(redis, live, 30);
+        assertExactQuotas(redis, live, 16);
+        assertThat(holdings(live)).containsExactly(8, 8);
+
+        // b 以新的实例 id 重启
+        live.put("b2", member(redis, "b2", 16));
+        settle(redis, live, 60);
+        assertExactQuotas(redis, live, 16);
+        assertThat(holdings(live)).containsExactly(6, 5, 5);
+    }
+
+    @Test
+    void tenInstancesSpreadSixtyFourIdentitiesEvenly() {
+        SharedLeases redis = new SharedLeases(clock, PROPS.leaseTtl(), 64);
+        Map<String, IdentityAllocator> live = new TreeMap<>();
+        for (int n = 0; n < 10; n++) {
+            live.put("t" + n, member(redis, "t" + n, 64));
+        }
+
+        settle(redis, live, 200);
+
+        assertExactQuotas(redis, live, 64);
+        assertThat(holdings(live)).containsExactly(7, 7, 7, 7, 6, 6, 6, 6, 6, 6);
+    }
+
+    /** 以共享的内存 Redis 创建一个实例的分配器，K 由 initial-pool-size 给定。 */
+    private IdentityAllocator member(SharedLeases redis, String id, int pool) {
+        AllocationProperties props = new AllocationProperties(pool, PROPS.leaseTtl(), PROPS.renewInterval(),
+                PROPS.tickInterval(), PROPS.memberTtl(), PROPS.rebalanceStable(), 1.0);
+        List<String> ignored = new ArrayList<>();
+        return new IdentityAllocator(redis.storeFor(id), i -> new FakeAdapter(i, ignored), props, clock,
+                new SimpleMeterRegistry(), Runnable::run);
+    }
+
+    /**
+     * 每轮把时钟拨过一个 tick-interval，再让存活实例按 id 顺序各检查一次；
+     * 每轮之后校验安全不变量：存活实例的持有互不重叠，且与 Redis 中的租约一致。
+     */
+    private void settle(SharedLeases redis, Map<String, IdentityAllocator> live, int rounds) {
+        for (int r = 0; r < rounds; r++) {
+            clock.advance(PROPS.tickInterval());
+            live.values().forEach(IdentityAllocator::tick);
+            Set<Integer> seen = new HashSet<>();
+            live.forEach((id, a) -> {
+                for (int i : a.held()) {
+                    assertThat(seen.add(i)).as("identity #%d held twice", i).isTrue();
+                    assertThat(redis.owner(i)).as("lease of #%d", i).isEqualTo(id);
+                }
+            });
+        }
+    }
+
+    /** 全部 K 个身份恰好各被一个存活实例持有，且每个实例的持有数等于它按字典序位置算出的配额。 */
+    private static void assertExactQuotas(SharedLeases redis, Map<String, IdentityAllocator> live, int pool) {
+        List<Integer> all = new ArrayList<>();
+        live.values().forEach(a -> all.addAll(a.held()));
+        assertThat(all).hasSize(pool).containsExactlyInAnyOrderElementsOf(
+                IntStream.range(0, pool).boxed().toList());
+        List<String> sorted = new ArrayList<>(live.keySet());
+        live.forEach((id, a) -> assertThat(a.held()).as("holdings of %s", id)
+                .hasSize(IdentityShares.quota(pool, sorted, id)));
+    }
+
+    /** 各存活实例的持有数，按实例 id 升序。 */
+    private static List<Integer> holdings(Map<String, IdentityAllocator> live) {
+        return live.values().stream().map(a -> a.held().size()).toList();
+    }
+
+    private static Map<String, Set<Integer>> heldBy(Map<String, IdentityAllocator> live) {
+        Map<String, Set<Integer>> result = new HashMap<>();
+        live.forEach((id, a) -> result.put(id, a.held()));
+        return result;
+    }
+
     private double moved(String reason) {
         return registry.get("conduit.transport.identities.moved").tag("reason", reason).counter().count();
     }
@@ -389,7 +485,10 @@ class IdentityAllocatorTest {
                 .count();
     }
 
-    /** 内存版租约存储：owners 模拟 Redis 中各身份的持有者，down 模拟 Redis 整体不可用。 */
+    /**
+     * 内存版租约存储：owners 模拟 Redis 中各身份的持有者，down 模拟 Redis 整体不可用。
+     * 心跳返回本实例 "me" 与 members − 1 个 "peer-*"（字典序上 "me" 排第一，配额取最大的那一份）。
+     */
     static final class FakeStore implements IdentityLeaseStore {
         final String id;
         final List<String> events;
@@ -447,9 +546,14 @@ class IdentityAllocatorTest {
         }
 
         @Override
-        public int heartbeat(Duration memberTtl) {
+        public List<String> heartbeat(Duration memberTtl) {
             checkUp();
-            return members;
+            List<String> live = new ArrayList<>(List.of(id));
+            for (int p = 1; p < members; p++) {
+                live.add(String.format("peer-%03d", p));
+            }
+            live.sort(null);
+            return live;
         }
 
         @Override
@@ -461,6 +565,92 @@ class IdentityAllocatorTest {
         public int poolSize(int initial) {
             checkUp();
             return pool;
+        }
+    }
+
+    /**
+     * 多个实例共用的内存版 Redis：租约按 lease-ttl 过期（到期时刻即失效，同 PX），
+     * 心跳严格早于 now - member-ttl 的成员被清除（同 ZREMRANGEBYSCORE 开区间），时间取测试时钟。
+     */
+    static final class SharedLeases {
+        final MutableClock clock;
+        final Duration leaseTtl;
+        final int pool;
+        final Map<Integer, String> owners = new HashMap<>();
+        final Map<Integer, Instant> expiry = new HashMap<>();
+        final Map<String, Instant> heartbeats = new HashMap<>();
+
+        SharedLeases(MutableClock clock, Duration leaseTtl, int pool) {
+            this.clock = clock;
+            this.leaseTtl = leaseTtl;
+            this.pool = pool;
+        }
+
+        /** 当前仍有效的持有者；过期的租约先删除。 */
+        String owner(int identity) {
+            Instant at = expiry.get(identity);
+            if (at != null && !clock.instant().isBefore(at)) {
+                owners.remove(identity);
+                expiry.remove(identity);
+            }
+            return owners.get(identity);
+        }
+
+        IdentityLeaseStore storeFor(String id) {
+            return new IdentityLeaseStore() {
+                @Override
+                public String instanceId() {
+                    return id;
+                }
+
+                @Override
+                public boolean tryAcquire(int identity) {
+                    String owner = owner(identity);
+                    if (owner != null && !owner.equals(id)) {
+                        return false;
+                    }
+                    owners.put(identity, id);
+                    expiry.put(identity, clock.instant().plus(leaseTtl));
+                    return true;
+                }
+
+                @Override
+                public boolean renew(int identity) {
+                    if (!id.equals(owner(identity))) {
+                        return false;
+                    }
+                    expiry.put(identity, clock.instant().plus(leaseTtl));
+                    return true;
+                }
+
+                @Override
+                public boolean release(int identity) {
+                    if (!id.equals(owner(identity))) {
+                        return false;
+                    }
+                    owners.remove(identity);
+                    expiry.remove(identity);
+                    return true;
+                }
+
+                @Override
+                public List<String> heartbeat(Duration memberTtl) {
+                    Instant now = clock.instant();
+                    heartbeats.put(id, now);
+                    heartbeats.values().removeIf(t -> t.isBefore(now.minus(memberTtl)));
+                    return new ArrayList<>(new TreeSet<>(heartbeats.keySet()));
+                }
+
+                @Override
+                public void leave() {
+                    heartbeats.remove(id);
+                }
+
+                @Override
+                public int poolSize(int initial) {
+                    return pool;
+                }
+            };
         }
     }
 

@@ -122,10 +122,19 @@ python ladder.py run --plan 25000 --hold 1200 --mix 60:0.7,15:0.25,1:0.05 --poin
 
 | 命令 | 结果 | 耗时 |
 |---|---|---|
-| `mvn -B -o -q -pl conduit-transport test` | 179 个单元测试全部通过（0 失败、0 错误、0 跳过） | 约 12 秒 |
+| `mvn -B -o -pl conduit-transport test` | 161 个单元测试全部通过（0 失败、0 错误、0 跳过） | 约 12 秒 |
 | `mvn -B -o -q -pl conduit-transport test-compile` | 通过（含 `RedisIdentityLeaseStoreIT` 新增的非法 K 与旧选主键用例） | — |
 | `mvn -B -o -q -pl conduit-e2e -Pe2e test-compile` | 通过 | — |
 
 新增用例先失败后通过：`SharedBatcherTest` 2 个（总线或回调抛 `Error` 后续批照常提交）、`MqttProtocolAdapterTest` 1 个（回执同步抛异常仍 PUBACK）、`IdentityAllocatorTest` 7 个（一个身份始终起不来不阻塞同一执行器上的其他身份、按 1/2/4/8/10/10 秒退避重试、丢失身份后不再重试、同一身份不排两个任务、非法 K、旧选主键）。修复前前 4 个分配器用例超时或条件不满足，其余为断言失败。
 
-**未执行**：集成测试（`RedisIdentityLeaseStoreIT` 等需 Docker）与 e2e，留待 Docker 主机执行，结果另行补入；本节不把它们记为通过。
+在 129 上的 Maven 容器内复测（代码 `fcf44fe`，方式同第 2 节）：
+
+| 命令 | 结果 | 耗时 |
+|---|---|---|
+| `mvn -B -DskipTests install` 后 `mvn -B verify -pl conduit-transport` | 单元 161、集成 15 全部通过（`RedisIdentityLeaseStoreIT` 8，含非法 K 与旧选主键；`MqttProtocolAdapterIT` 6；`TransportApplicationIT` 1） | — |
+| 接着 `mvn -B verify -Pe2e -pl conduit-e2e` | `ReliabilityE2EIT` 10 个全部通过（695.4 秒），`EmqxConfigTest` 2 个通过 | 三步合计 786 秒 |
+
+拆分环境重新部署 `fcf44fe` 的 transport（新 jar 与带 `ExitOnOutOfMemoryError` 的镜像，EMQX 未重建）后回读：两个实例约 60 秒内收敛到 32 / 32，`members` 2，`poolSize` 64，`connected` true，会话监控 64 个身份均无连续失败；5 分钟内两个实例日志中没有 ERROR，也没有旧选主键告警。
+
+**未复测**：第 4 节的压测用的是 `911434f`。终审修复只改了异常与失败路径（`Error`、启动失败、非法 K、旧选主键），正常路径不变，所以未重跑压测。

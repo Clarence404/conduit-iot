@@ -179,6 +179,21 @@ class MqttProtocolAdapterTest {
     }
 
     @Test
+    void anExceptionWhileSendingTheApplicationAckStillAcknowledgesTheUplink() {
+        AckCapturingAdapter reliable = new AckCapturingAdapter(batcher);
+        reliable.ackThrows = new IllegalStateException("client closed");
+        when(publish.getPayloadAsBytes())
+                .thenReturn("{\"id\":\"dk1-2\",\"ts\":1,\"params\":{}}".getBytes(StandardCharsets.UTF_8));
+
+        reliable.onPublish(reliable.openSession(), publish);
+
+        // 回执发送同步抛异常也不能吞掉 PUBACK：否则该条永久占住 inflight 槽位，直到重连才重投
+        verify(publish, timeout(2000)).acknowledge();
+        assertThat(bus.callCount()).isEqualTo(1);
+        reliable.stop();
+    }
+
+    @Test
     void presenceOfThePlatformsOwnClientIsAcknowledgedWithoutPublishing() {
         when(publish.getTopic())
                 .thenReturn(MqttTopic.of("$SYS/brokers/emqx@127.0.0.1/clients/conduit-transport/connected"));
@@ -317,6 +332,8 @@ class MqttProtocolAdapterTest {
         volatile String ackTopic;
         volatile byte[] ackPayload;
         volatile CompletableFuture<?> ackResult = CompletableFuture.completedFuture(null);
+        /** 非 null 时发送回执直接同步抛出它。 */
+        volatile RuntimeException ackThrows;
 
         AckCapturingAdapter(SharedBatcher batcher) {
             super(props(1), batcher, FIXED);
@@ -326,6 +343,9 @@ class MqttProtocolAdapterTest {
         CompletableFuture<?> publishReliableAck(Session session, String topic, byte[] payload) {
             ackTopic = topic;
             ackPayload = payload;
+            if (ackThrows != null) {
+                throw ackThrows;
+            }
             return ackResult;
         }
     }

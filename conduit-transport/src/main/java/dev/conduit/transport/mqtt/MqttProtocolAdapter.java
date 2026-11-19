@@ -461,10 +461,14 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         }
         // 回执必须在总线写入成功之后发，且先于 ACK；回调按提交顺序执行，同一连接的 PUBACK 保持到达顺序
         batcher.submit(message, () -> !s.stopping, () -> {
-            if (t.type() == MessageType.PROPERTY) {
-                sendReliableAck(s, t, message);
+            try {
+                if (t.type() == MessageType.PROPERTY) {
+                    sendReliableAck(s, t, message);
+                }
+            } finally {
+                // 回执出任何异常都照样 PUBACK：已写入总线，不 ACK 只会永久占住 inflight 槽位直到重连
+                acknowledge(publish);
             }
-            acknowledge(publish);
         });
     }
 

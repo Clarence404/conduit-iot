@@ -3,6 +3,8 @@ package dev.conduit.transport.mqtt;
 import dev.conduit.common.bus.MessageBus;
 import dev.conduit.common.bus.PublishResult;
 import dev.conduit.common.message.RawMessage;
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -20,7 +23,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>为什么在实例内合批：身份池变大后流量分散到更多连接上，每条连接各自攒的批变小、写 Redis 的次数随之增加
  * （见 2026-11-17 transport 多活设计第 5 节）。合批不改变每条连接的在途上限：各连接的未确认消息仍受 EMQX
- * 给该连接的 max_inflight 窗口限制，所以队列虽不设上限，实际长度不超过「连接数 × 窗口」。
+ * 给该连接的 max_inflight 窗口限制，所以队列虽不设上限，正常时长度不超过「连接数 × 窗口」。写入失败重试期间，
+ * 会话已停止的条目要等到下一轮写入前才被剔除，而接管该身份的新连接又带来一整个窗口，队列可暂时达到约两倍。
  *
  * <p>至少一次投递的约束：
  * <ul>
@@ -29,6 +33,11 @@ import java.util.function.BooleanSupplier;
  *       消息留在 EMQX 会话里，由接管该身份的连接重新收到；回调前也再查一次，已写入但会话已停止的不回 PUBACK；</li>
  *   <li>写入失败时退避重试，直到全部成功或提交器关闭，不跳过、不进死信（原因见 {@link #publishAllWithRetry}）。</li>
  * </ul>
+ *
+ * <p>意外错误（含 {@link Error}，如 StackOverflowError）：放弃当前批、不回调（不 ACK），循环继续处理后面的批，
+ * 计入 {@code conduit.transport.batcher.failures}。被放弃的条目占着各自连接的 inflight 槽位，直到该连接重连时
+ * 由 EMQX 重投。OutOfMemoryError 由 JVM 参数 -XX:+ExitOnOutOfMemoryError 直接退出进程、由容器重启策略拉起，
+ * 不在这里续命。
  *
  * <p>线程模型：{@link #submit} 可被任意线程并发调用；批的组装、写入、重试与回调都在唯一的批提交线程上串行执行，
  * 因此回调顺序就是提交顺序，同一连接的 PUBACK 保持到达顺序。
@@ -50,6 +59,8 @@ public final class SharedBatcher implements AutoCloseable {
     private final Duration initialBackoff;
     private final BlockingQueue<Entry> queue = new LinkedBlockingQueue<>();
     private final Thread loop;
+    /** 意外错误次数（放弃整批或回调抛 Error），只增不减，供指标与排障。 */
+    private final AtomicLong failures = new AtomicLong();
     private volatile boolean closed;
 
     /**
@@ -62,6 +73,16 @@ public final class SharedBatcher implements AutoCloseable {
      * @throws IllegalArgumentException 参数越界
      */
     public SharedBatcher(MessageBus bus, int batchSize, Duration batchDelay, Duration initialBackoff) {
+        this(bus, batchSize, batchDelay, initialBackoff, null);
+    }
+
+    /**
+     * 同上，并把意外错误次数注册为计数 {@code conduit.transport.batcher.failures}。
+     *
+     * @param registry 指标注册表；为 null 时不注册（单元测试）
+     */
+    public SharedBatcher(MessageBus bus, int batchSize, Duration batchDelay, Duration initialBackoff,
+                         MeterRegistry registry) {
         if (batchSize < 1) {
             throw new IllegalArgumentException("batchSize must be >= 1, got " + batchSize);
         }
@@ -75,6 +96,10 @@ public final class SharedBatcher implements AutoCloseable {
         this.batchSize = batchSize;
         this.batchDelay = batchDelay;
         this.initialBackoff = initialBackoff;
+        if (registry != null) {
+            FunctionCounter.builder("conduit.transport.batcher.failures", failures, AtomicLong::get)
+                    .description("合批提交器的意外错误次数：放弃整批（不 ACK）或回调抛出 Error").register(registry);
+        }
         this.loop = Thread.ofPlatform().name("bus-batcher").daemon().start(this::run);
     }
 
@@ -97,6 +122,11 @@ public final class SharedBatcher implements AutoCloseable {
      * 停止批提交线程：正在攒的批与正在重试的批都放弃、不回调（未 ACK 的消息由 EMQX 重投）。
      * 中断线程以唤醒退避等待，最多等 {@link #CLOSE_JOIN_TIMEOUT}，不会被失败的总线卡住。可重复调用。
      */
+    /** 迄今的意外错误次数（放弃整批或回调抛出 Error）。 */
+    public long failures() {
+        return failures.get();
+    }
+
     @Override
     public void close() {
         closed = true;
@@ -112,7 +142,11 @@ public final class SharedBatcher implements AutoCloseable {
         queue.clear();
     }
 
-    /** 批提交循环：取一批、写入、回调，直到关闭。意外异常只记 ERROR 并放弃该批（不回调），循环继续。 */
+    /**
+     * 批提交循环：取一批、写入、回调，直到关闭。意外错误（捕获 Throwable：只捕获 RuntimeException 时，
+     * 一个 Error 就会杀死本线程，此后本实例所有连接都不再 ACK 而健康检查仍为 UP）只记 ERROR、计数并放弃该批
+     * （不回调），循环继续。
+     */
     private void run() {
         while (!closed) {
             List<Entry> batch;
@@ -123,9 +157,10 @@ public final class SharedBatcher implements AutoCloseable {
             }
             try {
                 commit(batch);
-            } catch (RuntimeException e) {
+            } catch (Throwable t) {
+                failures.incrementAndGet();
                 log.error("Bus batcher dropped a batch of {} messages without ack after an unexpected error",
-                        batch.size(), e);
+                        batch.size(), t);
             }
         }
         log.debug("Bus batcher stopped");
@@ -178,6 +213,10 @@ public final class SharedBatcher implements AutoCloseable {
                 e.onCommitted().run();
             } catch (RuntimeException ex) {
                 log.warn("Commit callback for device {} failed: {}", e.message().deviceKey(), ex.toString());
+            } catch (Error err) {
+                // 已写入总线的其他条目照常回调，不能因一条回调出错而全部不 ACK
+                failures.incrementAndGet();
+                log.error("Commit callback for device {} failed with an error", e.message().deviceKey(), err);
             }
         }
     }

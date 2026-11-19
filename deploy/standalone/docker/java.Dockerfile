@@ -32,4 +32,6 @@ FROM ${BUILD_FROM} AS app
 FROM eclipse-temurin:21.0.6_7-jre
 WORKDIR /app
 COPY --from=app /out/app.jar app.jar
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]
+# ExitOnOutOfMemoryError：OOM 后进程处于不可预测状态（如 transport 合批线程死亡后不再 ACK 而健康仍为 UP），
+# 直接退出，由 compose 的 restart: unless-stopped（simulator 为 on-failure）重新拉起
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]

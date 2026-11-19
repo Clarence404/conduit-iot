@@ -34,7 +34,7 @@ import java.time.Duration;
  *                             $share/{sharedGroup}/...，由 EMQX 把投递分散到这些连接进程上。
  *                             第 0 个身份沿用 clientId（接管旧会话、补发其中排队的消息后退订旧的非共享过滤器），
  *                             第 i 个为 clientId-i；上下线事件只由持有身份 0 的连接订阅，避免重复 K 次。
- *                             为 1 时只有一个身份、普通订阅、不退订，谁抢到谁干活，等价于单活（回退开关）。
+ *                             为 1 时只有一个身份、普通订阅、不退订，由字典序最小的存活实例持有，等价于单活（回退开关）。
  *                             见 docs/superpowers/specs/2026-11-17-conduit-transport-multi-active-design.md
  * @param sharedGroup          共享订阅组名（connections > 1 时生效）
  */

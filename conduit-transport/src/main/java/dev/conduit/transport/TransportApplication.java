@@ -80,10 +80,11 @@ public class TransportApplication {
     /**
      * 本实例唯一的合批提交器：本实例持有的所有连接收到的消息按 batch-size / batch-delay 合批写总线，
      * 写入失败从 1 秒起退避重试。关闭时放弃正在重试的批、不回 PUBACK；适配器先于它停止（见类注释的停止顺序）。
+     * 意外错误次数计入 conduit.transport.batcher.failures。
      */
     @Bean(destroyMethod = "close")
-    SharedBatcher sharedBatcher(MqttTransportProperties props, MessageBus bus) {
-        return new SharedBatcher(bus, props.batchSize(), props.batchDelay(), Duration.ofSeconds(1));
+    SharedBatcher sharedBatcher(MqttTransportProperties props, MessageBus bus, MeterRegistry registry) {
+        return new SharedBatcher(bus, props.batchSize(), props.batchDelay(), Duration.ofSeconds(1), registry);
     }
 
     /** 身份租约、实例心跳与身份池大小的 Redis 存储；实例 id 为 主机名-进程号-随机串。 */

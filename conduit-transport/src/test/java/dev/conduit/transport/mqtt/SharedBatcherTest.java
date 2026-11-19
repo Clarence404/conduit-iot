@@ -3,6 +3,7 @@ package dev.conduit.transport.mqtt;
 import dev.conduit.common.bus.PublishResult;
 import dev.conduit.common.message.MessageType;
 import dev.conduit.common.message.RawMessage;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -219,6 +220,45 @@ class SharedBatcherTest {
 
         await().atMost(Duration.ofSeconds(2)).until(() -> committed.size() == 3);
         assertThat(committed).containsExactly("m2", "m3", "m4");
+    }
+
+    @Test
+    void anErrorFromTheBusDropsOnlyThatBatchAndLaterBatchesStillCommit() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        bus.respondWith((call, batch) -> {
+            if (call == 0) {
+                throw new StackOverflowError("simulated");
+            }
+            return FakeMessageBus.okResults(batch);
+        });
+        batcher = new SharedBatcher(bus, 1, Duration.ofMillis(1), FAST_BACKOFF, registry);
+
+        submit("lost", LIVE);
+        await().atMost(Duration.ofSeconds(2)).until(() -> bus.callCount() >= 1);
+        submit("after", LIVE);
+
+        await().atMost(Duration.ofSeconds(2)).until(() -> committed.size() == 1);
+        // 出错的那一批不回调（不 ACK，由 EMQX 在重连时重投），之后的批照常提交并回调
+        assertThat(committed).containsExactly("after");
+        assertThat(batcher.failures()).isEqualTo(1);
+        assertThat(registry.get("conduit.transport.batcher.failures").functionCounter().count()).isEqualTo(1);
+    }
+
+    @Test
+    void anErrorFromACallbackDoesNotStopOtherCallbacksOrLaterBatches() {
+        batcher = new SharedBatcher(bus, 2, LONG_DELAY, FAST_BACKOFF);
+        batcher.submit(message("m1"), LIVE, () -> {
+            throw new AssertionError("simulated");
+        });
+        submit("m2", LIVE);
+        await().atMost(Duration.ofSeconds(2)).until(() -> committed.size() == 1);
+
+        submit("m3", LIVE);
+        submit("m4", LIVE);
+
+        await().atMost(Duration.ofSeconds(2)).until(() -> committed.size() == 3);
+        assertThat(committed).containsExactly("m2", "m3", "m4");
+        assertThat(batcher.failures()).isEqualTo(1);
     }
 
     @Test

@@ -258,6 +258,53 @@ class IdentityAllocatorTest {
     }
 
     @Test
+    void fallbackToSinglePoolIgnoresLargerStoredPoolSize() {
+        AllocationProperties single = new AllocationProperties(1, Duration.ofSeconds(15), Duration.ofSeconds(5),
+                Duration.ofSeconds(2), Duration.ofSeconds(15), Duration.ofSeconds(10), 0.5);
+        IdentityAllocator fallback = new IdentityAllocator(store, i -> {
+            factoryCalls.add(i);
+            return adapters.computeIfAbsent(i, k -> new FakeAdapter(k, events));
+        }, single, clock, new SimpleMeterRegistry(), Runnable::run);
+        // 集群此前以 K = 64 运行过：Redis 里的 pool-size 仍是 64
+        store.members = 1;
+        store.pool = 64;
+
+        fallback.tick();
+        fallback.tick();
+
+        assertThat(fallback.poolSize()).isEqualTo(1);
+        assertThat(fallback.held()).containsExactly(0);
+        assertThat(factoryCalls).containsExactly(0);
+        assertThat(warnings("initial-pool-size = 1")).isEqualTo(1);
+    }
+
+    @Test
+    void allConnectedWhenNothingIsHeld() {
+        assertThat(allocator.allConnected()).isTrue();
+
+        store.members = 8;
+        store.pool = 4;
+        for (int i = 0; i < 4; i++) {
+            store.owners.put(i, "other");
+        }
+        allocator.tick();
+
+        assertThat(allocator.held()).isEmpty();
+        assertThat(allocator.allConnected()).isTrue();
+    }
+
+    @Test
+    void notAllConnectedWhileAHeldAdapterIsDown() {
+        store.members = 1;
+        store.pool = 4;
+        allocator.tick();
+
+        adapters.get(2).dropConnection();
+
+        assertThat(allocator.allConnected()).isFalse();
+    }
+
+    @Test
     void alertWhenMembersNearPool() {
         store.members = 33;
         store.pool = 64;

@@ -135,13 +135,12 @@ public class IdentityAllocator implements SmartLifecycle {
         return poolSize;
     }
 
-    /** 持有至少一个身份，且每个持有身份的适配器都已连接（供健康检查）。 */
+    /**
+     * 每个持有身份的适配器都已连接（供健康检查）。未持有任何身份时为 true：
+     * 实例数多于 K 时的空闲实例、或等待再平衡的实例都是正常状态，不应被判为 DOWN。
+     */
     public boolean allConnected() {
-        Set<Integer> ids = held.keySet();
-        if (ids.isEmpty()) {
-            return false;
-        }
-        for (int i : ids) {
+        for (int i : held.keySet()) {
             ProtocolAdapter adapter = adapters.get(i);
             if (adapter == null || !adapter.isConnected()) {
                 return false;
@@ -274,8 +273,25 @@ public class IdentityAllocator implements SmartLifecycle {
         members = n;
     }
 
-    /** K 只增不减：变大时采用并重算偏好序；变小时同一个值只 WARN 一次并忽略。 */
+    /**
+     * K 只增不减：变大时采用并重算偏好序；变小时同一个值只 WARN 一次并忽略。
+     * 回退开关 initial-pool-size = 1 时 K 固定为 1：此时适配器用普通订阅（是否共享订阅在启动时按
+     * initial-pool-size > 1 确定），若采用 Redis 里更大的 K，每个身份各有一份非共享订阅，消息会被重复投递 K 次。
+     * Redis 里的值不为 1 时同一个值只 WARN 一次并忽略。
+     */
     private void updatePoolSize(int k) {
+        if (props.initialPoolSize() == 1) {
+            if (poolSize != 1) {
+                poolSize = 1;
+                preference = List.of(0);
+            }
+            if (k != 1 && k != ignoredPoolSize) {
+                ignoredPoolSize = k;
+                log.warn("Ignoring identity pool size {} from Redis: initial-pool-size = 1 is the single-identity "
+                        + "fallback with a non-shared subscription, keeping 1", k);
+            }
+            return;
+        }
         int current = poolSize;
         if (k > current) {
             if (current > 0) {

@@ -110,7 +110,7 @@ public class RedisIdentityLeaseStore implements IdentityLeaseStore {
      * 生成实例 id：主机名-进程号-8 位随机十六进制。主机名取不到时用 unknown-host。
      * 同一主机上的多个进程、同一进程的多次调用都得到不同的 id。
      */
-    static String newInstanceId() {
+    public static String newInstanceId() {
         String host;
         try {
             host = InetAddress.getLocalHost().getHostName();

@@ -1,0 +1,22 @@
+# Linux only. Compose >= 2.24.4 is required for !reset.
+# docker compose -f docker-compose.yml -f docker-compose.host.yml up -d emqx
+# Host mode removes bridge/DNAT; it is an optional experiment, not a capacity guarantee.
+services:
+  emqx:
+    network_mode: host
+    ports: !reset []
+    networks: !reset []
+    # Container network sysctls cannot be applied to the host namespace.
+    # Configure host backlog limits separately if measurements require it.
+    sysctls: !reset {}
+    environment:
+      # Keep the externally used ports even when they differ from EMQX defaults.
+      EMQX_LISTENERS__TCP__DEFAULT__BIND: "${BIND_ADDR:-127.0.0.1}:${MQTT_PORT:-1883}"
+      EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "${BIND_ADDR:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}"
+      # Internal listener for transport only (zone transport, added 2026-11-16); base.hocon binds 0.0.0.0:1884,
+      # which in host mode would listen on every host interface, so pin it like the other published ports.
+      EMQX_LISTENERS__TCP__INTERNAL__BIND: "${BIND_ADDR:-127.0.0.1}:${MQTT_INTERNAL_PORT:-1884}"
+      # In bridge mode these listeners were not published. Preserve that exposure boundary.
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE: "false"
+      EMQX_LISTENERS__WS__DEFAULT__ENABLE: "false"
+      EMQX_LISTENERS__WSS__DEFAULT__ENABLE: "false"

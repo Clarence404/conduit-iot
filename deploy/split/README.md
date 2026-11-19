@@ -83,6 +83,46 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
 
 丢弃时会话里尚未投递的消息会丢失，所以要在设备流量低的时候做；第 4～7 条连接是新 clientId，不受影响。
 
+## 可选：Linux 宿主机网络对照
+
+`emqx/docker-compose.host.yml` 提供去掉 Docker 桥接与 DNAT 的可选模式，目标是降低收包路径开销。
+默认仍是桥接。2026-11-02 的6000台/每秒一条各三轮对照中，bridge三轮通过、host仅一轮通过，
+**没有取得稳定性能提升证据，暂不推荐启用**。不能据此断定host普遍较慢；bridge另有6500台首轮通过，
+但未重复、不称最大容量，详见[最终报告](../../docs/test-reports/2026-11-02-emqx-network-ab-results.md)。
+仅用于 Linux Docker Engine，要求 Docker Compose ≥ 2.24.4（使用 `!reset` 清除继承配置）。
+
+在 EMQX 主机的实际部署目录中执行，先确认没有压测或设备上报，并排空消息：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --no-deps emqx
+docker inspect conduit-emqx --format '{{.HostConfig.NetworkMode}}'
+docker exec conduit-emqx emqx ctl status
+docker exec conduit-emqx emqx ctl listeners
+```
+
+`NetworkMode` 应为 `host`。MQTT、transport 内部监听器（2026-11-16 起）与 Dashboard 显式监听 `.env` 的
+`BIND_ADDR`、`MQTT_PORT`、`MQTT_INTERNAL_PORT`、`EMQX_DASHBOARD_PORT`；原先没有发布的 SSL/WS/WSS 默认监听器关闭。数据卷、节点名、鉴权及共享订阅不变。
+宿主机网络没有端口映射保护，**其他已配置监听器以及 Erlang 分布式/RPC 端口也需核对宿主机防火墙**；
+不得仅凭 `ports` 已清空就认定暴露面相同。切换前确认端口占用；启用的自定义监听器需单独审查。
+
+该模式清除容器级 `sysctls`，不会自动修改宿主机全局参数。记录宿主机
+`net.core.somaxconn`、`net.ipv4.tcp_max_syn_backlog`，连接建立压力须与稳态消息处理分别分析。
+EMQX 重建会断开设备，内存会话不会跨重建保留；不能在发压中直接切换，否则会污染守恒判据。
+
+回到桥接（同样先停止发压并排空）：
+
+```bash
+docker compose -f docker-compose.yml up -d --no-deps emqx
+docker inspect conduit-emqx --format '{{.HostConfig.NetworkMode}}'
+```
+
+后续启停必须始终使用选定模式对应的文件组合，否则 Compose 会把网络模式切回去。
+配置回归检查：`python docs/script/loadtest/verify_host_network.py`，在仓库根运行；
+依赖已有实验室 SSH 配置，仅向应用 VM 上传模板及虚构凭据做解析，不启动容器、不读取运行中的 `.env`。
+实验顺序、验收与演示复现见
+[`2026-11-02-emqx-host-network-design.md`](../../docs/superpowers/specs/2026-11-02-emqx-host-network-design.md)。
+
 ## 容量参数
 
 EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（2026-10-30 所有者要求）；会话三项（窗口、队列、强杀）

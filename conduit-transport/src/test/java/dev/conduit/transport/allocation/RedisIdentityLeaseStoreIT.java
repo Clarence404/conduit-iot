@@ -9,12 +9,17 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** RedisIdentityLeaseStore 集成测试（真实 Redis）：身份租约的归属校验与过期、心跳返回按字典序排列的存活成员、身份池大小的一次性初始化。 */
+/**
+ * RedisIdentityLeaseStore 集成测试（真实 Redis）：身份租约的归属校验与过期、心跳返回按字典序排列的存活成员、
+ * 身份池大小的一次性初始化与非法值、旧版选主键的检测。
+ */
 class RedisIdentityLeaseStoreIT {
 
     static final String MEMBERS_KEY = "conduit:transport:members";
     static final String POOL_SIZE_KEY = "conduit:transport:pool-size";
+    static final String LEGACY_LEADER_KEY = "conduit:transport:leader";
 
     final StringRedisTemplate redis = TestBroker.redis();
     final Duration leaseTtl = Duration.ofSeconds(5);
@@ -29,6 +34,7 @@ class RedisIdentityLeaseStoreIT {
     void cleanKeys() {
         redis.delete(MEMBERS_KEY);
         redis.delete(POOL_SIZE_KEY);
+        redis.delete(LEGACY_LEADER_KEY);
         for (int i : new int[]{903, 904}) {
             redis.delete(RedisIdentityLeaseStore.identityKey(i));
         }
@@ -110,5 +116,29 @@ class RedisIdentityLeaseStoreIT {
         redis.opsForValue().set(POOL_SIZE_KEY, "128");
         assertThat(a.poolSize(64)).isEqualTo(128);
         assertThat(a.poolSize(64)).isEqualTo(128);
+    }
+
+    @Test
+    void poolSizeThatIsNotAPositiveIntegerIsRejected() {
+        RedisIdentityLeaseStore a = store(leaseTtl, "instance-a");
+
+        for (String bad : new String[]{"abc", "0", "-3", "1.5"}) {
+            redis.opsForValue().set(POOL_SIZE_KEY, bad);
+            assertThatThrownBy(() -> a.poolSize(64)).as("pool-size %s", bad)
+                    .isInstanceOf(InvalidPoolSizeException.class)
+                    .satisfies(e -> assertThat(((InvalidPoolSizeException) e).rawValue()).isEqualTo(bad));
+        }
+        assertThat(redis.opsForValue().get(POOL_SIZE_KEY)).as("an invalid value is left for the operator to fix")
+                .isEqualTo("1.5");
+    }
+
+    @Test
+    void detectsTheLegacyLeaderKey() {
+        RedisIdentityLeaseStore a = store(leaseTtl, "instance-a");
+        assertThat(a.legacyLeaderPresent()).isFalse();
+
+        redis.opsForValue().set(LEGACY_LEADER_KEY, "old-instance", Duration.ofSeconds(15));
+
+        assertThat(a.legacyLeaderPresent()).isTrue();
     }
 }

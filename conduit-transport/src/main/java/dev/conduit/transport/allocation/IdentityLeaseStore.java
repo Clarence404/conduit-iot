@@ -33,6 +33,16 @@ public interface IdentityLeaseStore {
     /** 把本实例从存活集合中移除（正常停止时调用，让其他实例尽快重新分摊）。 */
     void leave();
 
-    /** 读取身份池大小；尚未设置时以 SETNX 写入 initial 并返回实际生效值（并发写入时以先写者为准）。 */
+    /**
+     * 读取身份池大小；尚未设置时以 SETNX 写入 initial 并返回实际生效值（并发写入时以先写者为准）。
+     *
+     * @throws InvalidPoolSizeException 已设置的值不是正整数（非数字、0 或负数），由调用方保持当前 K
+     */
     int poolSize(int initial);
+
+    /**
+     * 旧版（单活多备）的选主键 {@code conduit:transport:leader} 是否存在：存在说明旧实例仍在运行或其锁尚未过期。
+     * 新旧版本不能混跑（旧版以同一组 clientId 连接，会与新版互相踢掉会话），新版据此暂停抢占身份。
+     */
+    boolean legacyLeaderPresent();
 }

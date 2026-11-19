@@ -32,7 +32,7 @@ import java.util.function.IntFunction;
  *
  * <p>每次检查（tick，默认每 2 秒）：写心跳读存活成员列表与 K → 按本实例在成员列表（字典序）中的位置计算精确配额
  * （{@link IdentityShares#quota}，各实例配额合计恰为 K、相差不超过 1）→ 续期全部持有的身份（失败立即停适配器）
- * → 检查断线的适配器（续期确认仍持有后重连）→ 不足配额时按偏好序抢占 → 超出配额且成员列表已稳定
+ * → 检查断线或启动失败的适配器（续期确认仍持有后重连 / 到期重试）→ 不足配额时按偏好序抢占 → 超出配额且成员列表已稳定
  * rebalance-stable 时按偏好序从后往前让出一个。另有 renewTick 每 renew-interval 单独续期一次。
  *
  * <p>安全规则：任何续期失败（返回 false 或抛异常）都先把该身份移出持有表（使适配器的 stillValid 立即为 false），
@@ -40,10 +40,17 @@ import java.util.function.IntFunction;
  * 一轮续期中只要出现一次 Redis 异常，其余未续期的身份也立即停掉，不再逐个等待命令超时（否则整轮可能拖过 lease-ttl）。
  *
  * <p>线程：tick 与 renewTick 在同一条调度线程上串行执行，计数、时钟与告警状态只由它读写；持有表是并发 Map，
- * 供适配器线程（stillValid）、健康检查与指标读取。适配器的启动（含退避重试）与断线重连在专用单线程执行器上进行，
- * 停止则在发现问题的线程上同步执行，不排队，可打断进行中的启动。测试经包级构造函数注入同步执行器，直接调用 tick。
+ * 供适配器线程（stillValid）、健康检查与指标读取。适配器的启动与断线重连在专用单线程执行器上进行，每个任务只尝试
+ * 一次：失败后记下该身份的下次尝试时刻（1s 起翻倍、最多 10s），由之后的 tick 到期重新提交——不在执行器线程上
+ * 循环重试，否则一个始终起不来的身份会占住唯一的线程，让本实例其他身份都无法启动。同一身份同一时刻最多一个
+ * 排队或执行中的任务。停止则在发现问题的线程上同步执行，不排队，可打断进行中的启动。
+ * 测试经包级构造函数注入同步执行器，直接调用 tick。
  *
- * <p>K 只增不减：读到更小的 K 时记 WARN 并忽略（缩小需要先排空会话，见 spec 第 4 节）。
+ * <p>K 只增不减：读到更小的 K 时记 WARN 并忽略（缩小需要先排空会话，见 spec 第 4 节）。Redis 中的 K 不是正整数时
+ * 记 ERROR（同一个值只记一次）并保持当前 K（尚无 K 时用 initial-pool-size），续期、抢占照常。
+ *
+ * <p>新旧版本不能混跑：旧版选主键 {@code conduit:transport:leader} 存在时（旧实例仍在运行或其锁未过期），
+ * 不抢占任何身份，每分钟最多记一次 ERROR；已持有的身份照常续期。
  */
 public class IdentityAllocator implements SmartLifecycle {
 
@@ -51,6 +58,8 @@ public class IdentityAllocator implements SmartLifecycle {
     static final Duration MAX_BACKOFF = Duration.ofSeconds(10);
     /** 扩容告警的最短间隔。 */
     static final Duration POOL_ALERT_INTERVAL = Duration.ofMinutes(10);
+    /** 检测到旧版选主键时 ERROR 的最短间隔。 */
+    static final Duration LEGACY_ALERT_INTERVAL = Duration.ofMinutes(1);
 
     private static final Logger log = LoggerFactory.getLogger(IdentityAllocator.class);
 
@@ -65,8 +74,13 @@ public class IdentityAllocator implements SmartLifecycle {
     private final Map<Integer, Long> held = new ConcurrentHashMap<>();
     /** 按身份序号缓存的适配器，每个序号只经 factory 创建一次，之后反复 start / stop。 */
     private final Map<Integer, ProtocolAdapter> adapters = new ConcurrentHashMap<>();
-    /** 正在重连的身份，避免同一身份重复提交重连任务。 */
-    private final Set<Integer> restarting = ConcurrentHashMap.newKeySet();
+    /** 有启动或重连任务在排队或执行的身份，保证同一身份不会同时有两个任务。 */
+    private final Set<Integer> pending = ConcurrentHashMap.newKeySet();
+    /**
+     * 等待（再次）启动的身份 → 任期、已失败次数与下次尝试时刻。抢到身份时以 0 次失败、立即到期写入，
+     * 启动成功后删除；任期不符的条目视为过期、被忽略。由调度线程与适配器线程并发读写。
+     */
+    private final Map<Integer, StartRetry> startRetries = new ConcurrentHashMap<>();
     private final AtomicLong terms = new AtomicLong();
 
     private final Counter acquiredCounter;
@@ -89,11 +103,19 @@ public class IdentityAllocator implements SmartLifecycle {
     private Instant lastPoolAlert;
     /** 上一次被忽略的更小 K：同一个值只 WARN 一次。 */
     private int ignoredPoolSize = -1;
+    /** 上一次拒绝的非法 K 原始值：同一个值只 ERROR 一次，读到合法值后清空。 */
+    private String rejectedPoolSize;
+    /** 上一次因旧版选主键记 ERROR 的时刻。 */
+    private Instant lastLegacyAlert;
     /** Redis 是否处于失败状态：只在状态切换时打 WARN / INFO，其余失败降为 DEBUG。 */
     private boolean redisFailing;
 
     private ScheduledExecutorService scheduler;
     private ExecutorService ownedExecutor;
+
+    /** 身份的待启动记录：任期 term 下已失败 failures 次，nextAttempt 起可再次尝试。 */
+    private record StartRetry(long term, int failures, Instant nextAttempt) {
+    }
 
     public IdentityAllocator(IdentityLeaseStore store, IntFunction<ProtocolAdapter> adapterFactory,
                              AllocationProperties props, Clock clock, MeterRegistry registry) {
@@ -193,6 +215,7 @@ public class IdentityAllocator implements SmartLifecycle {
         }
         List<Integer> toRelease = new ArrayList<>(held.keySet());
         held.clear();
+        startRetries.clear();
         adapters.forEach((i, adapter) -> stopAdapter(i, adapter));
         if (ownedExecutor != null) {
             ownedExecutor.shutdownNow();
@@ -234,7 +257,7 @@ public class IdentityAllocator implements SmartLifecycle {
         int k;
         try {
             memberList = store.heartbeat(props.memberTtl());
-            k = store.poolSize(props.initialPoolSize());
+            k = readPoolSize();
         } catch (RuntimeException e) {
             redisFailed("heartbeat", e);
             renewAll();
@@ -253,10 +276,62 @@ public class IdentityAllocator implements SmartLifecycle {
             return;
         }
         if (held.size() < quota) {
-            acquireUpTo(quota);
+            if (!legacyLeaderBlocks(now)) {
+                acquireUpTo(quota);
+            }
         } else if (held.size() > quota && isMembershipStable(now)) {
             releaseOne();
         }
+    }
+
+    /**
+     * 读 Redis 中的 K。值不是正整数时（运维写错）不当作 Redis 故障：同一个值只记一次 ERROR，返回当前 K
+     * （尚无 K 时为 initial-pool-size），本轮照常续期与抢占。Redis 不可达的异常照常抛出。
+     */
+    private int readPoolSize() {
+        String bad;
+        try {
+            int k = store.poolSize(props.initialPoolSize());
+            if (k >= 1) {
+                rejectedPoolSize = null;
+                return k;
+            }
+            bad = Integer.toString(k);
+        } catch (InvalidPoolSizeException e) {
+            bad = e.rawValue();
+        }
+        int keep = poolSize > 0 ? poolSize : props.initialPoolSize();
+        if (!bad.equals(rejectedPoolSize)) {
+            rejectedPoolSize = bad;
+            log.error("Ignoring invalid identity pool size \"{}\" in Redis key conduit:transport:pool-size "
+                    + "(must be a positive integer), keeping {}; set it to an integer >= the current size", bad, keep);
+        }
+        return keep;
+    }
+
+    /**
+     * 旧版选主键存在时返回 true（本轮不抢占），每 {@link #LEGACY_ALERT_INTERVAL} 最多记一次 ERROR。
+     * 检查出错按 Redis 故障处理，同样不抢占。
+     */
+    private boolean legacyLeaderBlocks(Instant now) {
+        boolean present;
+        try {
+            present = store.legacyLeaderPresent();
+        } catch (RuntimeException e) {
+            redisFailed("legacy leader check", e);
+            return true;
+        }
+        if (!present) {
+            return false;
+        }
+        if (lastLegacyAlert == null || !now.isBefore(lastLegacyAlert.plus(LEGACY_ALERT_INTERVAL))) {
+            lastLegacyAlert = now;
+            log.error("Redis key conduit:transport:leader exists: an old single-active transport is still running "
+                    + "or its lock has not expired. Instance {} acquires no identity until every old instance is "
+                    + "stopped and the key expires; old and new versions must not run together",
+                    store.instanceId());
+        }
+        return true;
     }
 
     /** 续期全部持有的身份，失败的立即停止适配器（见 renewAll）。生产上每 renew-interval 调用一次。 */
@@ -363,9 +438,10 @@ public class IdentityAllocator implements SmartLifecycle {
         return redisProblem == null;
     }
 
-    /** 丢失身份：先使 stillValid 失效，再同步停止适配器，不经执行器排队。 */
+    /** 丢失身份：先使 stillValid 失效，再同步停止适配器，不经执行器排队；不再重试启动。 */
     private void lose(int i, String problem) {
         held.remove(i);
+        startRetries.remove(i);
         lostCounter.increment();
         log.warn("Identity #{} lost by instance {} ({}), stopping its adapter", i, store.instanceId(), problem);
         ProtocolAdapter adapter = adapters.get(i);
@@ -375,32 +451,55 @@ public class IdentityAllocator implements SmartLifecycle {
     }
 
     /**
-     * 检查已续期的持有身份中是否有适配器需要重连：本轮续期已确认仍持有，在适配器线程上 stop 后重新 start。
-     * 同一身份同一时刻只有一个重连任务；重连途中丢失身份时启动会因 stillValid 为 false 而放弃。
+     * 检查已续期的持有身份（本轮续期已确认仍持有）：待启动且已到下次尝试时刻的，提交一次启动；
+     * 适配器断线需要重连的，在适配器线程上 stop 后提交一次启动。已有任务在排队或执行的身份跳过。
+     * 任务执行前丢失身份时，启动会因 stillValid 为 false 而放弃。
      */
     private void superviseAdapters() {
+        Instant now = clock.instant();
         for (Map.Entry<Integer, Long> entry : held.entrySet()) {
             int i = entry.getKey();
             long t = entry.getValue();
             ProtocolAdapter adapter = adapters.get(i);
-            if (adapter == null || !adapter.needsRestart() || !restarting.add(i)) {
+            if (adapter == null || pending.contains(i)) {
                 continue;
             }
-            boolean submitted = submit(() -> {
-                try {
-                    if (!stillHolds(i, t)) {
-                        return;
-                    }
+            StartRetry retry = startRetries.get(i);
+            if (retry != null && retry.term() == t) {
+                if (!now.isBefore(retry.nextAttempt())) {
+                    submitStart(i, adapter, t, false);
+                }
+            } else if (adapter.needsRestart()) {
+                submitStart(i, adapter, t, true);
+            }
+        }
+    }
+
+    /**
+     * 为身份 i（任期 t）提交一次启动任务；该身份已有任务在排队或执行时不提交（之后的 tick 会再检查）。
+     *
+     * @param reconnect 为 true 时先 stop 断线的适配器再启动（断线重连）
+     */
+    private void submitStart(int i, ProtocolAdapter adapter, long t, boolean reconnect) {
+        if (!pending.add(i)) {
+            return;
+        }
+        boolean submitted = submit(() -> {
+            try {
+                if (!stillHolds(i, t)) {
+                    return;
+                }
+                if (reconnect) {
                     log.info("Reconnecting adapter for identity #{} on instance {}", i, store.instanceId());
                     adapter.stop();
-                    startAdapter(i, adapter, t);
-                } finally {
-                    restarting.remove(i);
                 }
-            });
-            if (!submitted) {
-                restarting.remove(i);
+                startAdapter(i, adapter, t);
+            } finally {
+                pending.remove(i);
             }
+        });
+        if (!submitted) {
+            pending.remove(i);
         }
     }
 
@@ -428,10 +527,12 @@ public class IdentityAllocator implements SmartLifecycle {
             }
             long t = terms.incrementAndGet();
             ProtocolAdapter adapter = adapters.computeIfAbsent(i, adapterFactory::apply);
+            // 先登记待启动：若该身份上一任期的任务仍在排队（本次提交被跳过），之后的 tick 会补交
+            startRetries.put(i, new StartRetry(t, 0, clock.instant()));
             held.put(i, t);
             acquiredCounter.increment();
             log.info("Identity #{} acquired by instance {}", i, store.instanceId());
-            submit(() -> startAdapter(i, adapter, t));
+            submitStart(i, adapter, t, false);
         }
     }
 
@@ -446,6 +547,7 @@ public class IdentityAllocator implements SmartLifecycle {
                 continue;
             }
             held.remove(i);
+            startRetries.remove(i);
             ProtocolAdapter adapter = adapters.get(i);
             if (adapter != null) {
                 stopAdapter(i, adapter);
@@ -470,46 +572,47 @@ public class IdentityAllocator implements SmartLifecycle {
     }
 
     /**
-     * 在仍以任期 t 持有身份 i 时反复尝试启动适配器，失败按 1s 起翻倍、最多 10s 退避。
-     * 只有首次失败打 WARN，之后打 DEBUG；成功后若发现已失去身份，立即停止它。线程被中断时放弃。
+     * 在仍以任期 t 持有身份 i 时尝试启动一次适配器（在适配器线程上执行）。
+     * 成功：删除待启动记录，此前失败过则 INFO 记录失败次数；成功后若发现已失去身份，立即停止它。
+     * 失败：记下失败次数与下次尝试时刻（1s 起翻倍、最多 10s），由之后的 tick 重新提交；首次失败 WARN，之后 DEBUG。
+     * 失败时已失去身份则不再记录、不再重试。
      */
     private void startAdapter(int i, ProtocolAdapter adapter, long t) {
-        for (int attempt = 0; stillHolds(i, t); attempt++) {
-            try {
-                // 把持有校验交给适配器，使其在发出 CONNECT 与订阅前再确认一次，失去身份后不会再连上 broker
-                adapter.start(() -> stillHolds(i, t));
-                if (!stillHolds(i, t)) {
-                    adapter.stop();
-                    return;
-                }
-                if (attempt > 0) {
-                    log.info("Adapter {} for identity #{} connected after {} failed attempts", adapter.name(), i,
-                            attempt);
-                } else {
-                    log.info("Adapter {} for identity #{} connected", adapter.name(), i);
-                }
+        if (!stillHolds(i, t)) {
+            return;
+        }
+        StartRetry previous = startRetries.get(i);
+        int failed = previous != null && previous.term() == t ? previous.failures() : 0;
+        try {
+            // 把持有校验交给适配器，使其在发出 CONNECT 与订阅前再确认一次，失去身份后不会再连上 broker
+            adapter.start(() -> stillHolds(i, t));
+        } catch (RuntimeException e) {
+            if (!stillHolds(i, t)) {
+                log.debug("Adapter {} start abandoned after identity #{} was given up: {}", adapter.name(), i,
+                        e.getMessage());
                 return;
-            } catch (RuntimeException e) {
-                if (!stillHolds(i, t)) {
-                    log.debug("Adapter {} start abandoned after identity #{} was given up: {}", adapter.name(), i,
-                            e.getMessage());
-                    return;
-                }
-                Duration delay = backoff(attempt);
-                if (attempt == 0) {
-                    log.warn("Adapter {} for identity #{} failed to start, retrying in {} ms: {}", adapter.name(),
-                            i, delay.toMillis(), e.getMessage());
-                } else {
-                    log.debug("Adapter {} for identity #{} failed to start (attempt {}), retrying in {} ms: {}",
-                            adapter.name(), i, attempt + 1, delay.toMillis(), e.getMessage());
-                }
-                try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
             }
+            Duration delay = backoff(failed);
+            startRetries.compute(i, (k, old) -> stillHolds(i, t)
+                    ? new StartRetry(t, failed + 1, clock.instant().plus(delay)) : old);
+            if (failed == 0) {
+                log.warn("Adapter {} for identity #{} failed to start, retrying in {} ms: {}", adapter.name(), i,
+                        delay.toMillis(), e.getMessage());
+            } else {
+                log.debug("Adapter {} for identity #{} failed to start (attempt {}), retrying in {} ms: {}",
+                        adapter.name(), i, failed + 1, delay.toMillis(), e.getMessage());
+            }
+            return;
+        }
+        startRetries.computeIfPresent(i, (k, old) -> old.term() == t ? null : old);
+        if (!stillHolds(i, t)) {
+            adapter.stop();
+            return;
+        }
+        if (failed > 0) {
+            log.info("Adapter {} for identity #{} connected after {} failed attempts", adapter.name(), i, failed);
+        } else {
+            log.info("Adapter {} for identity #{} connected", adapter.name(), i);
         }
     }
 

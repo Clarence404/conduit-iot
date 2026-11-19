@@ -9,6 +9,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.awaitility.Awaitility;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -25,6 +27,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BooleanSupplier;
 import java.util.stream.IntStream;
 
@@ -262,6 +266,81 @@ class IdentityAllocatorTest {
     }
 
     @Test
+    void anInvalidStoredPoolSizeKeepsTheCurrentKAndRenewals() {
+        store.members = 1;
+        store.pool = 4;
+        allocator.tick();
+        events.clear();
+
+        store.invalidPool = "abc";
+        allocator.tick();
+        allocator.tick();
+
+        // 非法值不是 Redis 不可达：照常续期、保持当前 K，同一个值只记一次 ERROR
+        assertThat(allocator.poolSize()).isEqualTo(4);
+        assertThat(allocator.held()).containsExactlyInAnyOrder(0, 1, 2, 3);
+        assertThat(events).contains("renew 0", "renew 3");
+        assertThat(errors("abc")).isEqualTo(1);
+        assertThat(warnings("Cannot reach Redis")).isZero();
+
+        store.invalidPool = null;
+        store.pool = 0;
+        allocator.tick();
+        allocator.tick();
+        assertThat(allocator.poolSize()).isEqualTo(4);
+        assertThat(allocator.held()).hasSize(4);
+        assertThat(errors("\"0\"")).isEqualTo(1);
+
+        store.pool = 8;
+        allocator.tick();
+        assertThat(allocator.poolSize()).isEqualTo(8);
+        assertThat(allocator.held()).hasSize(8);
+    }
+
+    @Test
+    void anInvalidStoredPoolSizeBeforeAnyKFallsBackToTheInitialPoolSize() {
+        store.members = 1;
+        store.invalidPool = "-";
+
+        allocator.tick();
+
+        assertThat(allocator.poolSize()).isEqualTo(PROPS.initialPoolSize());
+        assertThat(allocator.held()).containsExactlyInAnyOrder(0, 1, 2, 3);
+        assertThat(errors("\"-\"")).isEqualTo(1);
+    }
+
+    @Test
+    void aLegacyLeaderKeyBlocksAcquisitionButNotRenewal() {
+        store.members = 1;
+        store.pool = 4;
+        store.legacyLeader = true;
+
+        allocator.tick();
+        allocator.tick();
+
+        assertThat(allocator.held()).isEmpty();
+        assertThat(errors("conduit:transport:leader")).isEqualTo(1);
+
+        // 旧实例停止、键过期后照常抢占
+        store.legacyLeader = false;
+        allocator.tick();
+        assertThat(allocator.held()).containsExactlyInAnyOrder(0, 1, 2, 3);
+
+        // 已持有的身份照常续期，只是不再抢新的；ERROR 每分钟最多一次
+        store.legacyLeader = true;
+        store.pool = 8;
+        events.clear();
+        allocator.tick();
+        assertThat(allocator.held()).containsExactlyInAnyOrder(0, 1, 2, 3);
+        assertThat(events).contains("renew 0", "renew 1", "renew 2", "renew 3");
+        assertThat(errors("conduit:transport:leader")).isEqualTo(1);
+        clock.advance(Duration.ofMinutes(1));
+        allocator.tick();
+        assertThat(errors("conduit:transport:leader")).isEqualTo(2);
+        assertThat(allocator.held()).hasSize(4);
+    }
+
+    @Test
     void fallbackToSinglePoolIgnoresLargerStoredPoolSize() {
         AllocationProperties single = new AllocationProperties(1, Duration.ofSeconds(15), Duration.ofSeconds(5),
                 Duration.ofSeconds(2), Duration.ofSeconds(15), Duration.ofSeconds(10), 0.5);
@@ -365,6 +444,140 @@ class IdentityAllocatorTest {
         assertThat(adapter.starts).isEqualTo(2);
         assertThat(adapter.connected).isFalse();
         assertThat(allocator.held()).isEmpty();
+    }
+
+    @Test
+    @Timeout(10)
+    void anIdentityThatKeepsFailingToStartDoesNotBlockOthersOnTheSameExecutor() throws Exception {
+        ExecutorService single = Executors.newSingleThreadExecutor();
+        try {
+            IdentityAllocator shared = new IdentityAllocator(store, i -> adapters.computeIfAbsent(i,
+                    k -> new FakeAdapter(k, events)), PROPS, clock, new SimpleMeterRegistry(), single);
+            FakeAdapter broken = new FakeAdapter(1, events);
+            broken.failStarts = true;
+            adapters.put(1, broken);
+            store.members = 1;
+            store.pool = 3;
+
+            shared.tick();
+
+            // 一个身份一直起不来，不能占住唯一的适配器线程，让同一实例的其他身份也连不上
+            Awaitility.await().atMost(Duration.ofSeconds(3)).until(() -> adapters.containsKey(0)
+                    && adapters.containsKey(2) && adapters.get(0).connected && adapters.get(2).connected);
+            assertThat(broken.connected).isFalse();
+            assertThat(shared.held()).containsExactlyInAnyOrder(0, 1, 2);
+        } finally {
+            single.shutdownNow();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void aFailedStartIsRetriedOnLaterTicksWithBackoff() {
+        FakeAdapter broken = new FakeAdapter(1, events);
+        broken.failStarts = true;
+        adapters.put(1, broken);
+        store.members = 1;
+        store.pool = 3;
+
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(1);
+        assertThat(adapters.get(0).connected).isTrue();
+        assertThat(adapters.get(2).connected).isTrue();
+
+        // 退避 1s：未到时间不重试
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(1);
+        clock.advance(Duration.ofSeconds(1));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(2);
+        // 第二次失败后退避 2s
+        clock.advance(Duration.ofSeconds(1));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(2);
+        clock.advance(Duration.ofSeconds(1));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(3);
+        // 退避封顶 10s
+        clock.advance(Duration.ofSeconds(4));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(4);
+        clock.advance(Duration.ofSeconds(8));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(5);
+        clock.advance(Duration.ofSeconds(9));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(5);
+        clock.advance(Duration.ofSeconds(1));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(6);
+
+        broken.failStarts = false;
+        clock.advance(Duration.ofSeconds(10));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(7);
+        assertThat(broken.connected).isTrue();
+        assertThat(allocator.allConnected()).isTrue();
+        assertThat(warnings("failed to start")).isEqualTo(1);
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.INFO
+                && e.getFormattedMessage().contains("connected after 6 failed attempts"));
+
+        // 已恢复：之后不再重试
+        clock.advance(Duration.ofSeconds(30));
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(7);
+    }
+
+    @Test
+    @Timeout(10)
+    void aLostIdentityIsNotRetried() {
+        FakeAdapter broken = new FakeAdapter(1, events);
+        broken.failStarts = true;
+        adapters.put(1, broken);
+        store.members = 1;
+        store.pool = 3;
+        allocator.tick();
+        assertThat(broken.starts).isEqualTo(1);
+
+        store.owners.put(1, "other");
+        clock.advance(Duration.ofSeconds(1));
+        allocator.tick();
+        assertThat(allocator.held()).containsExactlyInAnyOrder(0, 2);
+        int startsAfterLoss = broken.starts;
+
+        for (int r = 0; r < 10; r++) {
+            clock.advance(Duration.ofSeconds(10));
+            allocator.tick();
+        }
+        assertThat(broken.starts).isEqualTo(startsAfterLoss).isLessThanOrEqualTo(1);
+    }
+
+    @Test
+    @Timeout(10)
+    void anIdentityNeverHasTwoQueuedStartTasks() {
+        List<Runnable> queued = new ArrayList<>();
+        IdentityAllocator manual = new IdentityAllocator(store, i -> adapters.computeIfAbsent(i,
+                k -> new FakeAdapter(k, events)), PROPS, clock, new SimpleMeterRegistry(), queued::add);
+        FakeAdapter broken = new FakeAdapter(1, events);
+        broken.failStarts = true;
+        adapters.put(1, broken);
+        store.members = 1;
+        store.pool = 3;
+
+        manual.tick();
+        assertThat(queued).hasSize(3);
+        clock.advance(Duration.ofSeconds(30));
+        manual.tick();
+        assertThat(queued).as("start tasks still queued are not submitted again").hasSize(3);
+
+        new ArrayList<>(queued).forEach(Runnable::run);
+        queued.clear();
+        manual.tick();
+        assertThat(queued).as("retry waits for the backoff").isEmpty();
+        clock.advance(Duration.ofSeconds(1));
+        manual.tick();
+        manual.tick();
+        assertThat(queued).as("exactly one retry for the failed identity").hasSize(1);
     }
 
     @Test
@@ -479,6 +692,12 @@ class IdentityAllocatorTest {
         return registry.get("conduit.transport.identities.moved").tag("reason", reason).counter().count();
     }
 
+    private long errors(String text) {
+        return logs.list.stream()
+                .filter(e -> e.getLevel() == Level.ERROR && e.getFormattedMessage().contains(text))
+                .count();
+    }
+
     private long warnings(String text) {
         return logs.list.stream()
                 .filter(e -> e.getLevel() == Level.WARN && e.getFormattedMessage().contains(text))
@@ -499,6 +718,10 @@ class IdentityAllocatorTest {
         int pool = 4;
         int leaves;
         boolean down;
+        /** 非 null 时 poolSize 像读到非法值一样抛出 InvalidPoolSizeException。 */
+        String invalidPool;
+        /** 旧版选主键是否存在。 */
+        boolean legacyLeader;
 
         FakeStore(String id, List<String> events) {
             this.id = id;
@@ -564,7 +787,16 @@ class IdentityAllocatorTest {
         @Override
         public int poolSize(int initial) {
             checkUp();
+            if (invalidPool != null) {
+                throw new InvalidPoolSizeException(invalidPool);
+            }
             return pool;
+        }
+
+        @Override
+        public boolean legacyLeaderPresent() {
+            checkUp();
+            return legacyLeader;
         }
     }
 
@@ -650,6 +882,11 @@ class IdentityAllocatorTest {
                 public int poolSize(int initial) {
                     return pool;
                 }
+
+                @Override
+                public boolean legacyLeaderPresent() {
+                    return false;
+                }
             };
         }
     }
@@ -662,6 +899,8 @@ class IdentityAllocatorTest {
         int stops;
         volatile boolean connected;
         volatile boolean restartRequested;
+        /** 为 true 时每次 start 都像连不上 broker 一样抛异常。 */
+        volatile boolean failStarts;
         BooleanSupplier lastStillValid;
 
         FakeAdapter(int identity, List<String> events) {
@@ -680,6 +919,9 @@ class IdentityAllocatorTest {
             lastStillValid = stillValid;
             if (!stillValid.getAsBoolean()) {
                 throw new IllegalStateException("start no longer valid");
+            }
+            if (failStarts) {
+                throw new IllegalStateException("broker refused the connection");
             }
             events.add("start " + identity);
             connected = true;

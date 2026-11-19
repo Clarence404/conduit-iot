@@ -18,6 +18,7 @@ import java.util.UUID;
  *       保证租约过期被他人接管后，旧持有者的续期与释放都不生效。</li>
  *   <li>心跳：有序集合 {@code conduit:transport:members}，分值为 Redis 服务器毫秒时间。</li>
  *   <li>池大小：字符串键 {@code conduit:transport:pool-size}。</li>
+ *   <li>旧版选主键 {@code conduit:transport:leader}：只检查是否存在，从不写入。</li>
  * </ul>
  */
 public class RedisIdentityLeaseStore implements IdentityLeaseStore {
@@ -25,6 +26,8 @@ public class RedisIdentityLeaseStore implements IdentityLeaseStore {
     static final String IDENTITY_KEY_PREFIX = "conduit:transport:id:";
     static final String MEMBERS_KEY = "conduit:transport:members";
     static final String POOL_SIZE_KEY = "conduit:transport:pool-size";
+    /** 旧版单活多备的选主锁键（值为旧实例 id，TTL 15s）。 */
+    static final String LEGACY_LEADER_KEY = "conduit:transport:leader";
 
     private static final DefaultRedisScript<Long> ACQUIRE = new DefaultRedisScript<>(
             "local v = redis.call('GET', KEYS[1]) "
@@ -112,7 +115,24 @@ public class RedisIdentityLeaseStore implements IdentityLeaseStore {
             // 再读一次：并发写入时以先写者为准，所有实例看到同一个值
             value = redis.opsForValue().get(POOL_SIZE_KEY);
         }
-        return value == null ? initial : Integer.parseInt(value.trim());
+        if (value == null) {
+            return initial;
+        }
+        int k;
+        try {
+            k = Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            throw new InvalidPoolSizeException(value);
+        }
+        if (k < 1) {
+            throw new InvalidPoolSizeException(value);
+        }
+        return k;
+    }
+
+    @Override
+    public boolean legacyLeaderPresent() {
+        return Boolean.TRUE.equals(redis.hasKey(LEGACY_LEADER_KEY));
     }
 
     /**

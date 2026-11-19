@@ -52,7 +52,7 @@
 
 **上行链路**
 1. 设备经 MQTT 接入 EMQX，EMQX 同步回调 `conduit-server` 鉴权。
-2. 主 `conduit-transport` 把上报组装为 `RawMessage`，写入 Redis Streams `conduit:stream:up`。
+2. `conduit-transport` 各实例同时工作，持有身份的连接收到上报后组装为 `RawMessage`，实例内合批写入 Redis Streams `conduit:stream:up`。
 3. server 以消费组拉取，解码、校验后写入 InfluxDB 3 的 `property` 表和 Redis 最新值。
 
 **存储与前端**
@@ -65,11 +65,11 @@
 | 模块 | 职责 |
 |---|---|
 | `conduit-common` | `MessageBus` 接口与 Redis Streams 实现、协议无关的 `RawMessage` |
-| `conduit-transport` | 协议接入层，单活多备（Redis 选主）。主实例开 `connections` 条（默认 8）内存持久会话连接，经 EMQX 只供它使用的内部监听器（1884）以共享订阅分摊投递；把报文攒成微批写入总线；经 EMQX REST API 按连接监控会话；不做业务解析 |
+| `conduit-transport` | 协议接入层，身份池多活：所有实例同时工作，经 Redis 租约分摊 K 个 MQTT 身份（默认 64），每个身份一条内存持久会话连接，经 EMQX 只供它使用的内部监听器（1884）以共享订阅分摊投递；实例内各连接合批写入总线；经 EMQX REST API 监控本实例持有的会话；不做业务解析 |
 | `conduit-server` | EMQX 鉴权回调、总线消费流水线（解码 → 物模型校验 → 时序库 / 最新值）、REST API、多租户与用户、邀请 / 会话、租户内组织与设备归属 |
 | `conduit-simulator` | 演示设备模拟器与可靠上报参考实现：自动建演示产品 / 设备，按物模型上报；收到业务回执才删待确认消息，超时重发、队列满背压 |
 | `conduit-ui` | Vue 3 + TypeScript + Element Plus + ECharts |
-| `conduit-e2e` | `-Pe2e` 端到端测试：Testcontainers + 本地 jar，五个故障场景不丢数据 |
+| `conduit-e2e` | `-Pe2e` 端到端测试：Testcontainers + 本地 jar，3 个 transport，10 个场景（故障、扩缩容、调大 K）不丢数据 |
 | `deploy/` | `dev/` 开发基础服务、`standalone/` 独立部署、`split/` EMQX 与应用分机、`demo/` 演示初始化脚本、`package.sh` 打包 |
 
 ### 1.2 关键设计决定
@@ -216,7 +216,7 @@
 - transport 离线期间，消息排在会话 mqueue 中，重连后补发。
 - 默认 `EMQX_MAX_MQUEUE_LEN` 50000：mqueue 与连接堆上限（256MB，实际按 1.5 倍触发）共享内存，**调大前必须确认 `heap_size` 余量，不得上调堆上限**。2026-11-12/13 实测：过载时 10 万条放不下，连接先被堆超限强杀；5 万条零强杀。全部部署包默认已为 5 万。
 - 队列溢出会丢弃并计入 `dropped_msgs`；EMQX 重启会丢未投递的消息。
-- 集中补传洪峰（2.5 万台断网 5 分钟后同时恢复）会让 transport 订阅连接因信箱溢出被 `force_shutdown` 强杀，内存会话随之销毁，排队与在途消息静默丢失；4 条全被杀时还会按 `no_subscribers` 丢弃。带 `id` 的设备收不到回执会重发，不带 `id` 的会静默丢数（2026-11-16 实测）。已由 transport 内部监听器与 zone 处理，见「transport 单活多备与共享订阅」。
+- 集中补传洪峰（2.5 万台断网 5 分钟后同时恢复）会让 transport 订阅连接因信箱溢出被 `force_shutdown` 强杀，内存会话随之销毁，排队与在途消息静默丢失；4 条全被杀时还会按 `no_subscribers` 丢弃。带 `id` 的设备收不到回执会重发，不带 `id` 的会静默丢数（2026-11-16 实测）。已由 transport 内部监听器与 zone 处理，见「transport 身份池多活」。
 
 **端到端可靠上报**（V0.2-R2）
 
@@ -232,50 +232,61 @@
 - 幂等依靠同设备同 `ts` 覆盖，尚无按 `id` 去重。
 - 不带 `id` 的设备只有逐跳 QoS 1 保证，EMQX 重启或队列溢出时会丢。
 
-**transport 单活多备与共享订阅**（V0.2-R；共享订阅 10-29）
+**transport 身份池多活**（2026-11-19，`2026-11-17-conduit-transport-multi-active-design.md`；共享订阅 10-29，内部监听器 11-16）
 
-> 2026-11-17：单活多备是 V0.2-R 为了磁盘持久会话而被迫采用的，其前提已不存在，属于历史包袱。所有者决定保留 transport，改为身份池多活的横向扩展，见 `docs/roadmap-saas.md` 第 2 节架构短板第 1 项。
+*身份池*
+- 所有 transport 实例同时工作，共享 K 个 MQTT 身份（默认 64）。一个身份就是一个固定 clientId 的连接与内存持久会话，也是共享订阅组的一个成员，不承载数据。
+- K 由 `TRANSPORT_POOL_SIZE` 设定（兼容旧变量 `TRANSPORT_MQTT_CONNECTIONS`），同时决定 `conduit.transport.mqtt.connections` 与 `conduit.transport.allocation.initial-pool-size`，两者不等则启动失败。首个实例把 K 写入 Redis `conduit:transport:pool-size`，此后以 Redis 为准。
+- 为什么身份要固定：共享订阅成员离线时，落给它的消息排进它的会话，不改派。实例宕机后必须由别的实例用同一 clientId 接管会话，否则这一份消息会卡在 EMQX 直到会话过期。
+
+*分配*（`allocation` 包，`IdentityAllocator`）
+- Redis 键：`conduit:transport:id:{i}` 为身份租约，值为 instanceId，TTL 15s，每 5s 续期；`conduit:transport:members` 为存活实例（zset，分值取 Redis `TIME` 毫秒，15s 无心跳即视为下线）。抢占、续期、释放都由 Lua 比对 instanceId。旧选主键 `conduit:transport:leader` 不再使用。
+- 每 2s 检查一次：写心跳，读成员列表（字典序）与 K；本实例配额 = `⌊K/N⌋ + (p < K mod N ? 1 : 0)`，p 为本实例位置，配额合计恰为 K，各实例相差不超过 1；续期全部持有的身份；不足配额时按 rendezvous hash 偏好序抢占；超出配额且成员列表连续 10s 不变时，每次让出一个（停适配器 → 断开 → 释放租约）。
+- 续期失败（被他人占有、已过期或 Redis 出错）立即停止该身份的适配器：宁可短暂没人接，也不让两个实例同时连同一个 clientId。一轮中出现 Redis 异常时，其余身份一并停掉。
+- 实例宕机：租约与心跳在 15s 内过期，其他实例下一轮接手，期间消息排在 EMQX 会话队列。正常停止时释放全部租约并离开成员集合（`stop_grace_period: 20s`）。
+- 不用 HiveMQ 自动重连：断线的身份由分配器续期确认仍持有后再重连；SUBACK 含错误码视为失败。Redis 命令超时 2s。
+- **新旧版本不能混跑**：旧版靠选主锁持有全部身份，与新版同时运行会互相踢掉连接。升级时先停全部旧实例。
+
+*调大 K*
+- 执行 `redis-cli SET conduit:transport:pool-size <新 K>`，只能调大。各实例下一轮（≤ 2s）读到并抢占新身份；新身份按 zone `transport` 的参数建会话，自动加入共享组。调大前先按「新 K × 单连接队列」核对 EMQX 主机内存。
+- 不支持缩小 K：读到更小的值记 WARN 并忽略。多出的会话要先排空才能移除，留到后续。
+- 存活实例数超过 K × 0.5 时记 WARN（每 10 分钟最多一次），提示调大 K。
 
 *连接与会话*
-- 主实例开 `conduit.transport.mqtt.connections` 条连接（默认 8，2026-11-16 由 4 调整），`cleanStart=false`，会话保留 86400 秒，订阅选项 `retainHandling=DO_NOT_SEND`。
-- **连 EMQX 的内部监听器 `tcp:internal`（容器内 1884，zone `transport`）**，设备连 `tcp:default`（1883）。该 zone 只放宽信箱（20 万）与会话队列（10 万），堆上限与在途窗口沿用全局值；8 条连接合计约 80 万条缓冲。原因：断网补传洪峰把订阅连接信箱冲过 1 万被强杀、内存会话丢失（2026-11-16 实测）。
+- 每个身份 `cleanStart=false`，会话保留 86400 秒，订阅选项 `retainHandling=DO_NOT_SEND`。
+- **连 EMQX 的内部监听器 `tcp:internal`（容器内 1884，zone `transport`）**，设备连 `tcp:default`（1883）。该 zone 只放宽信箱（20 万）与单连接会话队列（1.5 万，64 个身份合计约 96 万条缓冲），堆上限与在途窗口沿用全局值。调大 K 时按 K × 单连接队列重估总缓冲。原因：断网补传洪峰把订阅连接信箱冲过 1 万被强杀、内存会话丢失（2026-11-16 实测）。
 - 内部监听器有自己的鉴权链，回调带 `X-Conduit-Listener: internal`，server 只放行 transport，设备一律拒绝（`device_on_internal_listener`）。
-- **升级注意**：会话参数在创建时固定，接管旧会话不会换成新 zone 的队列上限。升级后对旧 clientId 执行一次 `emqx ctl clients kick`（丢弃旧会话，空闲时做）；新增的第 4～7 条直接按新 zone 创建。
-- 连接数大于 1 时订阅共享订阅 `$share/conduit-transport/conduit/+/+/up/#`。
-- 原因：EMQX 每条连接是一个单核封顶的 Erlang 进程，单连接时全平台上行挤过同一进程，信箱持续增长直至 `mailbox_overflow` 被杀（recon 实测）。
+- K 大于 1 时订阅共享订阅 `$share/conduit-transport/conduit/+/+/up/#`。原因：EMQX 每条连接是一个单核封顶的 Erlang 进程，单连接时全平台上行挤过同一进程，信箱持续增长直至 `mailbox_overflow` 被杀（recon 实测）。
+- **升级注意**：会话参数在创建时固定，接管旧会话不会换成新 zone 的队列上限。升级后对旧 clientId 执行一次 `emqx ctl clients kick`（丢弃旧会话，空闲时做），步骤见 `deploy/split/README.md`。
 
 *clientId*
-- 第 0 条为 `conduit-transport`，第 i 条为 `conduit-transport-i`。
+- 身份 0 为 `conduit-transport`，身份 i 为 `conduit-transport-i`。
 - **必须保留 `conduit-` 前缀**，transport 超级用户鉴权依赖它。
 
-*从单连接升级*
-- 第 0 条接管旧会话、补发后，**退订旧的非共享过滤器** `conduit/+/+/up/#`。
-- EMQX 回 `NO_SUBSCRIPTIONS_EXISTED` 视为成功；其他原因码由协调器重试。
+*身份 0 的职责*
+- 持有身份 0 的实例订阅上下线事件 `$SYS/...`，并在从单连接升级时**退订旧的非共享过滤器** `conduit/+/+/up/#`。
+- 退订时 EMQX 回 `NO_SUBSCRIPTIONS_EXISTED` 视为成功；其他原因码视为启动失败，由分配器重试。
 
 *分发与回退*
-- 上下线事件 `$SYS/...` 只由第 0 条订阅。
-- 分发策略 `mqtt.shared_subscription_strategy = hash_clientid`，单设备保序。**键在 `mqtt` 下**，写成 `broker` 下会被静默忽略。
-- `connections=1` 即回退开关：旧 clientId、普通订阅、不退订。
+- 分发策略 `mqtt.shared_subscription_strategy = round_robin`，负载最均匀。下游不依赖顺序：最新值按测点比较 ts，InfluxDB 按（序列, ts）幂等，在线状态有 `since` 守护。**键在 `mqtt` 下**，写成 `broker` 下会被静默忽略。
+- K = 1 即回退开关：只有一个身份、普通订阅、不退订，由字典序最小的存活实例持有（id 更小的实例后加入时，成员稳定 10s 后交接一次）。此时忽略 Redis 中的其他值，也不支持从 1 调大。
+- **从 K = 1 改回多身份前，先删除 Redis 的 `conduit:transport:pool-size`**：K = 1 的实例会把它初始化为 1，而 K 只增不减。
 
-*成员离线*
-- 共享订阅成员离线时，落给它的消息排进其会话、重连后补发，不改派。
-- 因此主备切换时新主以同一组 clientId 接管即可。若只有一条长时间断开，约 1/K 流量会滞留。
-
-*选主*
-- Redis 键 `conduit:transport:leader`，由 Lua 抢锁：键不存在则写入；键已是本实例 id 则续期，视为抢到。续期与释放同样比对 id。
-- ttl 15s，续期间隔 5s，抢锁间隔 2s；只有主实例连接 EMQX。
-- 续期失败立即断开并转为备用；正常停止时释放锁（`stop_grace_period: 20s`）。
-- 不用 HiveMQ 自动重连：由协调器先确认仍持锁再重连；SUBACK 含错误码视为失败。
-- Redis 命令超时 2s。
-
-*日志与健康检查*
-- 日志：首次失败 WARN，后续重试 DEBUG，恢复与角色变化 INFO。
-- 健康明细 `components.leader.details`：`role` / `instanceId` / `connected`；`connected` 只在已连接且订阅获批后为 true。
+*日志、健康检查与指标*
+- 日志：首次失败 WARN，后续重试 DEBUG；抢到、让出身份与成员变化 INFO，丢失身份 WARN。
+- 健康组件 `allocation`，明细 `instanceId` / `held` / `members` / `poolSize` / `connected`。UP 的条件：分配器在运行，持有的身份全部已连接且订阅获批（未持有任何身份也算），会话监控没有判定「投递停滞」。持有的身份重连期间为 DOWN。
+- 指标：仪表 `conduit.transport.identities.held`、`conduit.transport.pool.size`、`conduit.transport.members`；计数 `conduit.transport.identities.moved{reason=acquire|release|lost}`。
 
 *已知限制*
 - Broker 自身崩溃仍可能丢失已确认消息，见 `docs/durability-validation.md`。
+- 缩小 K、总线按 `hash(deviceKey)` 分区尚未实施，见 `docs/roadmap-saas.md` 第 2 节。
 
-**transport 微批与会话监控**（10-28）
+**transport 微批与会话监控**（10-28；实例内合批 11-19）
+
+*实例内合批*
+- 本实例全部连接收到的消息进入同一个 `SharedBatcher`，按 `batch-size` / `batch-delay` 合成一批 `XADD`；写成功后再回到各自的连接回 PUBACK、发业务回执。会话已停的条目不写、不回执，留在 EMQX 会话里由接手者重新收到。
+- 原因：K 变大后流量分散到更多连接，各连接自己攒的批会变小，写 Redis 的次数随之增加。
+- 合批不改变各连接的在途上限：每条连接的未确认消息仍受它自己的 `max_inflight` 窗口限制。
 
 *参数规则*
 - 约束：**`batch-size ≤ max_inflight ≪ max_mailbox_size`**。
@@ -286,20 +297,22 @@
 - 拆分部署的值：EMQX 主机 `max_inflight` 1024，会话上限同上（2026-11-12 由最大值改回有上限，见第 4 节）；应用主机 `batch-size` 512。
 
 *会话监控*
-- 主实例经 EMQX REST API 按连接轮询会话指标。告警七项：丢弃、队列水位、积压绝对值（默认 ≥ 5 万条，队列不限时仍有效）、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
+- 每个实例经 EMQX REST API 只轮询本实例持有的身份的会话指标，不再持有的身份即停止监控。告警七项：丢弃、队列水位、积压绝对值（默认 ≥ 5 万条，队列不限时仍有效）、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
 - 另轮询 `/api/v5/nodes`，EMQX 主机内存占比 ≥ 80%（默认）时告警，仪表 `conduit.transport.emqx.memory.*`，明细在健康检查的 `emqxNode` 下。
-- **只有「投递停滞」把健康检查置为 DOWN**，任一连接停滞即判 DOWN。
+- **只有「投递停滞」把健康检查置为 DOWN**，本实例持有的任一连接停滞即判本实例 DOWN。
 - 仪表带 `client` 标签。另暴露 `mailbox.len` 与 `reductions`，只暴露、不参与健康判定。
 
 **e2e**（`ReliabilityE2EIT`）
 
 *环境*
 - Testcontainers 临时环境，EMQX 使用内存持久会话，宿主机端口取 20000～29999 间的随机固定值，容器重启后端口不变。
-- 本地以 jar 启动 1 个 server 和 2 个 transport；口令每次随机生成。
+- 本地以 jar 启动 1 个 server 和 3 个 transport，初始 K = 16（比部署默认 64 小，缩短再平衡时间）；口令每次随机生成。
 
-*场景*
-- 杀 server、杀主 transport、杀全部 transport、重启 EMQX、可靠上报途中强杀 EMQX，各发 500 条。
-- 断言：计数恰好、无死信、无待确认。重启 EMQX 的两个场景使用带 `id` 的设备。
+*场景*（10 个）
+- 设备连内部监听器被拒。
+- 故障：杀 server、杀任一 transport、杀全部 transport、重启 EMQX、可靠上报途中强杀 EMQX，各发 500 条。重启 EMQX 的两个场景使用带 `id` 的设备。
+- 扩缩容：负载下从 1 个实例扩到 3 个、从 3 个缩到 1 个、同时杀 2 个、把 K 从 16 调到 32。
+- 断言：计数恰好、无死信、无待确认；最终全部身份都有存活实例持有，各实例持有数相差不超过 1。
 
 *运行*
 - 需设置 `E2E_DEV_HOST`。先执行 `mvn -B -DskipTests install`，再执行 `mvn -B verify -Pe2e -pl conduit-e2e`。
@@ -434,7 +447,7 @@
 
 | 形态 | 机器 | 组成 | 适用 | 状态 |
 |---|---|---|---|---|
-| 独立部署（`deploy/standalone`） | 1 台 | 全部组件同机：EMQX、PostgreSQL、Redis、InfluxDB、server、两个 transport（一主一备）、web | 演示、小规模私有部署 | 已实现，已压测 |
+| 独立部署（`deploy/standalone`） | 1 台 | 全部组件同机：EMQX、PostgreSQL、Redis、InfluxDB、server、两个 transport（同时工作）、web | 演示、小规模私有部署 | 已实现，已压测 |
 | 拆分部署（`deploy/split`） | 2 台 | EMQX 一台；其余全部在应用主机 | 单套环境需要更多设备连接时 | 已实现，已压测 |
 | 分布式部署 | 多台 | EMQX 集群、应用多实例、存储高可用；拓扑在 V0.8 spec 中确定 | 高可用与水平扩展 | 未实现，V0.8 |
 
@@ -455,7 +468,7 @@
 
 *`deploy/standalone`*
 - 以 `extends` 引用 dev 的服务；其 `.env` 含 dev 的全部必填变量，`CONDUIT_AUTH_URL=http://conduit-server:8080`。
-- 应用服务：conduit-server、两个 transport（服务名 `conduit-transport` / `conduit-transport-2`，YAML 锚点复用）、conduit-web、模拟器、Mailpit。
+- 应用服务：conduit-server、两个同时工作的 transport（服务名 `conduit-transport` / `conduit-transport-2`，YAML 锚点复用，共享身份池 `TRANSPORT_POOL_SIZE`）、conduit-web、模拟器、Mailpit。
 - Java 服务设容器内存上限：server 1500m、transport 512m、simulator 384m；InfluxDB 2g。
 
 *镜像*
@@ -551,6 +564,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - `conduit.transport.monitor.enabled: false`，否则缺少 EMQX API key 时 transport 启动失败。
 - `conduit.bootstrap.platform-admin-password`，才会创建 `sysadmin`。
 - 不要覆盖 `client-id` 或 `session-expiry-seconds`。
+- 建议设 `conduit.transport.mqtt.connections: 4`（同时决定初始 K），否则本地 transport 按默认 K = 64 开 64 条连接。开发 Redis 中已有的 `conduit:transport:pool-size` 只增不减，比本地值大时先删除该键。
 
 **排查与验收**
 - 本地日志在仓库根目录 `logs/`，排查问题先看这里。
@@ -563,7 +577,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 **架构与可靠性**
 - 2026-10-14 V0.1：Spring Boot 3 + EMQX 5 + Redis Streams 总线 + PostgreSQL 16 + Redis 7；Vue 3 前端；transport / server 两进程；HTTP 鉴权回调；从 V0.1 起带 `tenant_id`（`2026-10-14-conduit-v0.1-design.md`）。
 - 2026-10-15 V0.2-A：时序库为 InfluxDB 3 Core；物模型只做属性；解码器 SPI。可恢复错误沿 cause 链判断；`conduit-connector` 改名为 `conduit-transport`。
-- 2026-10-16 V0.2-R：transport 单活多备（Redis 锁）；e2e 改为 Testcontainers + 本地 jar；模拟器支持多租户与多产品（`2026-10-16-conduit-v0.2r-reliability-design.md`）。同期选用的磁盘持久会话已于 10-28 关闭，「放弃共享订阅」已于 10-29 推翻。
+- 2026-10-16 V0.2-R：transport 单活多备（Redis 锁；11-19 由身份池多活取代，因其前提磁盘持久会话已关闭）；e2e 改为 Testcontainers + 本地 jar；模拟器支持多租户与多产品（`2026-10-16-conduit-v0.2r-reliability-design.md`）。同期选用的磁盘持久会话已于 10-28 关闭，「放弃共享订阅」已于 10-29 推翻。
 - 2026-10-19：统一为 EMQX 5.10.5，旧版交接补发错位未再复现；Redis AOF 改为 `always`。
 - 2026-10-20 V0.2-R2：带 `id` 的端到端可靠上报 + QoS 0 业务回执；e2e 增加强杀 EMQX 场景（`2026-10-20-conduit-reliable-uplink-design.md`）。
 - 2026-10-20 V0.2-R3：遥测重放（`2026-10-20-conduit-telemetry-replay-design.md`），10-21 验收通过。
@@ -571,12 +585,13 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-10-28：**关闭 EMQX 磁盘持久会话**，因积压下会静默楔死，且重连重放超堆形成死循环；改为内存持久会话。`mqtt.retry_interval` 对持久会话无效，勿重走此路（`2026-10-28-conduit-emqx-session-wedge-fix-design.md`）。
 - 2026-10-28：transport 改为微批写总线。批与窗口的规则几经实测修正，最终定为 `batch-size ≤ max_inflight ≪ max_mailbox_size`，默认 512 / 64；会话监控六项告警。
 - 2026-10-28：流水线 Redis 往返批量化（MGET + pipeline），确立「批量失败退回逐条」的模式；Java 容器设内存上限；Redis 保持 `appendfsync always`。
-- 2026-10-29：transport 共享订阅（当时默认 4 条连接，11-16 改为 8，`hash_clientid`），依据是 recon 测得单连接进程单核封顶；负载下强杀主 transport 零丢失（`65ad9a2`，`2026-10-29-conduit-transport-shared-subscription-design.md`）。同日早先「8,000 条/秒天花板、暂不实施」的结论源于发压器测量假象，已作废。
+- 2026-10-29：transport 共享订阅（当时默认 4 条连接，11-16 改为 8，`hash_clientid`；11-19 改为 64 个身份、`round_robin`，因下游不依赖顺序），依据是 recon 测得单连接进程单核封顶；负载下强杀主 transport 零丢失（`65ad9a2`，`2026-10-29-conduit-transport-shared-subscription-design.md`）。同日早先「8,000 条/秒天花板、暂不实施」的结论源于发压器测量假象，已作废。
 - 2026-10-29：`LatestCoalescer` 同批合并最新值，`latest` 阶段 1,856ms → 98ms（`141bdd6`）。
 - 2026-10-29：transport 会话监控加信箱长度与 reductions，只暴露，不参与健康判定。
 - 2026-10-30：MQTT 鉴权按原因计数；模拟器排除压测产品；EMQX `nofile` 1048576；Tomcat keep-alive 修复鉴权回调偶发失败（`69ac212`）；鉴权超时由 5 秒放宽到 10 秒（`de5a237`）。
 - 2026-11-12：拆分部署 EMQX 会话三项由最大值（窗口 65535、队列不限、关强杀）改回有上限（1024 / 5 万 / 开启强杀），因压测到崩溃时积压耗尽整机内存、EMQX 被 OOM 杀两次、约 932 万条已确认消息丢失；队列先试 10 万，连接被堆超限反复强杀，15,000 条/秒起即丢，改 5 万后零强杀，15,000 条/秒以内无损，超出部分按满丢弃并可计数；transport 增加积压绝对值与 EMQX 主机内存告警（`2026-11-12-split-emqx-capped-session-design.md`、`2026-11-12-stress-to-failure.md`）。
 - 2026-11-13：会话上限推广到全部部署包（队列 5 万、信箱 10000、开启强杀、堆 256MB），信箱改由 dev 文件统一定义；依据是独立部署按旧默认（信箱 1000）每秒 8,000 条即被强杀，改后零强杀（`2026-11-13-standalone-session-limits.md`）。分布式部署放到 V0.8 单独压测；断电后 InfluxDB 循环重启、总线截断丢数据、积压计数虚高记入 backlog。
+- 2026-11-19：**transport 身份池多活**实施，取代单活多备：所有实例同时工作，经 Redis 租约分摊 K = 64 个身份，按字典序位置精确配额（各实例相差不超过 1）；共享订阅分发改为 `round_robin`；transport zone 单连接会话队列 1.5 万（合计约 96 万条）；实例内合批写总线；K 只增不减；不支持新旧版本混跑（`2026-11-17-conduit-transport-multi-active-design.md`、`docs/test-reports/2026-11-19-transport-multi-active.md`）。
 
 **租户、组织与身份**
 - 2026-10-16 V0.2-C：三种角色、JWT 声明、`SecurityConfig` 路径矩阵、强制改密码、平台接口与代入、停用租户（`2026-10-16-conduit-v0.2c-tenants-users-design.md`）。
@@ -626,7 +641,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-11-01：每秒 1 条的设备数上限为 5,000～6,000 台，瓶颈是 EMQX 主机 VM 的内核收包 softirq，属本地虚拟化网络的上限。后续方向待所有者决定，见 `docs/handoffs/2026-11-02-split-loadtest-ceiling.md`。
 - 2026-11-16 测法五：集中上线 2.5 万台三档守恒、零拒绝；断网补传丢数，根因为补传洪峰使 transport 订阅连接信箱溢出被强杀、内存会话丢失；可靠上报设备可感知并重发。另发现 128 的 EMQX 运行配置（inflight 1024、开启 force_shutdown）与本文记载不一致（`2026-11-16-connect-storm-outage-replay.md`）。
 - 2026-11-16：断网补传对照——修正发压器后仍少 25 万条（transport 订阅连接被强杀 5 次）；`max_conn_rate=200/s` 能止损但 2.5 万台上线需 723 秒；EMQX 每连接 `messages_rate` 无全体合计且会限住 transport，不可用。推荐方向：transport 独立内部监听器与 zone（关闭强杀、放大队列），待所有者决定。RPS 无收益，每秒 1 条 10,000 台通过（`2026-11-16-connect-storm-outage-replay.md`）。
-- 2026-11-16：transport 改连 EMQX 内部监听器 `tcp:internal`（1884，zone `transport`：信箱 20 万、会话队列 10 万，堆上限不变），默认 8 条连接，内部监听器只许 transport；根治断网补传洪峰下订阅连接被强杀丢数（`2026-11-16-conduit-transport-internal-listener-design.md`）。
+- 2026-11-16：transport 改连 EMQX 内部监听器 `tcp:internal`（1884，zone `transport`：信箱 20 万、会话队列 10 万，堆上限不变），默认 8 条连接，内部监听器只许 transport；根治断网补传洪峰下订阅连接被强杀丢数（`2026-11-16-conduit-transport-internal-listener-design.md`）。11-19 起单连接会话队列改为 1.5 万、默认 64 个身份。
 - 2026-11-17：transport「单活多备 + 选主」认定为历史包袱：10-16 为磁盘持久会话（不支持共享订阅）被迫采用，前提已于 10-28 / 10-29 消失。所有者决定先验证「EMQX（商业版）Kafka 数据集成直写、去掉 transport」，不通过再做身份池多活（`roadmap-saas.md` 第 2 节）。
 - 2026-11-17：验证 EMQX 直写后，所有者决定**保留 transport，改为横向扩展**。直写 Kafka 可以替代 transport；直写 Redis Streams 有超时丢弃、无持久缓冲、洪峰耗尽内存的问题，比 transport 弱（`2026-11-17-transport-necessity.md`）。
 - 2026-11-19：所有者决定收费 SaaS 暂缓、先完善功能；讨论确定的方向（可靠上报硬性要求、总线改 MQ、多协议、批量上报、单元化、分库、上云、待验证候选、EMQX 升级）记入 `roadmap-saas.md` 4.1 节；transport 多活之后主线先做 V0.3-C 与 V0.3-F。

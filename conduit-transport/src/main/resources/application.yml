@@ -24,7 +24,8 @@ conduit:
       # 改 K 请用环境变量 TRANSPORT_POOL_SIZE（旧变量 TRANSPORT_MQTT_CONNECTIONS 仍可用）。本项只决定是否共享订阅：
       # EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程单核封顶（2026-10-29 recon 实测），
       # 多于 1 个身份时改用共享订阅 $share/{shared-group}/...，把投递分散到 K 个连接进程。
-      # 设为 1 即只有一个身份、普通订阅，谁抢到谁干活，等价于单活（回退开关）
+      # 设为 1 即只有一个身份、普通订阅，由字典序最小的存活实例持有，等价于单活（回退开关）；
+      # 此时忽略 Redis 中的其他 K。从 1 改回多身份前先删除 Redis 键 conduit:transport:pool-size（K 只增不减）
       connections: ${TRANSPORT_POOL_SIZE:${TRANSPORT_MQTT_CONNECTIONS:64}}
       shared-group: conduit-transport
       # 与 EMQX 持久会话消息保留期（durable_sessions.message_retention_period，默认 1 天）一致
@@ -42,7 +43,8 @@ conduit:
       username: ${TRANSPORT_MQTT_USERNAME:}
       password: ${TRANSPORT_MQTT_PASSWORD:}
     # 身份池多活：K 个 MQTT 身份经 Redis 租约（conduit:transport:id:{i}）分摊到存活实例（conduit:transport:members），
-    # 每个实例持有 ceil(K/N) 个身份，只为持有的身份连接 EMQX。K 存在 Redis 键 conduit:transport:pool-size，只增不减。
+    # 按存活实例的字典序位置 p 分配精确配额 ⌊K/N⌋ + (p < K mod N ? 1 : 0)（合计恰为 K，各实例相差不超过 1），
+    # 只为持有的身份连接 EMQX。K 存在 Redis 键 conduit:transport:pool-size，只增不减。
     allocation:
       # 初始 K：Redis 中尚无 pool-size 时写入。跟随 mqtt.connections（旧键或 TRANSPORT_POOL_SIZE），两者必须相等
       initial-pool-size: ${conduit.transport.mqtt.connections}
@@ -53,7 +55,7 @@ conduit:
       tick-interval: 2s
       # 超过 member-ttl 未心跳的实例不再计入存活实例数 N
       member-ttl: 15s
-      # N 稳定这么久后才让出多余的身份，避免成员抖动时来回迁移
+      # 成员列表连续这么久不变后才让出多余的身份（每轮一个），避免成员抖动时来回迁移
       rebalance-stable: 10s
       # 存活实例数超过 K × 该比例时告警，提示调大 K
       pool-alert-ratio: 0.5

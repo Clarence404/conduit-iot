@@ -1,6 +1,6 @@
 # Conduit 独立部署包
 
-基础服务（PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX，定义在 `../dev/docker-compose.yml`，以 `extends` 引用）+ conduit-server、两个 transport（一主一备）、conduit-web、演示模拟器与 Mailpit 演示收件箱。需要 Docker 与 Docker Compose v2。
+基础服务（PostgreSQL、Redis、InfluxDB 3、InfluxDB 3 Explorer、EMQX，定义在 `../dev/docker-compose.yml`，以 `extends` 引用）+ conduit-server、两个同时工作的 transport（身份池多活）、conduit-web、演示模拟器与 Mailpit 演示收件箱。需要 Docker 与 Docker Compose v2。
 
 邮件邀请需先在 `.env` 设置 `CONDUIT_PUBLIC_URL` 为收件人可打开的 Web 地址。演示邮件可在 `http://<docker-host>:8025` 查看；真实 SMTP 的替换方式、演示脚本与升级后会话行为见[身份治理说明](../../docs/identity-governance.md)。
 

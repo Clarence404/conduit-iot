@@ -135,7 +135,8 @@ services:
       # transport 离线期间的消息进内存队列 mqueue，重连后补发；EMQX 重启则不保留——
       # 端到端不丢由设备侧的消息 id + 业务回执负责，见 docs/device-integration.md。
       EMQX_DURABLE_SESSIONS__ENABLE: "false"
-      # mqueue 要覆盖 transport 主备切换窗口（选主锁 TTL 15s + 抢锁 2s ≈ 17s）；
+      # 全局（设备监听器）会话的 mqueue；transport 会话用下面 zone transport 的队列，
+      # 须覆盖实例宕机后身份被接手前的窗口（租约 TTL 15s + 检查间隔 2s ≈ 17s）；
       # 溢出会丢弃并计入 mqueue_dropped，由 transport 的会话监控告警。
       # 5 万而不是 10 万：队列驻留在连接进程堆内，过载时 10 万条撑破堆上限、连接被强杀、积压整段丢失；
       # 5 万条在独立部署与拆分部署上实测零强杀（2026-11-12/13，docs/test-reports/2026-11-13-standalone-session-limits.md）

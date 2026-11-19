@@ -8,7 +8,7 @@
 | 主机 | 目录 | Compose 项目 / 容器 | 服务 |
 |---|---|---|---|
 | EMQX 主机 | `deploy/split/emqx` | 项目 `conduit-emqx`，容器 `conduit-emqx` | EMQX；可选 node-exporter（`--profile metrics`） |
-| 应用主机 | `deploy/split/app` | 项目 `conduit` | PostgreSQL、Redis、InfluxDB、InfluxDB Explorer、Mailpit、conduit-server、两个 transport（一主一备）、conduit-web、模拟器；可选观测栈 Prometheus / Grafana / node-exporter / redis-exporter（`--profile metrics`） |
+| 应用主机 | `deploy/split/app` | 项目 `conduit` | PostgreSQL、Redis、InfluxDB、InfluxDB Explorer、Mailpit、conduit-server、两个同时工作的 transport（身份池多活）、conduit-web、模拟器；可选观测栈 Prometheus / Grafana / node-exporter / redis-exporter（`--profile metrics`） |
 
 两边都不复制服务定义：`emqx/` 以 `extends` 引用 `deploy/dev` 的 emqx，`app/` 以 `extends` 逐个引用 `deploy/standalone` 的服务，
 只写拆分后不同的部分（连远端 EMQX、去掉对本机 emqx 的依赖）。因此**两台主机上都要有完整的 `deploy/` 目录**
@@ -40,7 +40,8 @@ cp .env.example .env
 # 必改：CONDUIT_AUTH_URL=http://<应用主机地址>:8091；四个口令与应用主机一致
 docker compose up -d
 docker exec conduit-emqx emqx ctl status            # 运行中
-docker exec conduit-emqx emqx ctl conf show mqtt    # 回读：max_inflight = 1024、max_mqueue_len = 50000
+docker exec conduit-emqx emqx ctl conf show mqtt    # 回读：max_inflight = 1024、max_mqueue_len = 50000、shared_subscription_strategy = round_robin
+docker exec conduit-emqx emqx ctl conf show zones   # 回读：transport zone 的 max_mqueue_len = 15000、max_mailbox_size = 200000
 ```
 
 配置模板与 ACL 从 `deploy/dev/emqx/` 只读挂载，需对容器内 emqx 用户（uid 1000）可读（`chmod -R a+r deploy`）。
@@ -67,9 +68,11 @@ docker compose --profile metrics up -d          # 可选：观测栈
 ### 3. 验证
 
 ```bash
-# 应用主机：transport 主实例已连上远端 EMQX（leader.connected = true）
-docker exec conduit-transport-1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
-# EMQX 主机：transport 的 8 条共享订阅（都在 tcp:internal 上）与模拟器设备都在
+# 应用主机：两个 transport 都已连上远端 EMQX（allocation.connected = true），held 之和为 poolSize（默认 64）、各约一半
+for c in conduit-transport-1 conduit-transport-2; do
+  docker exec $c bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
+done
+# EMQX 主机：transport 的 64 个共享订阅（都在 tcp:internal 上）与模拟器设备都在
 docker exec conduit-emqx emqx ctl broker stats | grep -E "^connections.count|subscriptions.shared.count"
 ```
 
@@ -82,6 +85,68 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
 ```
 
 丢弃时会话里尚未投递的消息会丢失，所以要在设备流量低的时候做；第 4～7 条连接是新 clientId，不受影响。
+
+### 5. 从单活多备升级到身份池多活（2026-11-19）
+
+新版 transport 的两个实例同时工作，经 Redis 租约分摊 64 个 MQTT 身份（原来只有主实例连 8 条）。旧版靠选主锁持有全部身份，
+**新旧版本不能混跑**，否则会互相踢掉对方的连接。设计见
+[`2026-11-17-conduit-transport-multi-active-design.md`](../../docs/superpowers/specs/2026-11-17-conduit-transport-multi-active-design.md)。
+停机空档内的消息排在 EMQX 会话队列中，选设备流量低的时候做。
+
+1. 应用主机：停掉全部旧 transport。
+
+   ```bash
+   cd deploy/split/app
+   docker compose stop conduit-transport conduit-transport-2
+   ```
+
+2. EMQX 主机：`.env` 按新的 `.env.example` 设 `EMQX_TRANSPORT_MAX_MQUEUE_LEN=15000`、`EMQX_SHARED_SUBSCRIPTION_STRATEGY=round_robin`，重建 EMQX 并回读。
+   重建会断开设备，内存会话不跨重建保留。
+
+   ```bash
+   cd deploy/split/emqx
+   docker compose up -d --force-recreate emqx
+   docker exec conduit-emqx emqx ctl conf show mqtt  | grep shared_subscription_strategy   # round_robin
+   docker exec conduit-emqx emqx ctl conf show zones | grep -A3 max_mqueue_len             # transport zone 为 15000
+   ```
+
+3. EMQX 主机：丢弃 8 个旧会话（旧会话的队列上限在创建时固定；第 2 步若已重建 EMQX，会话已不存在，命令报 not found 可忽略）。
+
+   ```bash
+   for i in '' -1 -2 -3 -4 -5 -6 -7; do docker exec conduit-emqx emqx ctl clients kick conduit-transport$i; done
+   ```
+
+4. 应用主机：换上新版产物（`deploy/package.sh` 打的包或新检出），`.env` 设 `TRANSPORT_POOL_SIZE=64`，删除旧的 `TRANSPORT_MQTT_CONNECTIONS`；Redis 中若残留旧键 `conduit:transport:leader` 可删除（新版不再使用）。启动两个 transport：
+
+   ```bash
+   docker compose up -d --build conduit-transport conduit-transport-2
+   ```
+
+5. 回读：两个实例的 `held` 之和为 64、各 32，`members` 为 2，`poolSize` 为 64；EMQX 共享订阅数为 64。
+
+   ```bash
+   for c in conduit-transport-1 conduit-transport-2; do
+     docker exec $c bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
+   done
+   docker exec conduit-redis redis-cli GET conduit:transport:pool-size                        # 64
+   docker exec conduit-emqx emqx ctl broker stats | grep subscriptions.shared.count            # EMQX 主机执行
+   ```
+
+### 6. 调大身份池 K
+
+实例数超过 K × 0.5 时 transport 记 WARN，提示调大 K。K 存在 Redis，只能调大，不需要重启：
+
+1. 先按「新 K × `EMQX_TRANSPORT_MAX_MQUEUE_LEN`」估算全部积压时的缓冲（每条约 1.2 KB），核对 EMQX 主机内存；需要时同步调小单连接队列，保持总量不变。
+2. 写入新值。各实例在下一轮检查（≤ 2 秒）读到并抢占新身份，新身份按 zone `transport` 的参数建会话、自动加入共享组：
+
+   ```bash
+   docker exec conduit-redis redis-cli SET conduit:transport:pool-size 128
+   ```
+
+3. 同步把应用主机 `.env` 的 `TRANSPORT_POOL_SIZE` 改成新值（只在 Redis 中没有该键时用作初始值）。回读各实例 `poolSize` 与 `held`。
+
+缩小 K 暂不支持（transport 读到更小的值只记 WARN）：多出的会话要先排空才能移除。
+`TRANSPORT_POOL_SIZE=1` 是回退开关（单连接、普通订阅），从 1 改回多身份前要先 `redis-cli DEL conduit:transport:pool-size`。
 
 ## 可选：Linux 宿主机网络对照
 
@@ -137,8 +202,8 @@ EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（20
 | `EMQX_MAX_PACKET_SIZE` | 256MB（上限） | 1MB | 默认 | 单个 MQTT 报文上限 |
 | 文件描述符 | 1048576 | — | 1048576 | 在 dev 文件中设定，每条 MQTT 连接占一个 |
 
-应用主机：`TRANSPORT_BUS_BATCH_SIZE=512`、`TRANSPORT_MQTT_CONNECTIONS=4`（2026-10-29 验证值）。transport 对这两项没有上限，
-只要求批大小不超过 EMQX 的在途窗口。
+应用主机：`TRANSPORT_BUS_BATCH_SIZE=512`（2026-10-29 验证值）、`TRANSPORT_POOL_SIZE=64`（身份池，两个实例共享）。
+批大小不得超过 EMQX 的在途窗口；身份池对应的总缓冲为 K × `EMQX_TRANSPORT_MAX_MQUEUE_LEN`（64 × 1.5 万 ≈ 96 万条），调大 K 见上文第 6 步。
 
 **为什么会话三项不取最大值**：2026-10-30 起曾取窗口 65535、队列不限、关闭强杀。2026-11-12 压测到崩溃时，
 每秒 25,000～30,000 条下积压一路涨到整台主机内存耗尽，EMQX 被 Linux OOM killer 杀掉两次，内存中的积压全部丢失

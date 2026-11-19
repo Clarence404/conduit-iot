@@ -124,7 +124,7 @@
 - 设备列表 `online` / `reported` 筛选目前读出全部匹配设备的 Redis 状态再内存分页（O(设备数)）；设备到 1 万台规模时改为维护在线集合（Redis Set / ZSet）后直接分页，与首页统计的增量计数一并做。
 - 语义差异：`reported` 依据设备时间戳（最新值 `__last`），`online`（数据驱动部分）依据 transport 的 receivedAt；设备时钟偏差大时两者可能不一致，界面上需留意。
 - 数据驱动在线只在设备有上报时生效；仍在连接但长期不上报的设备在漏掉连接事件时依旧显示离线。
-- EMQX 重启后客户端立即重连时，可能在 HTTP 鉴权资源就绪前完成连接，导致 transport 未获得超级用户、设备发布被授权拒绝（日志 `not_authorized` / `authorization_permission_denied`）；临时办法：EMQX 健康后通过 API 踢掉全部客户端让其重新鉴权。待查明 EMQX 5.8 在鉴权资源未就绪时的行为，并考虑 transport/模拟器在授权失败（SUBACK/PUBACK 错误码）时主动断开重连。V0.2-R 起 transport 在订阅被拒或断线后由选主协调器重新连接；模拟器的设备尚未处理（e2e 的设备遇 PUBACK 错误码会重连）。
+- EMQX 重启后客户端立即重连时，可能在 HTTP 鉴权资源就绪前完成连接，导致 transport 未获得超级用户、设备发布被授权拒绝（日志 `not_authorized` / `authorization_permission_denied`）；临时办法：EMQX 健康后通过 API 踢掉全部客户端让其重新鉴权。待查明 EMQX 5.8 在鉴权资源未就绪时的行为，并考虑 transport/模拟器在授权失败（SUBACK/PUBACK 错误码）时主动断开重连。V0.2-R 起 transport 在订阅被拒或断线后由身份池分配器（原为选主协调器）续期确认后重新连接；模拟器的设备尚未处理（e2e 的设备遇 PUBACK 错误码会重连）。
 
 ## V0.2-C 遗留（2026-10-16）
 
@@ -149,9 +149,9 @@
 
 - 独立部署包的 `conduit-transport-2` 从 YAML 锚点继承了 `build:`，`docker compose up --build` 为两个 transport 各构建一个内容相同的镜像（第二次命中 BuildKit 缓存，耗时很短）。可改为后者 `build: !reset null` 并共用前者的固定镜像名，需先确认 `up` 时不会在构建前去拉取该镜像。
 - 租户发现代码在 `finally` 里 `return`，可能吞掉 `Error`；下次改动该文件时一并修正。
-- 评估 EMQX 持久共享订阅（磁盘持久会话已关闭，原先的互斥阻塞前提已消失）后改回「多实例共享订阅 + 持久会话」，提升接入吞吐；当前单活多备只有主实例消费。
-- 主备切换窗口（最长一个续期间隔）内，旧主若未察觉失锁，可能与新主以同一 clientId 互相踢；协调器重连前先续期可止住，期间的重复消息由写库去重吸收。
-- transport 健康检查状态恒为 UP，备实例与「主实例但连不上 EMQX」都只体现在 details（`role`、`connected`）里；需要告警时再细分。
+- **【已解决，2026-11-19】多实例消费**：transport 改为身份池多活，所有实例同时以共享订阅 + 内存持久会话消费（`docs/superpowers/specs/2026-11-17-conduit-transport-multi-active-design.md`）。EMQX 持久共享订阅的评估并入 roadmap 4.1 节「EMQX 6 的 `$queue` / 持久共享订阅」。
+- 身份迁移窗口（最长一个续期间隔）内，旧持有者若未察觉租约已失，可能与新持有者以同一 clientId 互相踢；分配器重连前先续期、一轮续期遇 Redis 异常即停掉全部身份可止住，期间的重复消息由写库幂等吸收。
+- **【已解决】transport 健康检查恒为 UP**：现由组件 `allocation` 判定，持有的身份有未连上的即为 DOWN，未持有身份的实例为 UP。
 - 模拟器每次启动都重置所模拟设备的密钥；累计量与游走状态只在内存中，重启后从合理初值重新开始，曲线在重启处不连续。
 - 模拟器按单位与名称关键字识别测点，识别不了的按上下限随机游走；新增行业物模型时可能需要补关键字。
 - e2e 的 EMQX 使用 20000～29999 中随机的固定宿主机端口（docker restart 后端口不变），极少数情况下端口被占用会换端口重试，最多 5 次。
@@ -257,5 +257,5 @@
 
 ## 2026-11-16 transport 内部监听器遗留
 
-- **Redis AOF 重写拖慢命令导致 transport 主备切换**（所有者 2026-11-17 决定另立项，排在后面）：2026-11-16 画像压测中，129 上 Redis 后台 AOF 重写期间（`appendfsync always`）命令超时超过 2 秒，transport 主实例续锁失败、按设计断开，另一实例约 23 秒后接管；计数守恒、未丢数，但切换期间入库停顿、PUBACK 时延升高。待查：重写期间 fsync 的耗时分布、`no-appendfsync-on-rewrite` 与磁盘 I/O 的取舍、选主锁 ttl 15 秒 / Redis 命令超时 2 秒是否偏紧。见 [验收报告](test-reports/2026-11-16-transport-internal-listener.md) 第 3 节。
+- **Redis AOF 重写拖慢命令导致 transport 主备切换**（所有者 2026-11-17 决定另立项，排在后面；2026-11-19 改为身份池多活后，同样的超时会让所有实例同时丢失续期失败的身份，影响面不小于原来）：2026-11-16 画像压测中，129 上 Redis 后台 AOF 重写期间（`appendfsync always`）命令超时超过 2 秒，transport 主实例续锁失败、按设计断开，另一实例约 23 秒后接管；计数守恒、未丢数，但切换期间入库停顿、PUBACK 时延升高。待查：重写期间 fsync 的耗时分布、`no-appendfsync-on-rewrite` 与磁盘 I/O 的取舍、身份租约 ttl 15 秒 / Redis 命令超时 2 秒是否偏紧。见 [验收报告](test-reports/2026-11-16-transport-internal-listener.md) 第 3 节。
 - **补传洪峰的时延**：断网补传期间 p99 约 1.7 秒、EMQX 1 次过载告警，所有者决定不作为验收不通过，作为已知限制写进设备接入规范（重连随机延迟、每台每秒补传不超过 1 条），见 `docs/device-integration.md` 4.3 节。

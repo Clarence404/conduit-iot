@@ -43,7 +43,7 @@ services:
       mailpit:
         condition: service_started
 
-  # transport 单活多备：主实例连远端 EMQX，会话监控也走远端的 REST API
+  # transport 身份池多活：两个实例同时连远端 EMQX，会话监控也走远端的 REST API
   conduit-transport:
     extends: { <<: *standalone, service: conduit-transport }
     environment:

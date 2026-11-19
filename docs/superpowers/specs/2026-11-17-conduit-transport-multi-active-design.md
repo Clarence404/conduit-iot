@@ -124,9 +124,9 @@
 
 | 位置 | 改动 |
 |---|---|
-| `leader/` | 新增 `IdentityAllocator`（替代 `LeaderElection`）、`IdentityLeaseStore`（Redis 实现，含 Lua）、`AllocationProperties`。删除 `LeaderElection`、`RedisLeaderLock`、`LeaderLock`、`LeaderProperties`；不再使用选主锁键 `conduit:transport:leader` |
+| `allocation/`（取代 `leader/` 包） | 新增 `IdentityAllocator`（替代 `LeaderElection`）、`IdentityLeaseStore`（Redis 实现，含 Lua）、`AllocationProperties`。删除 `LeaderElection`、`RedisLeaderLock`、`LeaderLock`、`LeaderProperties`；不再使用选主锁键 `conduit:transport:leader` |
 | `TransportApplication` | 按当前 K 创建适配器；K 调大时再追加新的适配器；启停改由 `IdentityAllocator` 按身份控制 |
-| `MqttTransportProperties` | `connections` 改名为「初始身份池大小」，由 `allocation.initial-pool-size` 取代，保留旧键作为兼容别名。K = 1 仍是回退开关：只有一个身份、普通订阅，谁抢到谁干活，等价于单活 |
+| `MqttTransportProperties` | `connections` 改名为「初始身份池大小」，由 `allocation.initial-pool-size` 取代，保留旧键作为兼容别名。K = 1 仍是回退开关：只有一个身份、普通订阅，由字典序最小的存活实例持有（id 更小的实例后加入时，成员稳定后交接一次），等价于单活；此时忽略 Redis 中的其他值，从 K = 1 改回多身份前要先删除 `conduit:transport:pool-size` |
 | `MqttProtocolAdapter` | 启停仍由 `ProtocolAdapter.start(stillValid)` / `stop()` 驱动，`stillValid` 改为「本实例仍持有该身份」。攒批逻辑移到实例级的共享提交器（第 5 节） |
 | 健康检查 | `LeaderHealthIndicator` 改为 `AllocationHealthIndicator`，明细包括 `instanceId`、`held`（持有身份数）、`members`（存活实例数）、`poolSize`、`connected`（持有的身份是否都已连上） |
 | 会话监控 | `SessionMonitorGroup` 只监控本实例持有的身份；「投递停滞判 DOWN」只针对自己持有的身份 |

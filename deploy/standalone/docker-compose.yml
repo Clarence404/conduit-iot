@@ -151,8 +151,9 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # transport 单活多备（V0.2-R）：两个实例经 Redis 锁 conduit:transport:leader 选主，只有主实例连接 EMQX；
-  # 两者共用 clientId conduit-transport（默认值），主实例故障后备实例最长 15 秒后接管同一个内存持久会话
+  # transport 身份池多活（2026-11-19）：两个实例同时工作，经 Redis 租约分摊 TRANSPORT_POOL_SIZE 个 MQTT 身份
+  # （clientId conduit-transport、conduit-transport-1…），各实例持有数相差不超过 1；
+  # 一个实例故障后，另一个最长约 17 秒后接管它的身份与内存持久会话。新旧版本不能混跑，升级先停全部旧实例
   conduit-transport: &transport
     container_name: conduit-transport-1
     build:
@@ -162,7 +163,7 @@ services:
         BUILD_FROM: ${BUILD_FROM:-prebuilt}
         MODULE: conduit-transport
         JAR_NAME: conduit-transport
-    # 给主实例留时间断开 MQTT 并释放选主锁（Compose 默认 10 秒），备实例才能立即接管
+    # 给实例留时间停适配器、断开 MQTT 并释放身份租约（Compose 默认 10 秒），其他实例才能立即接手
     stop_grace_period: 20s
     # 内存上限（必须设）：java.Dockerfile 用 -XX:MaxRAMPercentage=75，容器无上限时它按宿主机总内存计算，
     # 实测每个 Java 容器自报最大堆 5.6 GB 而宿主机只有 7.6 GB，压测后满 swap

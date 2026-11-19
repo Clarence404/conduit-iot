@@ -83,10 +83,10 @@
         },
         "enable": true,
         "iconColor": "orange",
-        "name": "transport 主备切换",
+        "name": "transport 开始持有身份",
         "expr": "(max by (instance) (conduit_transport_session_mqueue_len >= bool 0)) - (max by (instance) (conduit_transport_session_mqueue_len offset 1m >= bool 0)) > 0",
         "step": "15s",
-        "titleFormat": "transport 成为主实例",
+        "titleFormat": "transport 实例开始持有身份",
         "textFormat": "{{instance}}",
         "useValueForTime": false
       }
@@ -372,7 +372,7 @@
       "id": 6,
       "type": "stat",
       "title": "守恒差（看板时间范围内）",
-      "description": "看板时间范围内 EMQX 收到、却没写进 Redis 总线的消息条数（已扣除仍在排队的积压），**应为 0**。为正即设备已收到 PUBACK 而平台没存下来——包括 EMQX 丢弃计数之外的丢失，例如连接被强杀时信箱里的消息；为负是主备切换时的重投（InfluxDB 同 ts 覆盖吸收，不算多写）。**只在时间范围的起点与终点都空闲时计算**：负载中各组件抓取时刻不一致，会整体平移约 9 秒的流量，与丢没丢无关。压测后要核对，就把时间范围拉到覆盖整次压测、两端落在空闲处。流水线一侧的问题看死信与积压。",
+      "description": "看板时间范围内 EMQX 收到、却没写进 Redis 总线的消息条数（已扣除仍在排队的积压），**应为 0**。为正即设备已收到 PUBACK 而平台没存下来——包括 EMQX 丢弃计数之外的丢失，例如连接被强杀时信箱里的消息；为负是身份迁移（实例宕机、扩缩容）时的重投（InfluxDB 同 ts 覆盖吸收，不算多写）。**只在时间范围的起点与终点都空闲时计算**：负载中各组件抓取时刻不一致，会整体平移约 9 秒的流量，与丢没丢无关。压测后要核对，就把时间范围拉到覆盖整次压测、两端落在空闲处。流水线一侧的问题看死信与积压。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -930,7 +930,7 @@
       "id": 15,
       "type": "timeseries",
       "title": "各跳速率（条/秒）：① 接入 → ⑥ 入库",
-      "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。① 只计设备上行（QoS 1），不含 transport 发给设备的回执。两条横线是压测 VM（8 vCPU）的实测容量：11,500 条/秒守恒全过，13,000 为边缘（3 次 2 过）；换机器后需重测。竖线标注服务重启、EMQX 重启与 transport 主备切换。",
+      "description": "同一时刻各跳的速率。正常时几条线重合；哪一跳开始低于上一跳，瓶颈就在那一跳。③ transport 投递为各条连接之和。① 只计设备上行（QoS 1），不含 transport 发给设备的回执。两条横线是压测 VM（8 vCPU）的实测容量：11,500 条/秒守恒全过，13,000 为边缘（3 次 2 过）；换机器后需重测。竖线标注服务重启、EMQX 重启与 transport 实例开始持有身份。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1648,7 +1648,7 @@
           "id": 21,
           "type": "stat",
           "title": "共享订阅数",
-          "description": "transport 主实例的共享订阅条数，应等于 conduit.transport.mqtt.connections（默认 4）。少了说明有连接没连上，约 1/K 的流量会滞留在它的会话里。",
+          "description": "全部 transport 实例的共享订阅条数之和，应等于身份池大小 K（Redis conduit:transport:pool-size，默认 64）。少了说明有身份没连上（实例宕机后约 17 秒内属正常），约 1/K 的流量会滞留在它的会话里。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -1683,7 +1683,7 @@
                   },
                   {
                     "color": "green",
-                    "value": 4
+                    "value": 64
                   }
                 ]
               },
@@ -1727,7 +1727,7 @@
           "id": 23,
           "type": "timeseries",
           "title": "各连接收取速率（条/秒）",
-          "description": "EMQX 按 hash_clientid 把设备分到各条连接，正常时各线大致相当。某条明显偏高，说明哈希分布不均、它会先到瓶颈。",
+          "description": "EMQX 按 round_robin 把消息轮流投给身份池中的各条连接，正常时各线大致相当。某条明显偏低，说明该连接取得慢、消息在它的会话队列里积压（见右侧 mqueue）。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -1800,7 +1800,7 @@
           "id": 24,
           "type": "timeseries",
           "title": "各连接会话队列（mqueue）",
-          "description": "transport 来不及取时消息在这里排队；到上限（默认 100,000）即开始丢弃。主备切换窗口内也排在这里，切换后补发。",
+          "description": "transport 来不及取时消息在这里排队；到上限（transport zone 默认每连接 15,000）即开始丢弃。持有该身份的实例宕机后、他人接手前（约 17 秒）也排在这里，接手后补发。",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

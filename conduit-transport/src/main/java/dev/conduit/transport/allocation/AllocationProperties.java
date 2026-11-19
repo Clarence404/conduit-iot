@@ -23,7 +23,7 @@ public record AllocationProperties(
         @DefaultValue("5s") Duration renewInterval,
         @DefaultValue("2s") Duration tickInterval,
         @DefaultValue("15s") Duration memberTtl,
-        @DefaultValue("30s") Duration rebalanceStable,
+        @DefaultValue("10s") Duration rebalanceStable,
         @DefaultValue("0.5") double poolAlertRatio) {
 
     /** 校验各项取值，不合法时抛 IllegalStateException 使启动失败。 */

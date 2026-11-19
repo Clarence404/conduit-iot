@@ -6,6 +6,7 @@ import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.PortBinding;
 import com.github.dockerjava.api.model.Ports;
 import dev.conduit.simulator.ConduitApiClient;
+import org.awaitility.core.ConditionTimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.DockerClientFactory;
@@ -29,11 +30,15 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -41,14 +46,27 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * e2e 的独立临时环境：Testcontainers 在 Docker 宿主机上起 PostgreSQL / Redis / InfluxDB / EMQX（内存持久会话、单节点，
- * 鉴权回调指向 E2E_DEV_HOST 上的 server），测试机本地以 jar 启动 1 个 server 与 2 个 transport 连接它们。
- * 提供故障注入（强制结束进程、重启 EMQX 容器）与检查（InfluxDB 计数、死信、待确认数）。
+ * 鉴权回调指向 E2E_DEV_HOST 上的 server），测试机本地以 jar 启动 1 个 server 与 3 个 transport 连接它们。
+ * 3 个 transport 同时工作，按 Redis 租约分摊身份池（初始 K = {@value #INITIAL_POOL_SIZE}，比部署默认 64 小，缩短再平衡时间）。
+ * 提供故障注入（强制结束 / 正常停止进程、重启 EMQX 容器、在线调大 K）与检查（InfluxDB 计数、死信、待确认数、身份分配）。
  * 口令与 token 每次运行随机生成，只存在于内存与子进程环境变量中；结束时进程与容器全部清理。
  */
 final class E2eEnvironment implements AutoCloseable {
 
     static final String ADMIN_USERNAME = "admin";
     static final Duration CLAIM_MIN_IDLE = Duration.ofSeconds(10);
+    /** transport 实例名，下标即 {@link #killTransport(int)} 等方法的参数。 */
+    static final List<String> TRANSPORT_NAMES = List.of("transport-a", "transport-b", "transport-c");
+    /** 初始身份池大小 K：经 TRANSPORT_POOL_SIZE 传给每个 transport，首个启动的实例把它写入 Redis。 */
+    static final int INITIAL_POOL_SIZE = 16;
+    /**
+     * 等待身份分配收敛的上限。最坏情况是「负载下 1 个扩到 3 个」：新实例 JVM 启动（测试机上 10～30 秒）
+     * + 成员列表不变 rebalance-stable 10 秒（两个新实例先后加入时重新计时）+ 原实例从 16 个让到精确配额 5 或 6 个、
+     * 每 2 秒一次检查只让出一个（约 20～22 秒）+ 接手者连接（失败退避最长 10 秒），约 70 秒。
+     * 强杀时：死实例的租约与心跳 15 秒后才过期，在此之前它仍在成员列表里，列表过期变化后再等 10 秒稳定才让出；
+     * EMQX 重启后各身份按退避重连。取 2 分钟留出余量。
+     */
+    static final Duration REBALANCE_TIMEOUT = Duration.ofMinutes(2);
 
     private static final Logger log = LoggerFactory.getLogger(E2eEnvironment.class);
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -56,6 +74,9 @@ final class E2eEnvironment implements AutoCloseable {
     private static final int EMQX_MQTT_PORT = 1883;
     /** 只供 transport 使用的内部监听器（tcp:internal，zone transport），与部署编排一致。 */
     private static final int EMQX_INTERNAL_PORT = 1884;
+    /** 与 transport 的 RedisIdentityLeaseStore 一致的键：身份池大小与身份租约（值为持有者的 instanceId）。 */
+    private static final String POOL_SIZE_KEY = "conduit:transport:pool-size";
+    private static final String IDENTITY_KEY_PREFIX = "conduit:transport:id:";
 
     private final Path root = root();
     private final Path logDir = root.resolve("conduit-e2e/target/e2e-logs")
@@ -70,6 +91,8 @@ final class E2eEnvironment implements AutoCloseable {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final List<GenericContainer<?>> containers = new ArrayList<>();
     private final List<AppProcess> transports = new ArrayList<>();
+    /** 应当在运行的 transport：启动时加入，被结束或停止时移出；它们若意外退出，等待分配收敛时立即报错。 */
+    private final Set<AppProcess> wantedTransports = ConcurrentHashMap.newKeySet();
 
     private GenericContainer<?> postgres;
     private GenericContainer<?> redis;
@@ -90,7 +113,7 @@ final class E2eEnvironment implements AutoCloseable {
     }
 
     /**
-     * 搭建整套环境并等到某个 transport 成为已连接的主实例。
+     * 搭建整套环境，并等到 3 个 transport 分完全部身份且都已连接。
      *
      * @throws IllegalStateException E2E_DEV_HOST 未设置、jar 未构建、或任一组件未能就绪
      */
@@ -158,7 +181,7 @@ final class E2eEnvironment implements AutoCloseable {
         server = new AppProcess("server", serverJar, serverEnv, serverPort, logDir.resolve("server"));
         startServer();
 
-        for (String name : List.of("transport-a", "transport-b")) {
+        for (String name : TRANSPORT_NAMES) {
             Map<String, String> transportEnv = new LinkedHashMap<>();
             transportEnv.put("REDIS_HOST", redis.getHost());
             transportEnv.put("REDIS_PORT", String.valueOf(redis.getMappedPort(6379)));
@@ -167,14 +190,15 @@ final class E2eEnvironment implements AutoCloseable {
             transportEnv.put("EMQX_PORT", String.valueOf(emqxInternalPort));
             transportEnv.put("TRANSPORT_MQTT_USERNAME", "conduit-transport");
             transportEnv.put("TRANSPORT_MQTT_PASSWORD", transportPassword);
+            // 初始 K 只经这一个变量设置：mqtt.connections 与 allocation.initial-pool-size 都取自它，单独设其一会启动失败
+            transportEnv.put("TRANSPORT_POOL_SIZE", String.valueOf(INITIAL_POOL_SIZE));
             // e2e 验证接入可靠性，不验证会话监控（需 EMQX API key）；名字必须是 TRANSPORT_*，CONDUIT_* 会被 AppProcess 清掉
             transportEnv.put("TRANSPORT_MONITOR_ENABLED", "false");
             transportEnv.put("CONDUIT_LOG_DIR", logDir.resolve(name + "/logs").toString());
-            AppProcess transport = new AppProcess(name, transportJar, transportEnv, freePort(), logDir.resolve(name));
-            transports.add(transport);
-            transport.start();
+            transports.add(new AppProcess(name, transportJar, transportEnv, freePort(), logDir.resolve(name)));
         }
-        awaitLeaderConnected(Duration.ofSeconds(90));
+        startTransports();
+        awaitAllIdentitiesHeld(REBALANCE_TIMEOUT);
     }
 
     /**
@@ -272,56 +296,214 @@ final class E2eEnvironment implements AutoCloseable {
         server.kill();
     }
 
-    /** 强制结束指定进程（模拟崩溃）。 */
-    void kill(AppProcess process) {
-        process.kill();
-    }
-
-    /** 强制结束全部 transport 进程。 */
+    /** 强制结束全部 transport 进程（模拟同时崩溃）。 */
     void killTransports() {
-        transports.forEach(AppProcess::kill);
+        for (int i = 0; i < transports.size(); i++) {
+            killTransport(i);
+        }
     }
 
     /** 启动全部 transport（已在运行的不受影响），不等待就绪。 */
     void startTransports() throws IOException {
-        for (AppProcess transport : transports) {
-            transport.start();
+        for (int i = 0; i < transports.size(); i++) {
+            startTransport(i);
         }
     }
 
-    /** 当前的主 transport（健康检查 role 为 LEADER 的进程）。 */
-    AppProcess leaderTransport() {
-        return findConnectedLeader().orElseThrow(() -> new IllegalStateException("no transport is a connected leader"));
+    /**
+     * 强制结束第 i 个 transport（模拟崩溃：不释放租约、不离开成员集合、不发 MQTT DISCONNECT）。
+     * 它持有的身份要等租约过期（15 秒）后才能被其他实例接管，期间落给这些身份的消息排在 EMQX 会话队列里。
+     */
+    void killTransport(int i) {
+        AppProcess transport = transports.get(i);
+        wantedTransports.remove(transport);
+        transport.kill();
     }
 
-    /** 等到某个 transport 是已连接 EMQX 的主实例，返回它。 */
-    AppProcess awaitLeaderConnected(Duration timeout) {
-        AtomicReference<AppProcess> leader = new AtomicReference<>();
-        await().atMost(timeout).pollInterval(Duration.ofSeconds(1)).until(() -> {
-            Optional<AppProcess> found = findConnectedLeader();
-            found.ifPresent(leader::set);
-            return found.isPresent();
-        });
-        log.info("{} is the connected leader", leader.get().name());
-        return leader.get();
+    /**
+     * 正常停止第 i 个 transport（SIGTERM）：分配器停止时释放租约并离开成员集合，其他实例下一次检查即可接手，
+     * 不必等租约过期。用于缩容场景；不支持正常终止的平台上退化为强制结束（见 {@link AppProcess#stop()}）。
+     */
+    void stopTransport(int i) {
+        AppProcess transport = transports.get(i);
+        wantedTransports.remove(transport);
+        transport.stop();
     }
 
-    private Optional<AppProcess> findConnectedLeader() {
+    /** 启动第 i 个 transport（已在运行时什么也不做），不等待就绪；之后由 {@link #awaitAllIdentitiesHeld} 等它分到身份。 */
+    void startTransport(int i) throws IOException {
+        AppProcess transport = transports.get(i);
+        transport.start();
+        wantedTransports.add(transport);
+    }
+
+    /**
+     * 在线调整身份池大小 K：直接写 Redis 键 conduit:transport:pool-size，各实例在下一次检查（2 秒内）读到。
+     * transport 只采用变大的 K，调小会被忽略，所以本方法只用于调大。
+     */
+    void setPoolSize(int k) throws Exception {
+        ExecResult result = redis.execInContainer("redis-cli", "SET", POOL_SIZE_KEY, Integer.toString(k));
+        if (result.getExitCode() != 0 || !result.getStdout().trim().equals("OK")) {
+            throw new IllegalStateException("Could not set " + POOL_SIZE_KEY + " to " + k + ": "
+                    + result.getStdout() + result.getStderr());
+        }
+        log.info("Identity pool size set to {} in Redis", k);
+    }
+
+    /**
+     * Redis 中当前的身份池大小 K。
+     *
+     * @return K；键还不存在（尚无 transport 启动过）时为 0
+     */
+    int poolSize() throws Exception {
+        String out = redis.execInContainer("redis-cli", "GET", POOL_SIZE_KEY).getStdout().trim();
+        return out.isEmpty() ? 0 : Integer.parseInt(out);
+    }
+
+    /**
+     * 正在运行的各 transport 持有的身份数（健康检查 components.allocation.details.held），键为实例名。
+     * 进程未运行或健康检查读不到的实例不在结果中。
+     */
+    Map<String, Integer> heldByInstance() {
+        Map<String, Integer> held = new TreeMap<>();
         for (AppProcess transport : transports) {
-            String body = transport.get("/actuator/health");
-            if (body == null) {
+            readAllocation(transport).ifPresent(a -> held.put(transport.name(), a.held()));
+        }
+        return held;
+    }
+
+    /**
+     * 等到身份分配收敛：应当运行的 transport 都在运行，且
+     * <ul>
+     *   <li>每个运行中的实例健康检查可读、connected 为 true（持有的身份都已连上），members 等于运行中的实例数，
+     *       poolSize 等于 Redis 中的 K；</li>
+     *   <li>各实例 held 之和等于 K，最多与最少之差 ≤ 1；</li>
+     *   <li>Redis 中身份 0～K-1 的租约都存在，且持有者都是运行中的实例（不是已死实例尚未过期的租约）。</li>
+     * </ul>
+     * members 一项保证收敛不是过渡态：被强杀实例的心跳过期前，幸存者的份额仍按旧 N 计算。
+     *
+     * @throws AssertionError        超时，附最后一次看到的问题
+     * @throws IllegalStateException 应当运行的 transport 意外退出（立即报错并指明其日志）
+     */
+    void awaitAllIdentitiesHeld(Duration timeout) {
+        AtomicReference<String> lastProblem = new AtomicReference<>();
+        try {
+            await().atMost(timeout).pollInterval(Duration.ofSeconds(1)).until(() -> {
+                lastProblem.set(allocationProblem());
+                return lastProblem.get() == null;
+            });
+        } catch (ConditionTimeoutException e) {
+            throw new AssertionError("Identities did not settle within " + timeout + ": " + lastProblem.get(), e);
+        }
+        log.info("All identities are held and connected: {}", heldByInstance());
+    }
+
+    /**
+     * 检查一次身份分配，规则见 {@link #awaitAllIdentitiesHeld}。
+     *
+     * @return 不满足的第一条原因；已收敛时为 null
+     * @throws IllegalStateException 应当运行的 transport 已退出
+     */
+    private String allocationProblem() throws Exception {
+        for (AppProcess transport : wantedTransports) {
+            if (!transport.alive()) {
+                throw new IllegalStateException(transport.name() + " exited unexpectedly, see "
+                        + transport.consoleLog());
+            }
+        }
+        int k = poolSize();
+        if (k <= 0) {
+            return "pool size is not in Redis yet";
+        }
+        List<Allocation> running = new ArrayList<>();
+        for (AppProcess transport : transports) {
+            if (!transport.alive()) {
                 continue;
             }
-            try {
-                JsonNode details = JSON.readTree(body).path("components").path("leader").path("details");
-                if ("LEADER".equals(details.path("role").asText()) && details.path("connected").asBoolean()) {
-                    return Optional.of(transport);
-                }
-            } catch (IOException e) {
-                log.debug("Unreadable health of {}: {}", transport.name(), e.getMessage());
+            Optional<Allocation> allocation = readAllocation(transport);
+            if (allocation.isEmpty()) {
+                return transport.name() + " has no readable allocation health yet";
+            }
+            running.add(allocation.get());
+        }
+        if (running.isEmpty()) {
+            return "no transport is running";
+        }
+        int sum = 0;
+        int min = Integer.MAX_VALUE;
+        int max = 0;
+        for (Allocation a : running) {
+            if (!a.connected()) {
+                return a.name() + " has identities that are not connected";
+            }
+            if (a.members() != running.size()) {
+                return a.name() + " sees " + a.members() + " members, " + running.size() + " are running";
+            }
+            if (a.poolSize() != k) {
+                return a.name() + " uses pool size " + a.poolSize() + ", Redis has " + k;
+            }
+            sum += a.held();
+            min = Math.min(min, a.held());
+            max = Math.max(max, a.held());
+        }
+        if (sum != k || max - min > 1) {
+            return "held identities " + heldOf(running) + " do not add up to " + k + " evenly";
+        }
+        Set<String> runningIds = new HashSet<>();
+        running.forEach(a -> runningIds.add(a.instanceId()));
+        List<String> owners = leaseOwners(k);
+        for (int i = 0; i < k; i++) {
+            String owner = i < owners.size() ? owners.get(i) : "";
+            if (!runningIds.contains(owner)) {
+                return "identity #" + i + " is " + (owner.isEmpty() ? "not leased"
+                        : "leased by " + owner + ", which is not a running transport");
             }
         }
-        return Optional.empty();
+        return null;
+    }
+
+    /** 身份 0～k-1 的租约持有者，按序号排列（MGET；redis-cli 非终端输出每个值一行，不存在的键为空行）。 */
+    private List<String> leaseOwners(int k) throws Exception {
+        List<String> command = new ArrayList<>(List.of("redis-cli", "MGET"));
+        for (int i = 0; i < k; i++) {
+            command.add(IDENTITY_KEY_PREFIX + i);
+        }
+        return redis.execInContainer(command.toArray(String[]::new)).getStdout().lines().map(String::trim).toList();
+    }
+
+    private static Map<String, Integer> heldOf(List<Allocation> allocations) {
+        Map<String, Integer> held = new TreeMap<>();
+        allocations.forEach(a -> held.put(a.name(), a.held()));
+        return held;
+    }
+
+    /** 一个 transport 健康检查中的身份分配明细（components.allocation.details）。 */
+    private record Allocation(String name, String instanceId, int held, int members, int poolSize,
+                              boolean connected) {
+    }
+
+    /**
+     * 读取 transport 的身份分配明细。健康检查 DOWN 时返回 503，但响应体仍含明细，照常解析。
+     *
+     * @return 进程未运行、端口未就绪或响应中没有 allocation 组件时为空
+     */
+    private Optional<Allocation> readAllocation(AppProcess transport) {
+        String body = transport.get("/actuator/health");
+        if (body == null) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode details = JSON.readTree(body).path("components").path("allocation").path("details");
+            if (!details.has("held")) {
+                return Optional.empty();
+            }
+            return Optional.of(new Allocation(transport.name(), details.path("instanceId").asText(),
+                    details.path("held").asInt(), details.path("members").asInt(),
+                    details.path("poolSize").asInt(), details.path("connected").asBoolean()));
+        } catch (IOException e) {
+            log.debug("Unreadable health of {}: {}", transport.name(), e.getMessage());
+            return Optional.empty();
+        }
     }
 
     /** 重启 EMQX 容器（等同 docker restart，容器、数据与固定端口不变），等到 emqx ctl status 成功。 */
@@ -357,13 +539,13 @@ final class E2eEnvironment implements AutoCloseable {
         log.info("EMQX is running again after SIGKILL");
     }
 
-    /** 每个场景开始前：把被结束的进程重新启动，并等到有已连接的主 transport。 */
+    /** 每个场景开始前：把被结束或停止的进程重新启动，并等到 3 个 transport 重新分完全部身份。 */
     void ensureRunning() throws IOException {
         if (!server.alive()) {
             startServer();
         }
         startTransports();
-        awaitLeaderConnected(Duration.ofSeconds(90));
+        awaitAllIdentitiesHeld(REBALANCE_TIMEOUT);
     }
 
     /** InfluxDB 中该产品最近 1 小时的 Ua 点数；Ua 列还不存在（全新的库）时为 0。 */

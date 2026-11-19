@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 测试机上的一个 java -jar 进程（server 或 transport）：可启动、强制结束（模拟崩溃）、再启动，并对其 HTTP 端口发 GET。
+ * 测试机上的一个 java -jar 进程（server 或 transport）：可启动、强制结束（模拟崩溃）、正常停止、再启动，并对其 HTTP 端口发 GET。
  * 标准输出与错误追加到工作目录下的 console.log；环境变量在继承的基础上覆盖，并去掉 SPRING_PROFILES_ACTIVE。
  */
 final class AppProcess {
@@ -82,7 +82,7 @@ final class AppProcess {
         log.info("Started {} (pid {}) on port {}", name, process.pid(), httpPort);
     }
 
-    /** 强制结束（不执行关闭钩子，不释放锁、不发 MQTT DISCONNECT），最多等 30 秒退出。 */
+    /** 强制结束（不执行关闭钩子，不释放身份租约、不发 MQTT DISCONNECT），最多等 30 秒退出。 */
     synchronized void kill() {
         if (process == null || !process.isAlive()) {
             return;
@@ -98,6 +98,33 @@ final class AppProcess {
         } else {
             removeShutdownHook();
             log.info("Killed {} (pid {})", name, process.pid());
+        }
+    }
+
+    /**
+     * 正常停止：请求正常终止（Linux 上为 SIGTERM，应用执行关闭流程，如 transport 释放身份租约），最多等 40 秒，
+     * 仍未退出时强制结束。不支持正常终止的平台（Windows 上 destroy 即强制结束）记 WARN，效果等同 {@link #kill()}。
+     */
+    synchronized void stop() {
+        if (process == null || !process.isAlive()) {
+            return;
+        }
+        if (!process.supportsNormalTermination()) {
+            log.warn("{} cannot be terminated normally on this platform, killing it instead", name);
+        }
+        process.destroy();
+        try {
+            if (!process.waitFor(40, TimeUnit.SECONDS)) {
+                log.warn("{} (pid {}) did not stop within 40 seconds, killing it", name, process.pid());
+                process.destroyForcibly();
+                process.waitFor(30, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (!process.isAlive()) {
+            removeShutdownHook();
+            log.info("Stopped {} (pid {})", name, process.pid());
         }
     }
 

@@ -11,6 +11,7 @@ import dev.conduit.common.message.MessageType;
 import dev.conduit.common.message.RawMessage;
 import dev.conduit.transport.leader.LeaderElection.Role;
 import dev.conduit.transport.mqtt.MqttProtocolAdapter;
+import dev.conduit.transport.mqtt.SharedBatcher;
 import dev.conduit.transport.mqtt.MqttTransportProperties;
 import dev.conduit.transport.support.TestBroker;
 import org.junit.jupiter.api.AfterEach;
@@ -56,6 +57,7 @@ class LeaderElectionIT {
     final List<Mqtt5BlockingClient> devices = new ArrayList<>();
     final Set<String> received = ConcurrentHashMap.newKeySet();
     MessageBus bus;
+    final List<SharedBatcher> batchers = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -66,6 +68,7 @@ class LeaderElectionIT {
     @AfterEach
     void tearDown() {
         elections.forEach(LeaderElection::stop);
+        batchers.forEach(SharedBatcher::close);
         devices.forEach(d -> {
             if (d.getState().isConnected()) {
                 d.disconnect();
@@ -77,7 +80,10 @@ class LeaderElectionIT {
     private LeaderElection instance(String name) {
         var props = new MqttTransportProperties(TestBroker.emqxHost(), TestBroker.emqxPort(), clientId,
                 null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
-        MqttProtocolAdapter adapter = new MqttProtocolAdapter(props, bus, Clock.systemUTC());
+        // 每个模拟实例各有自己的合批器，与生产中一个进程一个合批器一致
+        SharedBatcher batcher = new SharedBatcher(bus, 1, Duration.ofMillis(5), Duration.ofSeconds(1));
+        batchers.add(batcher);
+        MqttProtocolAdapter adapter = new MqttProtocolAdapter(props, batcher, Clock.systemUTC());
         LeaderElection election = new LeaderElection(new RedisLeaderLock(redis, key, TTL, name), List.of(adapter),
                 new LeaderProperties(key, TTL, RENEW, ACQUIRE));
         elections.add(election);

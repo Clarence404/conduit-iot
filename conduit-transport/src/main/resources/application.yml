@@ -30,6 +30,7 @@ conduit:
       session-expiry-seconds: 86400
       # 微批写入总线：单线程投递下，每条一次 XADD 的持续上限实测约 1230 条/秒，
       # 低于接入速率时 EMQX 的 mqueue 会溢出丢弃。攒批把每条一次往返变为每批一次。
+      # 本实例所有连接的消息进入同一个合批提交器（SharedBatcher）一起写总线，各连接的在途数仍各受自己的窗口限制。
       # batch-delay 是 PUBACK 的最坏额外延迟；batch-size 设为 1 即退回逐条提交。
       # 规则：batch-size <= EMQX 的 mqtt.max_inflight（编排中的 EMQX_MAX_INFLIGHT），且窗口应为批的若干倍。
       # 待提交条目数就是 EMQX 侧未确认的在途数，被该窗口硬限：批大于窗口则永远攒不满、每批白等满 batch-delay；

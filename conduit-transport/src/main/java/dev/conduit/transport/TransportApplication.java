@@ -10,6 +10,7 @@ import dev.conduit.transport.leader.LeaderLock;
 import dev.conduit.transport.leader.LeaderProperties;
 import dev.conduit.transport.leader.RedisLeaderLock;
 import dev.conduit.transport.mqtt.MqttProtocolAdapter;
+import dev.conduit.transport.mqtt.SharedBatcher;
 import dev.conduit.transport.monitor.EmqxSessionClient;
 import dev.conduit.transport.monitor.SessionMonitor;
 import dev.conduit.transport.monitor.SessionMonitorGroup;
@@ -29,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
@@ -54,15 +56,24 @@ public class TransportApplication {
     }
 
     /**
-     * 主实例的 MQTT 连接：按 connections 创建对应数量的适配器，每个是一条独立连接；何时连接由
-     * {@link LeaderElection} 决定。多于一条时改用共享订阅，由 EMQX 把投递分散到这些连接进程上，
+     * 本实例唯一的合批提交器：所有连接收到的消息按 batch-size / batch-delay 合批写总线，写入失败从 1 秒起退避重试。
+     * 关闭时放弃正在重试的批、不回 PUBACK；适配器先于它停止（mqttConnections 依赖它，销毁顺序相反）。
+     */
+    @Bean(destroyMethod = "close")
+    SharedBatcher sharedBatcher(MqttTransportProperties props, MessageBus bus) {
+        return new SharedBatcher(bus, props.batchSize(), props.batchDelay(), Duration.ofSeconds(1));
+    }
+
+    /**
+     * 主实例的 MQTT 连接：按 connections 创建对应数量的适配器，每个是一条独立连接，共用同一个合批提交器；
+     * 何时连接由 {@link LeaderElection} 决定。多于一条时改用共享订阅，由 EMQX 把投递分散到这些连接进程上，
      * 原因见 {@link MqttTransportProperties} 的 connections 说明。
      */
     @Bean
-    MqttConnections mqttConnections(MqttTransportProperties props, MessageBus bus) {
+    MqttConnections mqttConnections(MqttTransportProperties props, SharedBatcher batcher) {
         List<MqttProtocolAdapter> adapters = new java.util.ArrayList<>(props.connections());
         for (int i = 0; i < props.connections(); i++) {
-            adapters.add(new MqttProtocolAdapter(props, bus, Clock.systemUTC(), i));
+            adapters.add(new MqttProtocolAdapter(props, batcher, Clock.systemUTC(), i));
         }
         return new MqttConnections(List.copyOf(adapters));
     }

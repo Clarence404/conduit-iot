@@ -12,14 +12,11 @@ import com.hivemq.client.mqtt.mqtt5.message.disconnect.Mqtt5DisconnectReasonCode
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAckReasonCode;
-import dev.conduit.common.bus.MessageBus;
-import dev.conduit.common.bus.PublishResult;
+import dev.conduit.common.message.MessageType;
 import dev.conduit.common.message.RawMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -29,18 +26,18 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -49,120 +46,135 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * MqttProtocolAdapter 单元测试：写入总线成功后才 ACK、停止时放弃重试、自有客户端上下线直接 ACK、
+ * MqttProtocolAdapter 单元测试：经真实的 {@link SharedBatcher} 与总线替身，验证写入总线成功后才 ACK、
+ * 会话停止后已提交的条目不写入也不 ACK、业务回执先于 ACK、同一实例的多条连接合成一批、自有客户端上下线直接 ACK、
  * 意外断线与会话被接管时请求重启、SUBACK 含错误码视为订阅失败、连不上 broker 时 start 失败且不留状态。
+ * 合批本身（攒满、延迟、只重提失败条目等）的断言在 {@link SharedBatcherTest}。
  */
 class MqttProtocolAdapterTest {
 
-    MessageBus bus;
+    static final Clock FIXED = Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC);
+
+    FakeMessageBus bus;
+    SharedBatcher batcher;
     Mqtt5Publish publish;
     MqttProtocolAdapter adapter;
+    final List<SharedBatcher> extraBatchers = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
-        bus = mock(MessageBus.class);
+        bus = new FakeMessageBus();
+        batcher = new SharedBatcher(bus, 1, Duration.ofMillis(5), Duration.ofMillis(1));
         publish = mock(Mqtt5Publish.class);
         when(publish.getTopic()).thenReturn(MqttTopic.of("conduit/pk1/dk1/up/property"));
         when(publish.getPayloadAsBytes()).thenReturn(new byte[]{1});
-        var props = new MqttTransportProperties("localhost", 1883, "conduit-transport-ut",
-                null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
-        adapter = new MqttProtocolAdapter(props, bus,
-                Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
+        adapter = new MqttProtocolAdapter(props(1), batcher, FIXED);
     }
 
     @AfterEach
     void tearDown() {
         adapter.stop();
+        batcher.close();
+        extraBatchers.forEach(SharedBatcher::close);
     }
 
     @Test
-    void acksOnlyAfterSuccessfulPublishAndRetriesInline() {
-        when(bus.publish(anyList()))
-                .thenThrow(new IllegalStateException("redis down"))
-                .thenThrow(new IllegalStateException("redis down"))
-                .thenReturn(List.of(PublishResult.ok("1-0")));
+    void acksOnlyAfterSuccessfulPublishAndRetries() {
+        bus.respondWith((call, batch) -> {
+            if (call < 2) {
+                throw new IllegalStateException("redis down");
+            }
+            return FakeMessageBus.okResults(batch);
+        });
+        List<Integer> callsSeenAtAck = Collections.synchronizedList(new ArrayList<>());
+        doAnswer(inv -> callsSeenAtAck.add(bus.callCount())).when(publish).acknowledge();
 
         adapter.onPublish(adapter.openSession(), publish);
 
-        InOrder order = inOrder(bus, publish);
-        order.verify(bus, times(3)).publish(anyList());
-        order.verify(publish, times(1)).acknowledge();
+        verify(publish, timeout(2000)).acknowledge();
+        assertThat(callsSeenAtAck).containsExactly(3);
     }
 
     @Test
-    void doesNotAckWhilePublishKeepsFailingThenGivesUpWhenStopped() throws Exception {
-        when(bus.publish(anyList())).thenThrow(new IllegalStateException("redis down"));
-        MqttProtocolAdapter.Session session = adapter.openSession();
-        Thread t = Thread.startVirtualThread(() -> adapter.onPublish(session, publish));
-        Thread.sleep(50);
+    void doesNotAckWhilePublishKeepsFailingThenDropsTheEntryOnceStopped() throws Exception {
+        AtomicBoolean failing = new AtomicBoolean(true);
+        bus.respondWith((call, batch) -> {
+            if (failing.get()) {
+                throw new IllegalStateException("redis down");
+            }
+            return FakeMessageBus.okResults(batch);
+        });
+        adapter.onPublish(adapter.openSession(), publish);
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2)).until(() -> bus.callCount() >= 1);
 
         adapter.stop();
-        t.join(2000);
+        failing.set(false);
+        // 合批器单线程按序处理：标记条目回调时，前一批已因会话停止被丢弃
+        awaitMarker(batcher);
 
-        assertThat(t.isAlive()).isFalse();
         verify(publish, never()).acknowledge();
+        List<List<RawMessage>> calls = bus.calls();
+        assertThat(calls.get(calls.size() - 1)).extracting(RawMessage::deviceKey).containsExactly("marker");
     }
 
     @Test
     void ackFailureDoesNotRepublish() {
-        when(bus.publish(anyList())).thenReturn(List.of(PublishResult.ok("1-0")));
         doThrow(new IllegalStateException("connection lost")).when(publish).acknowledge();
 
         adapter.onPublish(adapter.openSession(), publish);
 
-        verify(bus, times(1)).publish(anyList());
-        verify(publish, times(1)).acknowledge();
+        verify(publish, timeout(2000)).acknowledge();
+        assertThat(bus.callCount()).isEqualTo(1);
     }
 
     @Test
     void sendsApplicationAckForReliablePropertyAfterBusPublish() {
-        AckCapturingAdapter reliable = new AckCapturingAdapter(bus);
-        when(bus.publish(anyList())).thenReturn(List.of(PublishResult.ok("1-0")));
+        AckCapturingAdapter reliable = new AckCapturingAdapter(batcher);
         when(publish.getPayloadAsBytes())
                 .thenReturn("{\"id\":\"dk1-42\",\"ts\":1760400000000,\"params\":{\"Ua\":220.1}}"
                         .getBytes(StandardCharsets.UTF_8));
 
         reliable.onPublish(reliable.openSession(), publish);
 
+        verify(publish, timeout(2000)).acknowledge();
         assertThat(reliable.ackTopic).isEqualTo("conduit/pk1/dk1/down/ack");
         assertThat(new String(reliable.ackPayload, StandardCharsets.UTF_8))
                 .contains("\"id\":\"dk1-42\"")
                 .contains("\"ts\":1");
-        verify(bus).publish(anyList());
-        verify(publish).acknowledge();
+        assertThat(bus.callCount()).isEqualTo(1);
         reliable.stop();
     }
 
     @Test
     void skipsApplicationAckWithoutAnIdOrForMalformedJson() {
-        AckCapturingAdapter reliable = new AckCapturingAdapter(bus);
-        when(bus.publish(anyList())).thenReturn(List.of(PublishResult.ok("1-0")));
+        AckCapturingAdapter reliable = new AckCapturingAdapter(batcher);
         when(publish.getPayloadAsBytes()).thenReturn("{\"ts\":1,\"params\":{}}".getBytes(StandardCharsets.UTF_8));
         reliable.onPublish(reliable.openSession(), publish);
+        verify(publish, timeout(2000)).acknowledge();
         assertThat(reliable.ackTopic).isNull();
 
+        // 第一条已 ACK 后再改桩，避免与批提交线程上的 acknowledge 并发操作同一个 mock
         when(publish.getPayloadAsBytes()).thenReturn(new byte[]{1, 2, 3});
         reliable.onPublish(reliable.openSession(), publish);
 
+        verify(publish, timeout(2000).times(2)).acknowledge();
         assertThat(reliable.ackTopic).isNull();
-        verify(bus, times(2)).publish(anyList());
-        verify(publish, times(2)).acknowledge();
+        assertThat(bus.callCount()).isEqualTo(2);
         reliable.stop();
     }
 
     @Test
     void applicationAckSendFailureStillAcknowledgesTheUplink() {
-        AckCapturingAdapter reliable = new AckCapturingAdapter(bus);
+        AckCapturingAdapter reliable = new AckCapturingAdapter(batcher);
         reliable.ackResult = CompletableFuture.failedFuture(new IllegalStateException("connection lost"));
-        when(bus.publish(anyList())).thenReturn(List.of(PublishResult.ok("1-0")));
         when(publish.getPayloadAsBytes())
                 .thenReturn("{\"id\":\"dk1-1\",\"ts\":1,\"params\":{}}".getBytes(StandardCharsets.UTF_8));
 
         reliable.onPublish(reliable.openSession(), publish);
 
+        verify(publish, timeout(2000)).acknowledge();
         assertThat(reliable.ackTopic).isEqualTo("conduit/pk1/dk1/down/ack");
-        verify(bus).publish(anyList());
-        verify(publish).acknowledge();
+        assertThat(bus.callCount()).isEqualTo(1);
         reliable.stop();
     }
 
@@ -173,8 +185,27 @@ class MqttProtocolAdapterTest {
 
         adapter.onPublish(adapter.openSession(), publish);
 
-        verify(bus, never()).publish(anyList());
         verify(publish).acknowledge();
+        assertThat(bus.callCount()).isZero();
+    }
+
+    @Test
+    void connectionsOfOneInstanceShareOneBatch() {
+        SharedBatcher shared = newBatcher(2, Duration.ofSeconds(30));
+        MqttProtocolAdapter first = new MqttProtocolAdapter(props(2), shared, FIXED, 0);
+        MqttProtocolAdapter second = new MqttProtocolAdapter(props(2), shared, FIXED, 1);
+        Mqtt5Publish p1 = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
+        Mqtt5Publish p2 = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
+
+        first.onPublish(first.openSession(), p1);
+        second.onPublish(second.openSession(), p2);
+
+        verify(p1, timeout(2000)).acknowledge();
+        verify(p2, timeout(2000)).acknowledge();
+        assertThat(bus.calls()).hasSize(1);
+        assertThat(bus.calls().get(0)).extracting(RawMessage::deviceKey).containsExactly("dev-1", "dev-2");
+        first.stop();
+        second.stop();
     }
 
     @Test
@@ -245,9 +276,8 @@ class MqttProtocolAdapterTest {
         /** 非 null 时 subscribe 返回它，由测试控制 SUBACK 何时到达。 */
         volatile CompletableFuture<Mqtt5SubAck> subAck;
 
-        FakeConnectAdapter(MessageBus bus) {
-            super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport"), bus, Clock.systemUTC(), Duration.ofMillis(1));
+        FakeConnectAdapter(SharedBatcher batcher) {
+            super(props(1), batcher, Clock.systemUTC());
         }
 
         @Override
@@ -283,13 +313,13 @@ class MqttProtocolAdapterTest {
 
     /** 捕获业务回执而不连接 broker。 */
     private static final class AckCapturingAdapter extends MqttProtocolAdapter {
-        String ackTopic;
-        byte[] ackPayload;
-        CompletableFuture<?> ackResult = CompletableFuture.completedFuture(null);
+        // 在批提交线程上写、测试线程上读
+        volatile String ackTopic;
+        volatile byte[] ackPayload;
+        volatile CompletableFuture<?> ackResult = CompletableFuture.completedFuture(null);
 
-        AckCapturingAdapter(MessageBus bus) {
-            super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport"), bus, Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
+        AckCapturingAdapter(SharedBatcher batcher) {
+            super(props(1), batcher, FIXED);
         }
 
         @Override
@@ -302,7 +332,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void stopDuringAnInProgressStartMakesTheStartFailAndLeavesNothingConnected() throws Exception {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
         CompletableFuture<Throwable> result = new CompletableFuture<>();
         Thread.startVirtualThread(() -> {
             try {
@@ -323,7 +353,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void aConnackArrivingAfterStopIsDisconnectedImmediately() throws Exception {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
         CompletableFuture<Throwable> result = new CompletableFuture<>();
         Thread.startVirtualThread(() -> {
             try {
@@ -347,7 +377,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void isNotConnectedBetweenConnackAndAGrantedSuback() throws Exception {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
         fake.subAck = new CompletableFuture<>();
         Thread starter = Thread.startVirtualThread(fake::start);
         org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2)).until(() -> fake.connectCount() == 1);
@@ -370,7 +400,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void startGivesUpBeforeConnectingWhenItIsNoLongerValid() {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
 
         assertThatThrownBy(() -> fake.start(() -> false)).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no longer valid");
@@ -381,7 +411,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void stopOnAConnectedSessionDisconnectsExactlyOnce() throws Exception {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
         Thread starter = Thread.startVirtualThread(fake::start);
         org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2)).until(() -> fake.connectCount() == 1);
         fake.connects.get(0).complete(mock(Mqtt5ConnAck.class));
@@ -395,7 +425,7 @@ class MqttProtocolAdapterTest {
 
     @Test
     void startingTwiceClosesTheFirstSession() throws Exception {
-        FakeConnectAdapter fake = new FakeConnectAdapter(bus);
+        FakeConnectAdapter fake = new FakeConnectAdapter(batcher);
         Thread first = Thread.startVirtualThread(() -> {
             try {
                 fake.start();
@@ -422,107 +452,13 @@ class MqttProtocolAdapterTest {
     }
 
     @Test
-    void batchesPublishesUntilBatchSizeIsReached() {
-        // 批大小 2：收到两条即提交一次，两条都 ACK
-        MqttProtocolAdapter a = adapterWithBatch(2, Duration.ofSeconds(30));
-        MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList())).thenAnswer(inv -> okResults(inv.getArgument(0)));
-
-        Mqtt5Publish first = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
-        Mqtt5Publish second = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
-        a.onPublish(s, first);
-        a.onPublish(s, second);
-
-        verify(bus, times(1)).publish(argThat((List<RawMessage> b) -> b.size() == 2));
-        verify(first).acknowledge();
-        verify(second).acknowledge();
-        a.stop();
-    }
-
-    @Test
-    void flushesPartialBatchAfterBatchDelay() {
-        // 批大小 10、延迟 50ms：只来一条，也必须在延迟到期后提交，不能无限等
-        MqttProtocolAdapter a = adapterWithBatch(10, Duration.ofMillis(50));
-        MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList())).thenAnswer(inv -> okResults(inv.getArgument(0)));
-
-        Mqtt5Publish only = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
-        a.onPublish(s, only);
-
-        verify(bus, timeout(2000).times(1)).publish(argThat((List<RawMessage> b) -> b.size() == 1));
-        verify(only, timeout(2000)).acknowledge();
-        a.stop();
-    }
-
-    @Test
-    void retriesOnlyTheFailedEntriesOfAPartiallySuccessfulBatchBeforeAcking() {
-        // 逐条失败不能留下未 ACK 的空洞（EMQX retry_interval=infinity 会耗尽 inflight 窗口）：只重试失败条目
-        MqttProtocolAdapter a = adapterWithBatch(2, Duration.ofSeconds(30));
-        MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList()))
-                .thenReturn(List.of(PublishResult.ok("1-0"),
-                        PublishResult.failed(new IllegalStateException("boom"))))
-                .thenAnswer(inv -> okResults(inv.getArgument(0)));
-
-        Mqtt5Publish good = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
-        Mqtt5Publish bad = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
-        a.onPublish(s, good);
-        a.onPublish(s, bad);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<RawMessage>> batches = ArgumentCaptor.forClass(List.class);
-        verify(bus, times(2)).publish(batches.capture());
-        assertThat(batches.getAllValues().get(0)).extracting(RawMessage::deviceKey)
-                .containsExactly("dev-1", "dev-2");
-        assertThat(batches.getAllValues().get(1)).extracting(RawMessage::deviceKey)
-                .containsExactly("dev-2");
-        InOrder order = inOrder(good, bad);
-        order.verify(good).acknowledge();
-        order.verify(bad).acknowledge();
-        a.stop();
-    }
-
-    @Test
-    void retriesAfterWholeBatchExceptionWithoutDuplicatingOrDroppingAcks() {
-        MqttProtocolAdapter a = adapterWithBatch(3, Duration.ofSeconds(30));
-        MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList()))
-                .thenThrow(new IllegalStateException("redis down"))
-                .thenReturn(List.of(PublishResult.ok("1-0"), PublishResult.failed(new IllegalStateException("x")),
-                        PublishResult.ok("3-0")))
-                .thenAnswer(inv -> okResults(inv.getArgument(0)));
-
-        Mqtt5Publish p1 = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
-        Mqtt5Publish p2 = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
-        Mqtt5Publish p3 = publishOf("conduit/pk/dev-3/up/property", "{\"ts\":3}");
-        a.onPublish(s, p1);
-        a.onPublish(s, p2);
-        a.onPublish(s, p3);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<RawMessage>> batches = ArgumentCaptor.forClass(List.class);
-        verify(bus, times(3)).publish(batches.capture());
-        assertThat(batches.getAllValues().get(0)).hasSize(3);
-        assertThat(batches.getAllValues().get(1)).hasSize(3);
-        assertThat(batches.getAllValues().get(2)).extracting(RawMessage::deviceKey).containsExactly("dev-2");
-        InOrder order = inOrder(p1, p2, p3);
-        order.verify(p1).acknowledge();
-        order.verify(p2).acknowledge();
-        order.verify(p3).acknowledge();
-        verify(p1, times(1)).acknowledge();
-        verify(p2, times(1)).acknowledge();
-        verify(p3, times(1)).acknowledge();
-        a.stop();
-    }
-
-    @Test
     void sendsReliableAckOnlyAfterBusPublishAndBeforeAcknowledgeInABatch() {
-        List<String> events = new ArrayList<>();
-        BatchAckAdapter a = new BatchAckAdapter(bus, 3, events);
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        BatchAckAdapter a = new BatchAckAdapter(newBatcher(3, Duration.ofSeconds(30)), events);
         MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList())).thenAnswer(inv -> {
+        bus.respondWith((call, batch) -> {
             events.add("bus");
-            return okResults(inv.getArgument(0));
+            return FakeMessageBus.okResults(batch);
         });
         Mqtt5Publish reliable1 = publishOf("conduit/pk/dev-1/up/property", "{\"id\":\"a-1\",\"ts\":1}");
         Mqtt5Publish plain = publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}");
@@ -536,6 +472,7 @@ class MqttProtocolAdapterTest {
         assertThat(events).isEmpty(); // 批未提交前既无回执也无 ACK
         a.onPublish(s, reliable2);
 
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2)).until(() -> events.size() == 6);
         // 总线写入在前；带 id 的先回执再 ACK；不带 id 的只 ACK；顺序与到达顺序一致
         assertThat(events).containsExactly("bus", "receipt:a-1", "ack1", "ack2", "receipt:c-3", "ack3");
         a.stop();
@@ -553,10 +490,8 @@ class MqttProtocolAdapterTest {
     private static final class BatchAckAdapter extends MqttProtocolAdapter {
         private final List<String> events;
 
-        BatchAckAdapter(MessageBus bus, int batchSize, List<String> events) {
-            super(new MqttTransportProperties("localhost", 1883, "conduit-transport-ut", null, null, 86400,
-                    "conduit-", batchSize, Duration.ofSeconds(30), 1, "conduit-transport"), bus,
-                    Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC), Duration.ofMillis(1));
+        BatchAckAdapter(SharedBatcher batcher, List<String> events) {
+            super(props(1), batcher, FIXED);
             this.events = events;
         }
 
@@ -569,44 +504,43 @@ class MqttProtocolAdapterTest {
     }
 
     @Test
-    void preservesArrivalOrderWithinABatch() {
-        MqttProtocolAdapter a = adapterWithBatch(3, Duration.ofSeconds(30));
-        MqttProtocolAdapter.Session s = a.openSession();
-        when(bus.publish(anyList())).thenAnswer(inv -> okResults(inv.getArgument(0)));
-
-        a.onPublish(s, publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}"));
-        a.onPublish(s, publishOf("conduit/pk/dev-2/up/property", "{\"ts\":2}"));
-        a.onPublish(s, publishOf("conduit/pk/dev-3/up/property", "{\"ts\":3}"));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<RawMessage>> batch = ArgumentCaptor.forClass(List.class);
-        verify(bus).publish(batch.capture());
-        assertThat(batch.getValue()).extracting(RawMessage::deviceKey)
-                .containsExactly("dev-1", "dev-2", "dev-3");
-        a.stop();
-    }
-
-    @Test
     void doesNotAckPendingEntriesWhenTheSessionStopsBeforeTheDelayedFlush() throws Exception {
         // 延迟提交触发前会话已停止：待提交条目既不写总线也不 ACK，留给 broker 重投
-        MqttProtocolAdapter a = adapterWithBatch(10, Duration.ofMillis(100));
-        MqttProtocolAdapter.Session s = a.openSession();
+        SharedBatcher slow = newBatcher(10, Duration.ofMillis(100));
+        MqttProtocolAdapter a = new MqttProtocolAdapter(props(1), slow, FIXED);
         Mqtt5Publish only = publishOf("conduit/pk/dev-1/up/property", "{\"ts\":1}");
-        a.onPublish(s, only);
+        a.onPublish(a.openSession(), only);
 
         a.stop();
-        Thread.sleep(300);
+        awaitMarker(slow);
 
-        verify(bus, never()).publish(anyList());
         verify(only, never()).acknowledge();
+        assertThat(bus.calls()).allSatisfy(call ->
+                assertThat(call).extracting(RawMessage::deviceKey).doesNotContain("dev-1"));
     }
 
-    /** 按指定批参数构造被测适配器；其余依赖沿用测试类已有的 mock。 */
-    private MqttProtocolAdapter adapterWithBatch(int batchSize, Duration batchDelay) {
-        var p = new MqttTransportProperties("localhost", 1883, "conduit-transport-ut",
-                null, null, 86400L, "conduit-", batchSize, batchDelay, 1, "conduit-transport");
-        return new MqttProtocolAdapter(p, bus, Clock.fixed(Instant.ofEpochMilli(1), ZoneOffset.UTC),
-                Duration.ofMillis(1));
+    /** 单连接或多连接的测试配置；批参数由合批器决定，这里的 batchSize / batchDelay 不起作用。 */
+    private static MqttTransportProperties props(int connections) {
+        return new MqttTransportProperties("localhost", 1883, "conduit-transport-ut",
+                null, null, 86400L, "conduit-", 1, Duration.ofMillis(5), connections, "conduit-transport");
+    }
+
+    /** 按指定批参数新建一个共用测试总线替身的合批器，测试结束时统一关闭。 */
+    private SharedBatcher newBatcher(int batchSize, Duration batchDelay) {
+        SharedBatcher b = new SharedBatcher(bus, batchSize, batchDelay, Duration.ofMillis(1));
+        extraBatchers.add(b);
+        return b;
+    }
+
+    /**
+     * 向合批器提交一条 live 的标记消息并等它回调。合批器单线程按序处理，标记回调时之前提交的条目都已处理完，
+     * 可据此确定性地断言「从未 ACK」，而不必固定睡眠。
+     */
+    private static void awaitMarker(SharedBatcher target) throws InterruptedException {
+        CountDownLatch marker = new CountDownLatch(1);
+        target.submit(new RawMessage("pk", "marker", MessageType.PROPERTY, new byte[]{1}, 1L, Map.of()),
+                () -> true, marker::countDown);
+        assertThat(marker.await(2, TimeUnit.SECONDS)).as("marker committed").isTrue();
     }
 
     /** 构造一条指定 topic 与载荷的模拟 MQTT 消息。 */
@@ -617,15 +551,6 @@ class MqttProtocolAdapterTest {
         return p;
     }
 
-    /** 为整批生成全部成功的结果，id 按下标编号。 */
-    private static List<PublishResult> okResults(List<RawMessage> batch) {
-        List<PublishResult> results = new ArrayList<>(batch.size());
-        for (int i = 0; i < batch.size(); i++) {
-            results.add(PublishResult.ok((i + 1) + "-0"));
-        }
-        return results;
-    }
-
     @Test
     void startFailsCleanlyWhenTheBrokerIsUnreachable() throws IOException {
         int closedPort;
@@ -634,7 +559,7 @@ class MqttProtocolAdapterTest {
         }
         var props = new MqttTransportProperties("127.0.0.1", closedPort, "conduit-transport-ut",
                 null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
-        MqttProtocolAdapter unreachable = new MqttProtocolAdapter(props, bus, Clock.systemUTC());
+        MqttProtocolAdapter unreachable = new MqttProtocolAdapter(props, batcher, Clock.systemUTC());
 
         assertThatThrownBy(unreachable::start)
                 .isInstanceOf(IllegalStateException.class)

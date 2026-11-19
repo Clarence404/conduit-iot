@@ -48,12 +48,14 @@ class MqttProtocolAdapterIT {
     final List<MqttProtocolAdapter> adapters = new ArrayList<>();
     final List<Mqtt5BlockingClient> devices = new ArrayList<>();
     MessageBus bus;
+    SharedBatcher batcher;
     MqttProtocolAdapter adapter;
 
     @BeforeEach
     void setUp() {
         bus = new RedisStreamMessageBus(redis, new MessageBusProperties(streamKey, "it:dead", 100_000, 1000));
         bus.ensureGroup(GROUP);
+        batcher = new SharedBatcher(bus, 1, Duration.ofMillis(5), Duration.ofSeconds(1));
         adapter = newAdapter();
         adapter.start();
     }
@@ -66,13 +68,14 @@ class MqttProtocolAdapterIT {
             }
         });
         adapters.forEach(MqttProtocolAdapter::stop);
+        batcher.close();
         redis.delete(streamKey);
     }
 
     private MqttProtocolAdapter newAdapter() {
         var props = new MqttTransportProperties(TestBroker.emqxHost(), TestBroker.emqxPort(), clientId,
                 null, null, 86400, "conduit-", 1, Duration.ofMillis(5), 1, "conduit-transport");
-        MqttProtocolAdapter a = new MqttProtocolAdapter(props, bus,
+        MqttProtocolAdapter a = new MqttProtocolAdapter(props, batcher,
                 Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));
         adapters.add(a);
         return a;

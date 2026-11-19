@@ -12,9 +12,10 @@ import java.time.Duration;
  * @param username             为空表示匿名连接（仅测试环境）
  * @param sessionExpirySeconds 会话保留秒数，与 EMQX 持久会话消息保留期（1 天）一致
  * @param ownClientPrefix      平台内部客户端的 clientId 前缀，这些客户端的上下线事件不转发
- * @param batchSize            一次提交到总线的最大条数；1 等价于逐条提交（回退开关）。
+ * @param batchSize            一次提交到总线的最大条数；1 等价于逐条提交（回退开关）。本实例所有连接的消息进入同一个
+ *                             {@link SharedBatcher} 合批，各连接的未确认在途数仍各自受自己的窗口限制。
  *                             不得大于 EMQX 的 mqtt.max_inflight，且窗口应为批的若干倍。待提交条目数就是
- *                             EMQX 侧未确认的在途数，被该窗口硬限：批大于窗口则永远攒不满、每批白等满 batchDelay；
+ *                             EMQX 侧未确认的在途数，被该窗口硬限：批大于窗口则可能攒不满、每批白等满 batchDelay；
  *                             批等于窗口则是停等协议（发 N 条、等全部确认、再发 N 条），流水线深度为 1；
  *                             窗口远大于批时提交当前批的同时下一批已在途，深度为 窗口/批（实测 1024/64 优于 32/32）
  * @param batchDelay           攒批的最长等待：不足 batchSize 时最多等这么久也要提交，

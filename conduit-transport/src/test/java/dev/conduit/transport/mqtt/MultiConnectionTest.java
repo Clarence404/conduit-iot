@@ -1,6 +1,6 @@
 package dev.conduit.transport.mqtt;
 
-import dev.conduit.common.bus.MessageBus;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -8,7 +8,6 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
 /**
  * 主实例多连接共享订阅的命名与订阅规则。
@@ -19,7 +18,13 @@ import static org.mockito.Mockito.mock;
  */
 class MultiConnectionTest {
 
-    private final MessageBus bus = mock(MessageBus.class);
+    private final SharedBatcher batcher = new SharedBatcher(new FakeMessageBus(), 64, Duration.ofMillis(5),
+            Duration.ofSeconds(1));
+
+    @AfterEach
+    void tearDown() {
+        batcher.close();
+    }
 
     private static MqttTransportProperties props(int connections) {
         return new MqttTransportProperties("localhost", 1883, "conduit-transport", null, null, 86400,
@@ -27,7 +32,7 @@ class MultiConnectionTest {
     }
 
     private MqttProtocolAdapter adapter(int connections, int index) {
-        return new MqttProtocolAdapter(props(connections), bus, Clock.systemUTC(), index);
+        return new MqttProtocolAdapter(props(connections), batcher, Clock.systemUTC(), index);
     }
 
     @Test
@@ -82,8 +87,12 @@ class MultiConnectionTest {
     }
 
     @Test
-    void 序号越界时拒绝构造() {
-        assertThatThrownBy(() -> adapter(4, 4)).isInstanceOf(IllegalArgumentException.class);
+    void 序号为负时拒绝构造() {
         assertThatThrownBy(() -> adapter(4, -1)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void 序号可超过启动时的连接数因为身份池可在运行中调大() {
+        assertThat(adapter(4, 4).clientId()).isEqualTo("conduit-transport-4");
     }
 }

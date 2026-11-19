@@ -203,9 +203,11 @@ final class E2eEnvironment implements AutoCloseable {
                     .withEnv("EMQX_MQTT__MAX_MQUEUE_LEN", "100000")
                     .withEnv("EMQX_MQTT__MAX_INFLIGHT", "512")
                     .withEnv("EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE", "256MB")
-                    // transport 专用 zone：与部署编排默认值一致（信箱 20 万、会话队列 10 万）
+                    // transport 专用 zone：与部署编排默认值一致（信箱 20 万、单连接会话队列 1.5 万，64 × 1.5 万 ≈ 96 万）
                     .withEnv("EMQX_ZONES__TRANSPORT__FORCE_SHUTDOWN__MAX_MAILBOX_SIZE", "200000")
-                    .withEnv("EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN", "100000")
+                    .withEnv("EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN", "15000")
+                    // 共享订阅轮询分发（下游不依赖顺序）；键在 mqtt 下，与部署编排一致
+                    .withEnv("EMQX_MQTT__SHARED_SUBSCRIPTION_STRATEGY", "round_robin")
                     .withEnv("EMQX_CLUSTER__DISCOVERY_STRATEGY", "singleton")
                     .withEnv("EMQX_NODE__NAME", "emqx@127.0.0.1")
                     .withEnv("EMQX_DASHBOARD__DEFAULT_PASSWORD", hex(16))

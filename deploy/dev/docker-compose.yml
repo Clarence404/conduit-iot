@@ -147,11 +147,10 @@ services:
       # 在途消息堆在连接进程的 Erlang 信箱里，越过该上限会触发 mailbox_overflow 强杀
       # （2026-10-28 实测：配 1024 时负载下必然被杀，且先于队列溢出与堆超限发生）
       EMQX_MQTT__MAX_INFLIGHT: ${EMQX_MAX_INFLIGHT:-512}
-      # transport 多连接共享订阅的分发策略：同一设备（发布方 clientid）的消息固定投给同一条订阅连接，
-      # 保住单设备内的顺序。下游其实不依赖顺序（最新值按 ts 比较、InfluxDB 幂等、在线状态有 since 守护），
-      # 但保序几乎没有成本。默认 round_robin 会把同一设备的相邻消息拆到不同连接上。
+      # transport 共享订阅的分发策略：round_robin，把消息轮流投给身份池里的各条连接，负载最均匀。
+      # 不需要保序：下游都不依赖顺序（最新值按测点比较 ts、InfluxDB 按（序列, ts）幂等、在线状态有 since 守护）。
       # 注意键在 mqtt 下而不是 broker 下（EMQX 5.10 实测 `emqx ctl conf show mqtt`）；写成 EMQX_BROKER__... 会被静默忽略。
-      EMQX_MQTT__SHARED_SUBSCRIPTION_STRATEGY: hash_clientid
+      EMQX_MQTT__SHARED_SUBSCRIPTION_STRATEGY: ${EMQX_SHARED_SUBSCRIPTION_STRATEGY:-round_robin}
       EMQX_CLUSTER__DISCOVERY_STRATEGY: singleton
       # 固定节点名：默认按容器 IP 命名，IP 变化会换数据目录
       EMQX_NODE__NAME: emqx@127.0.0.1
@@ -164,9 +163,10 @@ services:
       EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_MAX_MAILBOX_SIZE:-10000}
       # transport 专用 zone（内部监听器 tcp:internal，1884）：只放宽信箱与会话队列，堆上限与在途窗口沿用上面的全局值（堆上限不得上调）。
       # 2026-11-16 实测：2.5 万台断网 5 分钟后同时补传，订阅连接信箱冲到 1.3 万～4.4 万被强杀、内存会话丢失；
-      # 放宽后 8 条连接 × 10 万条队列 ≈ 80 万条缓冲。见 docs/superpowers/specs/2026-11-16-conduit-transport-internal-listener-design.md
+      # 放宽后 64 条连接（身份池默认大小）× 1.5 万条队列 ≈ 96 万条缓冲（原 8 × 10 万）；
+      # 调大 K 时按 K × 单连接队列重新估算总缓冲。见 docs/superpowers/specs/2026-11-16-conduit-transport-internal-listener-design.md
       EMQX_ZONES__TRANSPORT__FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: ${EMQX_TRANSPORT_MAX_MAILBOX_SIZE:-200000}
-      EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN: ${EMQX_TRANSPORT_MAX_MQUEUE_LEN:-100000}
+      EMQX_ZONES__TRANSPORT__MQTT__MAX_MQUEUE_LEN: ${EMQX_TRANSPORT_MAX_MQUEUE_LEN:-15000}
     volumes:
       - emqx-data:/opt/emqx/data
       # 相对路径按本文件所在目录解析（独立部署包 extends 时同样指向这里）；文件需对容器内 emqx 用户（uid 1000）可读

@@ -4,7 +4,8 @@ import java.util.function.BooleanSupplier;
 
 /**
  * 协议适配器：把某种设备协议的消息转换为 RawMessage 投递到总线。新增协议（HTTP、Modbus TCP 等）只需新增一个实现。
- * 生命周期由选主协调器 LeaderElection 驱动：只有主实例启动适配器，下台或进程停止时立即停止；同一实例可多次 start / stop。
+ * 生命周期由身份池分配器 IdentityAllocator 驱动：每个适配器对应一个身份，本实例持有该身份时启动，
+ * 失去身份或进程停止时立即停止；同一实例可多次 start / stop。
  */
 public interface ProtocolAdapter {
 
@@ -14,8 +15,8 @@ public interface ProtocolAdapter {
     /**
      * 建立连接并开始接收，就绪（连接与订阅都成功）后才返回。
      *
-     * @param stillValid 启动是否仍然有效（例如调用方仍是主实例）；适配器在发出连接请求前与订阅前各检查一次，
-     *                   为 false 时放弃并抛异常，避免下台后仍连上 broker 顶掉新主实例的会话
+     * @param stillValid 启动是否仍然有效（例如本实例仍持有该身份）；适配器在发出连接请求前与订阅前各检查一次，
+     *                   为 false 时放弃并抛异常，避免失去身份后仍连上 broker 顶掉新持有者的会话
      * @throws IllegalStateException 连接或订阅失败、超时、启动已失效或被并发 stop；资源已清理，调用方可稍后重试
      */
     void start(BooleanSupplier stillValid);

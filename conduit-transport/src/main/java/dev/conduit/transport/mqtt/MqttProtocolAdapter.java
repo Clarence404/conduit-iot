@@ -45,14 +45,14 @@ import java.util.function.BooleanSupplier;
  * 把收到的消息交给实例级的 {@link SharedBatcher}，与本实例其他连接的消息合批 XADD；写入成功后才回 PUBACK（手动 ACK），
  * 保证至少一次投递；属性报文带 id 时还向设备发送“平台已持久接收”的业务回执。
  * EMQX 使用内存持久会话（磁盘持久会话已关闭，原因见 CLAUDE.md 决定记录）：transport 离线期间的消息进入内存队列 mqueue
- * （容量有限，溢出按 mqueue_dropped 计数），下次 start（本实例或接管的新主实例）时补发；EMQX 重启则不保留未投递消息，
+ * （容量有限，溢出按 mqueue_dropped 计数），下次 start（本实例或接手该身份的其他实例）时补发；EMQX 重启则不保留未投递消息，
  * 端到端不丢由设备侧消息 id + 平台业务回执负责。
  *
  * <p>每次 start 打开一个独立的 {@link Session}（客户端、投递线程、状态标志），stop 关闭它，可反复调用。
- * 不使用 HiveMQ 自动重连：意外断线或会话被接管时置 needsRestart，由选主协调器确认仍持锁后重新 start。
+ * 不使用 HiveMQ 自动重连：意外断线或会话被接管时置 needsRestart，由身份池分配器续期确认仍持有该身份后重新 start。
  *
- * <p>一个实例对应主实例的一条连接。配置 connections > 1 时主实例创建多个实例、改用共享订阅分摊投递，
- * 第 index 条的 clientId 由 {@link MqttTransportProperties#clientIdOf} 给出；上下线事件只由第 0 条订阅；
+ * <p>一个实例对应一个身份（一条连接），由分配器在本实例抢到该身份时创建。初始身份池大于 1 时改用共享订阅分摊投递，
+ * 第 index 个身份的 clientId 由 {@link MqttTransportProperties#clientIdOf} 给出；上下线事件只由第 0 条订阅；
  * 第 0 条在共享模式下还会退订旧版留下的非共享过滤器（见 {@link #retireLegacySubscription}）。
  */
 public class MqttProtocolAdapter implements ProtocolAdapter {
@@ -72,7 +72,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
     /** 本实例所有连接共用的合批提交器：写总线、重试与提交后的回调都在它的线程上执行。 */
     private final SharedBatcher batcher;
     private final Clock clock;
-    /** 本实例是主实例的第几条连接（从 0 开始）。 */
+    /** 身份序号（从 0 开始）。 */
     private final int index;
     /** 本条连接的 clientId，见 {@link MqttTransportProperties#clientIdOf}。 */
     private final String clientId;
@@ -123,7 +123,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
         this.clientId = props.clientIdOf(index);
     }
 
-    /** 选主日志里的适配器名；多连接时带序号，便于看出是哪一条断了。 */
+    /** 分配器日志里的适配器名；多身份时带序号，便于看出是哪一条断了。 */
     @Override
     public String name() {
         return props.shared() ? "mqtt-" + index : "mqtt";
@@ -289,7 +289,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
 
     /**
      * 给连接 future 挂回调：CONNACK 迟到（超时或停止之后才成功）时立即断开，
-     * 否则这个僵尸连接会以共用的 clientId 顶掉主实例的会话。此时 stopping 已置位，onDisconnected 会忽略它。
+     * 否则这个僵尸连接会以共用的 clientId 顶掉该身份新持有者的会话。此时 stopping 已置位，onDisconnected 会忽略它。
      */
     private void dropLateConnection(Session s) {
         CompletableFuture<Mqtt5ConnAck> f = s.connectFuture;
@@ -409,7 +409,7 @@ public class MqttProtocolAdapter implements ProtocolAdapter {
      * 退订只影响此后新消息的路由，已在会话队列里的消息照常投递。
      *
      * <p>全新安装时没有这条订阅，EMQX 回 NO_SUBSCRIPTIONS_EXISTED，视为成功。其他原因码视为失败并抛出，
-     * 由选主协调器重试——宁可连不上，也不能带着一条全量的非共享订阅静默运行。
+     * 由分配器重试——宁可连不上，也不能带着一条全量的非共享订阅静默运行。
      */
     private void retireLegacySubscription(Session s, Mqtt5AsyncClient client)
             throws InterruptedException, ExecutionException, TimeoutException {

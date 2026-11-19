@@ -72,7 +72,7 @@ public class NodeMemoryMonitor {
         details = Map.copyOf(d);
     }
 
-    /** 本实例不再是主实例时调用：清空仪表与明细。 */
+    /** 本实例不再持有任何身份时调用：清空仪表与明细。 */
     public synchronized void reset() {
         clear();
         details = Map.of();

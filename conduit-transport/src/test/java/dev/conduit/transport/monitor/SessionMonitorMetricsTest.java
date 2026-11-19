@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** SessionMonitor 发布的会话仪表：成功采样后取值正确；失败或不再是主实例时为 NaN，不保留旧值。 */
+/** SessionMonitor 发布的会话仪表：成功采样后取值正确；失败或不再持有该身份时为 NaN，不保留旧值。 */
 class SessionMonitorMetricsTest {
 
     private static final String P = "conduit.transport.session.";
@@ -73,7 +73,7 @@ class SessionMonitorMetricsTest {
     }
 
     @Test
-    void resetOnNonLeaderTurnsAllGaugesToNaN() {
+    void resetAfterLosingTheIdentityTurnsAllGaugesToNaN() {
         MeterRegistry reg = new SimpleMeterRegistry();
         SessionMonitor m = new SessionMonitor(
                 () -> new SessionSnapshot(0, 500, 100_000, 32, 1024, 100, 1_000, false), 6, 1L << 28, 32, reg);

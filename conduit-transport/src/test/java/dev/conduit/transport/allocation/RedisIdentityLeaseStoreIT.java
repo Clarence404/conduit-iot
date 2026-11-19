@@ -2,6 +2,7 @@ package dev.conduit.transport.allocation;
 
 import dev.conduit.transport.support.TestBroker;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -22,6 +23,8 @@ class RedisIdentityLeaseStoreIT {
         return new RedisIdentityLeaseStore(redis, ttl, id);
     }
 
+    /** 前后都清：分配键是固定名，其他 IT（如 TransportApplicationIT 的上下文）可能留下 pool-size 等值。 */
+    @BeforeEach
     @AfterEach
     void cleanKeys() {
         redis.delete(MEMBERS_KEY);

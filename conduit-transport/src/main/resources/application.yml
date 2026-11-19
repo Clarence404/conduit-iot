@@ -8,7 +8,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-      # 选主续期依赖 Redis 及时返回：命令超时短于续期间隔，Redis 卡住时按续期失败处理（立即断开 MQTT）
+      # 身份租约续期依赖 Redis 及时返回：命令超时短于续期间隔，Redis 卡住时按续期失败处理（立即断开对应身份的 MQTT 连接）
       timeout: 2s
 
 conduit:
@@ -17,14 +17,15 @@ conduit:
       host: ${EMQX_HOST:localhost}
       # 只供 transport 使用的内部监听器（EMQX tcp:internal，zone transport 信箱与队列放宽）；1883 是设备监听器
       port: ${EMQX_PORT:1884}
-      # 所有 transport 实例共用同一组 clientId：EMQX 按 clientId 为离线的订阅端排队，新主实例接管同一组会话
+      # 身份 0 的 clientId，身份 i 为 client-id-i。所有 transport 实例共用同一组：EMQX 按 clientId 为离线的订阅端排队，
+      # 接手某个身份的实例接管它的会话。必须保留 conduit- 前缀（transport 超级用户鉴权依赖它）
       client-id: ${TRANSPORT_CLIENT_ID:conduit-transport}
-      # 主实例连接 EMQX 的条数。EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程单核封顶
-      # （2026-10-29 recon 实测 9000 条/秒时已顶在单调度器上限、信箱持续增长直至被强杀）。多于 1 条时改用
-      # 共享订阅 $share/{shared-group}/...，把投递分散到多个连接进程。第 0 条沿用 client-id 接管旧会话，
-      # 第 i 条为 client-id-i。设为 1 即退回改动前的单连接普通订阅（回退开关）。
-      # 默认 8（2026-11-16）：每条连接会话队列 10 万条，合计约 80 万条缓冲，扛住断网补传洪峰
-      connections: ${TRANSPORT_MQTT_CONNECTIONS:8}
+      # 初始身份池大小 K 的旧名（兼容别名），必须与 allocation.initial-pool-size 相等，启动时校验；两者取自同一配置，
+      # 改 K 请用环境变量 TRANSPORT_POOL_SIZE（旧变量 TRANSPORT_MQTT_CONNECTIONS 仍可用）。本项只决定是否共享订阅：
+      # EMQX 把全平台上行都投递给同一个订阅连接进程，而一个 Erlang 进程单核封顶（2026-10-29 recon 实测），
+      # 多于 1 个身份时改用共享订阅 $share/{shared-group}/...，把投递分散到 K 个连接进程。
+      # 设为 1 即只有一个身份、普通订阅，谁抢到谁干活，等价于单活（回退开关）
+      connections: ${TRANSPORT_POOL_SIZE:${TRANSPORT_MQTT_CONNECTIONS:64}}
       shared-group: conduit-transport
       # 与 EMQX 持久会话消息保留期（durable_sessions.message_retention_period，默认 1 天）一致
       session-expiry-seconds: 86400
@@ -40,12 +41,22 @@ conduit:
       batch-delay: ${TRANSPORT_BUS_BATCH_DELAY:5ms}
       username: ${TRANSPORT_MQTT_USERNAME:}
       password: ${TRANSPORT_MQTT_PASSWORD:}
-    # 单活多备选主（Redis 锁）：只有主实例连接 EMQX，主实例故障后备实例最长 ttl 后接管
-    leader:
-      key: conduit:transport:leader
-      ttl: 15s
+    # 身份池多活：K 个 MQTT 身份经 Redis 租约（conduit:transport:id:{i}）分摊到存活实例（conduit:transport:members），
+    # 每个实例持有 ceil(K/N) 个身份，只为持有的身份连接 EMQX。K 存在 Redis 键 conduit:transport:pool-size，只增不减。
+    allocation:
+      # 初始 K：Redis 中尚无 pool-size 时写入。跟随 mqtt.connections（旧键或 TRANSPORT_POOL_SIZE），两者必须相等
+      initial-pool-size: ${conduit.transport.mqtt.connections}
+      # 实例崩溃后最长经过 lease-ttl 其身份才能被他人接管；续期间隔必须短于它
+      lease-ttl: 15s
       renew-interval: 5s
-      acquire-interval: 2s
+      # 分配检查（心跳、抢占、让出、重连）的间隔
+      tick-interval: 2s
+      # 超过 member-ttl 未心跳的实例不再计入存活实例数 N
+      member-ttl: 15s
+      # N 稳定这么久后才让出多余的身份，避免成员抖动时来回迁移
+      rebalance-stable: 10s
+      # 存活实例数超过 K × 该比例时告警，提示调大 K
+      pool-alert-ratio: 0.5
 
     # 经 EMQX REST API 观察自己的会话：丢弃、队列水位、会话进程内存与投递停滞。
     # 2026-10-28 定位的楔死故障中所有既有信号都是绿的，这里是唯一能发现它的地方。
@@ -69,7 +80,7 @@ conduit:
 management:
   endpoint:
     health:
-      # components.leader.details 显示 role / instanceId / connected
+      # components.allocation.details 显示 instanceId / held / members / poolSize / connected
       show-details: always
   endpoints:
     web:

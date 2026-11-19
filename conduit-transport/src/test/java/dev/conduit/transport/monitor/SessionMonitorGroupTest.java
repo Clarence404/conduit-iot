@@ -3,16 +3,26 @@ package dev.conduit.transport.monitor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 多连接会话监控的汇总规则：任一连接不健康即整体不健康，且各连接的仪表必须分开。 */
+/**
+ * 按持有身份的会话监控汇总规则：只采样给定身份，监控按 clientId 惰性创建且只创建一次；
+ * 不再持有的身份状态被重置、不再参与健康判定；任一已持有身份停滞即整体不健康；各连接的仪表必须分开。
+ */
 class SessionMonitorGroupTest {
 
     private static SessionMonitor monitor(boolean healthy, String reason) {
@@ -21,18 +31,74 @@ class SessionMonitorGroupTest {
         return m;
     }
 
-    private static SessionMonitorGroup group(SessionMonitor... ms) {
-        Map<String, SessionMonitor> members = new LinkedHashMap<>();
-        for (int i = 0; i < ms.length; i++) {
-            members.put("conduit-transport" + (i == 0 ? "" : "-" + i), ms[i]);
+    /** 由预先准备的 clientId → 监控表充当工厂，并记下工厂被调用的顺序。 */
+    private static final class Factory implements Function<String, SessionMonitor> {
+        final Map<String, SessionMonitor> monitors = new LinkedHashMap<>();
+        final List<String> created = new ArrayList<>();
+
+        Factory with(String clientId, SessionMonitor m) {
+            monitors.put(clientId, m);
+            return this;
         }
-        return new SessionMonitorGroup(members);
+
+        @Override
+        public SessionMonitor apply(String clientId) {
+            created.add(clientId);
+            SessionMonitor m = monitors.get(clientId);
+            if (m == null) {
+                throw new AssertionError("unexpected clientId " + clientId);
+            }
+            return m;
+        }
+    }
+
+    private static Set<String> ids(String... ids) {
+        return new LinkedHashSet<>(List.of(ids));
     }
 
     @Test
-    void 任一连接停滞即整体不健康并指明是哪一条() {
-        SessionMonitor.Verdict v = group(monitor(true, "ok"), monitor(false, "delivery stalled"),
-                monitor(true, "ok")).verdict();
+    void 只采样给定身份且监控按需创建一次() {
+        SessionMonitor a = monitor(true, "ok");
+        SessionMonitor b = monitor(true, "ok");
+        Factory factory = new Factory().with("conduit-transport", a).with("conduit-transport-2", b);
+        SessionMonitorGroup g = new SessionMonitorGroup(factory, null);
+
+        g.sample(ids("conduit-transport"));
+        g.sample(ids("conduit-transport", "conduit-transport-2"));
+
+        verify(a, times(2)).sample();
+        verify(b).sample();
+        assertThat(factory.created).containsExactly("conduit-transport", "conduit-transport-2");
+    }
+
+    @Test
+    void 不再持有的身份被重置且其停滞不再拖垮整体() {
+        SessionMonitor stalled = monitor(false, "delivery stalled");
+        SessionMonitor fine = monitor(true, "ok");
+        Factory factory = new Factory().with("conduit-transport-1", stalled).with("conduit-transport-2", fine);
+        SessionMonitorGroup g = new SessionMonitorGroup(factory, null);
+
+        g.sample(ids("conduit-transport-1", "conduit-transport-2"));
+        assertThat(g.verdict().healthy()).isFalse();
+
+        g.sample(ids("conduit-transport-2"));
+
+        verify(stalled).reset();
+        verify(fine, never()).reset();
+        SessionMonitor.Verdict v = g.verdict();
+        assertThat(v.healthy()).isTrue();
+        assertThat(v.details()).containsOnlyKeys("conduit-transport-2");
+    }
+
+    @Test
+    void 任一已持有身份停滞即整体不健康并指明是哪一条() {
+        Factory factory = new Factory().with("conduit-transport", monitor(true, "ok"))
+                .with("conduit-transport-1", monitor(false, "delivery stalled"))
+                .with("conduit-transport-2", monitor(true, "ok"));
+        SessionMonitorGroup g = new SessionMonitorGroup(factory, null);
+
+        g.sample(ids("conduit-transport", "conduit-transport-1", "conduit-transport-2"));
+        SessionMonitor.Verdict v = g.verdict();
 
         assertThat(v.healthy()).isFalse();
         assertThat(v.reason()).contains("conduit-transport-1").contains("delivery stalled");
@@ -41,18 +107,26 @@ class SessionMonitorGroupTest {
 
     @Test
     void 全部健康时整体健康() {
-        SessionMonitor.Verdict v = group(monitor(true, "ok"), monitor(true, "ok")).verdict();
-        assertThat(v.healthy()).isTrue();
-        assertThat(v.reason()).isEqualTo("ok");
+        Factory factory = new Factory().with("conduit-transport", monitor(true, "ok"))
+                .with("conduit-transport-1", monitor(true, "ok"));
+        SessionMonitorGroup g = new SessionMonitorGroup(factory, null);
+
+        g.sample(ids("conduit-transport", "conduit-transport-1"));
+
+        assertThat(g.verdict().healthy()).isTrue();
+        assertThat(g.verdict().reason()).isEqualTo("ok");
     }
 
     @Test
-    void 单连接时原样返回唯一成员的结论() {
-        SessionMonitor.Verdict inner = new SessionMonitor.Verdict(false, "delivery stalled", Map.of("x", 1));
-        SessionMonitor m = mock(SessionMonitor.class);
-        when(m.verdict()).thenReturn(inner);
+    void 未持有任何身份时健康且不创建监控() {
+        Factory factory = new Factory();
+        SessionMonitorGroup g = new SessionMonitorGroup(factory, null);
 
-        assertThat(SessionMonitorGroup.single(m).verdict()).isSameAs(inner);
+        g.sample(Set.of());
+
+        assertThat(factory.created).isEmpty();
+        assertThat(g.verdict().healthy()).isTrue();
+        assertThat(g.verdict().reason()).isEqualTo("ok");
     }
 
     @Test
@@ -60,8 +134,9 @@ class SessionMonitorGroupTest {
         SessionMonitor bad = mock(SessionMonitor.class);
         SessionMonitor good = mock(SessionMonitor.class);
         doThrow(new IllegalStateException("401")).when(bad).sample();
+        Factory factory = new Factory().with("conduit-transport", bad).with("conduit-transport-1", good);
 
-        group(bad, good).sample();
+        new SessionMonitorGroup(factory, null).sample(ids("conduit-transport", "conduit-transport-1"));
 
         verify(good).sample();
     }
@@ -94,18 +169,21 @@ class SessionMonitorGroupTest {
     }
 
     @Test
-    void 带EMQX节点内存监控时一并采样重置并写入明细且不影响健康结论() {
+    void 持有身份时采样EMQX节点内存并写入明细且不影响健康结论_不持有时重置() {
         SessionMonitor m = monitor(true, "ok");
         NodeMemoryMonitor node = mock(NodeMemoryMonitor.class);
         when(node.details()).thenReturn(Map.of("usedRatio", 0.95, "memoryHigh", true));
-        SessionMonitorGroup g = new SessionMonitorGroup(Map.of("conduit-transport", m), node);
+        SessionMonitorGroup g = new SessionMonitorGroup(new Factory().with("conduit-transport", m), node);
 
-        g.sample();
+        g.sample(ids("conduit-transport"));
         verify(node).sample();
         SessionMonitor.Verdict v = g.verdict();
         assertThat(v.healthy()).isTrue();
         assertThat(v.details()).containsKey("emqxNode");
-        g.reset();
+
+        g.sample(Set.of());
         verify(node).reset();
+        verify(node, times(1)).sample();
+        assertThat(g.verdict().details()).doesNotContainKey("emqxNode");
     }
 }

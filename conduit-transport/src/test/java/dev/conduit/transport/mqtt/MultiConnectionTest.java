@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 主实例多连接共享订阅的命名与订阅规则。
+ * 多身份共享订阅的命名与订阅规则。
  *
  * <p>这些规则各自对应一个不做就会出事的约束：clientId 必须保留 conduit- 前缀（否则超级用户鉴权被拒）；
  * 第 0 条必须沿用旧 clientId（否则升级时旧会话里排队的消息无人接收）；上下线事件只能由一条连接订阅

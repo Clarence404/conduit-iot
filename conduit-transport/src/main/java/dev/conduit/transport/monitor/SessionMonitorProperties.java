@@ -11,7 +11,7 @@ import java.time.Duration;
  * transport 轮询 EMQX 会话指标的配置（前缀 conduit.transport.monitor）。
  * EMQX 5 的 REST API 不接受控制台账号密码，必须用 API key/secret（实测返回 401 BAD_API_KEY_OR_SECRET）。
  *
- * @param enabled      关闭时不轮询，健康检查退回只看选主与连接状态
+ * @param enabled      关闭时不轮询，健康检查退回只看身份分配与连接状态
  * @param baseUrl      EMQX dashboard 的地址，如 http://emqx:18083
  * @param apiKey       API key，经 api_key.bootstrap_file 下发，角色取只读 viewer
  * @param apiSecret    API secret

@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * stallSamples 次（key 配错、EMQX 不可达或接口挂起）则置为不健康：无法采样的监控不能继续报「健康」。
  *
  * <p>同时把每次成功采样的值发布为 Micrometer 仪表（{@code conduit.transport.session.*}），因为 EMQX 自带的
- * Prometheus 端点不提供单会话队列深度。仪表只反映「最近一次成功采样」：采样失败、或本实例不再是主实例
+ * Prometheus 端点不提供单会话队列深度。仪表只反映「最近一次成功采样」：采样失败、或本实例不再持有该身份
  * （{@link #reset()}）时一律置为 NaN，绝不停留在旧值上，否则一条陈旧平线会被误读为系统正常。
  */
 public class SessionMonitor {
@@ -264,8 +264,8 @@ public class SessionMonitor {
     }
 
     /**
-     * 清空内部状态与结论。本实例不再是主实例时调用：此后读到的不是自己的会话，
-     * 旧快照与停滞计数不能带到下次当选后继续累加。
+     * 清空内部状态与结论。本实例不再持有该身份时调用：此后读到的不是自己的会话，
+     * 旧快照与停滞计数不能带到下次重新持有后继续累加。
      */
     public synchronized void reset() {
         previous = null;

@@ -13,7 +13,7 @@ import java.util.UUID;
  * {@link IdentityLeaseStore} 的 Redis 实现。
  * <ul>
  *   <li>租约：键 {@code conduit:transport:id:{i}}，值为实例 id；抢占、续期、释放用 Lua 先比对 id，
- *       保证租约过期被他人接管后，旧持有者的续期与释放都不生效（脚本沿用旧选主锁）。</li>
+ *       保证租约过期被他人接管后，旧持有者的续期与释放都不生效。</li>
  *   <li>心跳：有序集合 {@code conduit:transport:members}，分值为 Redis 服务器毫秒时间。</li>
  *   <li>池大小：字符串键 {@code conduit:transport:pool-size}。</li>
  * </ul>

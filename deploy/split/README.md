@@ -136,7 +136,8 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
 
 实例数超过 K × 0.5 时 transport 记 WARN，提示调大 K。K 存在 Redis，只能调大，不需要重启：
 
-1. 先按「新 K × `EMQX_TRANSPORT_MAX_MQUEUE_LEN`」估算全部积压时的缓冲（每条约 1.2 KB），核对 EMQX 主机内存；需要时同步调小单连接队列，保持总量不变。
+1. 先按「新 K × `EMQX_TRANSPORT_MAX_MQUEUE_LEN` × 每条 1.9～5.4 KB」估算全部积压时 EMQX 占用的内存，核对 EMQX 主机内存；需要时同步调小单连接队列，保持总量不变。
+   每条的占用取实测值：1.9 KB 是 2026-11-12 压测中 30 秒采样的最大值（`docs/test-reports/2026-11-12-stress-to-failure.md`）；5.4 KB 是 2026-10-28 队列填满 10 万条、会话进程堆达 513 MB 被强杀时的折合值，当时载荷仅约 60 字节（`docs/test-reports/2026-10-28-capacity-and-bottleneck.md`）。载荷更大时占用更多。默认 64 × 1.5 万条约需 1.7～4.9 GB。
 2. 写入新值。各实例在下一轮检查（≤ 2 秒）读到并抢占新身份，新身份按 zone `transport` 的参数建会话、自动加入共享组：
 
    ```bash

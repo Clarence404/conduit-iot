@@ -240,16 +240,18 @@
 - 为什么身份要固定：共享订阅成员离线时，落给它的消息排进它的会话，不改派。实例宕机后必须由别的实例用同一 clientId 接管会话，否则这一份消息会卡在 EMQX 直到会话过期。
 
 *分配*（`allocation` 包，`IdentityAllocator`）
-- Redis 键：`conduit:transport:id:{i}` 为身份租约，值为 instanceId，TTL 15s，每 5s 续期；`conduit:transport:members` 为存活实例（zset，分值取 Redis `TIME` 毫秒，15s 无心跳即视为下线）。抢占、续期、释放都由 Lua 比对 instanceId。旧选主键 `conduit:transport:leader` 不再使用。
+- Redis 键：`conduit:transport:id:{i}` 为身份租约，值为 instanceId，TTL 15s，每次检查（2s）都续期全部持有的身份，另有每 5s 一次的单独续期；`conduit:transport:members` 为存活实例（zset，分值取 Redis `TIME` 毫秒，15s 无心跳即视为下线）。抢占、续期、释放都由 Lua 比对 instanceId。旧选主键 `conduit:transport:leader` 只检查是否存在，从不写入。
 - 每 2s 检查一次：写心跳，读成员列表（字典序）与 K；本实例配额 = `⌊K/N⌋ + (p < K mod N ? 1 : 0)`，p 为本实例位置，配额合计恰为 K，各实例相差不超过 1；续期全部持有的身份；不足配额时按 rendezvous hash 偏好序抢占；超出配额且成员列表连续 10s 不变时，每次让出一个（停适配器 → 断开 → 释放租约）。
 - 续期失败（被他人占有、已过期或 Redis 出错）立即停止该身份的适配器：宁可短暂没人接，也不让两个实例同时连同一个 clientId。一轮中出现 Redis 异常时，其余身份一并停掉。
+- 适配器启停在单线程执行器上进行，每个启动任务只尝试一次；失败按身份记下次尝试时刻（1s 起翻倍、最多 10s），由之后的检查重新提交，同一身份最多一个排队任务，丢失身份后不再重试。原因：在执行器线程上循环重试时，一个始终起不来的身份会占住唯一的线程，本实例其他身份都无法启动。
 - 实例宕机：租约与心跳在 15s 内过期，其他实例下一轮接手，期间消息排在 EMQX 会话队列。正常停止时释放全部租约并离开成员集合（`stop_grace_period: 20s`）。
 - 不用 HiveMQ 自动重连：断线的身份由分配器续期确认仍持有后再重连；SUBACK 含错误码视为失败。Redis 命令超时 2s。
-- **新旧版本不能混跑**：旧版靠选主锁持有全部身份，与新版同时运行会互相踢掉连接。升级时先停全部旧实例。
+- **新旧版本不能混跑**：旧版靠选主锁持有全部身份，与新版同时运行会互相踢掉连接。升级时先停全部旧实例。新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（已持有的照常续期，每分钟记一次 ERROR），直到旧实例全部停止且该键过期。
 
 *调大 K*
 - 执行 `redis-cli SET conduit:transport:pool-size <新 K>`，只能调大。各实例下一轮（≤ 2s）读到并抢占新身份；新身份按 zone `transport` 的参数建会话，自动加入共享组。调大前先按「新 K × 单连接队列」核对 EMQX 主机内存。
 - 不支持缩小 K：读到更小的值记 WARN 并忽略。多出的会话要先排空才能移除，留到后续。
+- Redis 中的值不是正整数（非数字、0、负数）时记 ERROR（同一个值一次）并保持当前 K（尚无 K 时用初始值），续期与抢占照常，不当作 Redis 不可达。
 - 存活实例数超过 K × 0.5 时记 WARN（每 10 分钟最多一次），提示调大 K。
 
 *连接与会话*
@@ -271,11 +273,13 @@
 - 分发策略 `mqtt.shared_subscription_strategy = round_robin`，负载最均匀。下游不依赖顺序：最新值按测点比较 ts，InfluxDB 按（序列, ts）幂等，在线状态有 `since` 守护。**键在 `mqtt` 下**，写成 `broker` 下会被静默忽略。
 - K = 1 即回退开关：只有一个身份、普通订阅、不退订，由字典序最小的存活实例持有（id 更小的实例后加入时，成员稳定 10s 后交接一次）。此时忽略 Redis 中的其他值，也不支持从 1 调大。
 - **从 K = 1 改回多身份前，先删除 Redis 的 `conduit:transport:pool-size`**：K = 1 的实例会把它初始化为 1，而 K 只增不减。
+- **回退到 K = 1 或旧版不能只改配置重启**：身份 1～K−1 的会话是共享组的持久成员（保留 24 小时），离线后 EMQX 不改派，消息继续排进它们的队列。K = 1 时它们各排满 1.5 万条后丢弃（K = 64 时占 EMQX 约 1.8～5.1 GB）；回退到旧版（8 个身份）时身份 8～63 分走 56/64 的上行、不入库。步骤：停全部新版 transport → 重建 EMQX，或对目标 K 以上的每个身份 `emqx ctl clients kick`（排队消息随之丢弃，流量低时做）→ 删除 `conduit:transport:pool-size` → 启动 K = 1 或旧版。详见 `deploy/split/README.md` 第 7 节与 `deploy/standalone/README.md`。
+- 改 zone `transport` 的队列长度只对新建的会话生效，已有会话要 kick 或重建 EMQX 后才换成新值。
 
 *日志、健康检查与指标*
 - 日志：首次失败 WARN，后续重试 DEBUG；抢到、让出身份与成员变化 INFO，丢失身份 WARN。
 - 健康组件 `allocation`，明细 `instanceId` / `held` / `members` / `poolSize` / `connected`。UP 的条件：分配器在运行，持有的身份全部已连接且订阅获批（未持有任何身份也算），会话监控没有判定「投递停滞」。持有的身份重连期间为 DOWN。
-- 指标：仪表 `conduit.transport.identities.held`、`conduit.transport.pool.size`、`conduit.transport.members`；计数 `conduit.transport.identities.moved{reason=acquire|release|lost}`。
+- 指标：仪表 `conduit.transport.identities.held`、`conduit.transport.pool.size`、`conduit.transport.members`；计数 `conduit.transport.identities.moved{reason=acquire|release|lost}`、`conduit.transport.batcher.failures`（合批提交器的意外错误）。
 
 *已知限制*
 - Broker 自身崩溃仍可能丢失已确认消息，见 `docs/durability-validation.md`。
@@ -286,7 +290,9 @@
 *实例内合批*
 - 本实例全部连接收到的消息进入同一个 `SharedBatcher`，按 `batch-size` / `batch-delay` 合成一批 `XADD`；写成功后再回到各自的连接回 PUBACK、发业务回执。会话已停的条目不写、不回执，留在 EMQX 会话里由接手者重新收到。
 - 原因：K 变大后流量分散到更多连接，各连接自己攒的批会变小，写 Redis 的次数随之增加。
-- 合批不改变各连接的在途上限：每条连接的未确认消息仍受它自己的 `max_inflight` 窗口限制。
+- 合批不改变各连接的在途上限：每条连接的未确认消息仍受它自己的 `max_inflight` 窗口限制。队列正常不超过「连接数 × 窗口」；写入失败重试期间，已停会话的条目要到下一轮写入前才剔除，接手的新连接又带来一个窗口，可暂时达到约两倍。
+- 合批线程捕获 `Throwable`：意外错误（含 `Error`）只放弃当前批、不 ACK（这些条目占着 inflight 槽位，直到该连接重连时由 EMQX 重投），循环继续，计入 `conduit.transport.batcher.failures`。原因：只捕获 `RuntimeException` 时，一个 `Error` 就会杀死唯一的合批线程，本实例所有连接都不再 ACK，而健康检查直到投递停滞才变 DOWN。OOM 由 JVM 参数 `-XX:+ExitOnOutOfMemoryError` 直接退出、由 compose 重启策略拉起。
+- 业务回执先发，PUBACK 放在 `finally` 中：回执出任何异常都照样 PUBACK（仍只在总线写入成功之后）。
 
 *参数规则*
 - 约束：**`batch-size ≤ max_inflight ≪ max_mailbox_size`**。
@@ -297,7 +303,7 @@
 - 拆分部署的值：EMQX 主机 `max_inflight` 1024，会话上限同上（2026-11-12 由最大值改回有上限，见第 4 节）；应用主机 `batch-size` 512。
 
 *会话监控*
-- 每个实例经 EMQX REST API 只轮询本实例持有的身份的会话指标，不再持有的身份即停止监控。告警七项：丢弃、队列水位、积压绝对值（默认 ≥ 5 万条，队列不限时仍有效）、会话内存、投递停滞、持久会话被意外启用、批大于窗口。
+- 每个实例经 EMQX REST API 只轮询本实例持有的身份的会话指标，不再持有的身份即停止监控。告警七项：丢弃、队列水位（达到队列上限的 80%）、积压绝对值（默认 ≥ 5 万条，队列不限时仍有效）、会话内存、投递停滞、持久会话被意外启用、批大于窗口。transport 会话的队列上限是 1.5 万，积压绝对值永远不会触发，起作用的是队列水位（1.2 万条）；默认值不降，因为降到 1.2 万以下只会与水位告警重复。
 - 另轮询 `/api/v5/nodes`，EMQX 主机内存占比 ≥ 80%（默认）时告警，仪表 `conduit.transport.emqx.memory.*`，明细在健康检查的 `emqxNode` 下。
 - **只有「投递停滞」把健康检查置为 DOWN**，本实例持有的任一连接停滞即判本实例 DOWN。
 - 仪表带 `client` 标签。另暴露 `mailbox.len` 与 `reductions`，只暴露、不参与健康判定。
@@ -473,6 +479,7 @@
 
 *镜像*
 - 构建上下文为仓库根目录：`java.Dockerfile`（`eclipse-temurin:21.0.6_7-jre`）与 `web.Dockerfile`（`nginx:1.27.4-alpine`）。
+- Java 服务一律带 `-XX:+ExitOnOutOfMemoryError`：OOM 后进程状态不可信，直接退出，由 `restart: unless-stopped`（模拟器为 `on-failure`）拉起。
 - `BUILD_FROM=prebuilt|source` 选择预编译产物或源码构建。
 - Docker 宿主机无外网时：开发机执行 `deploy/package.sh`，从干净检出编译，打包为 `target/conduit-standalone-<短提交>.tar.gz`。
 
@@ -592,6 +599,7 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-11-12：拆分部署 EMQX 会话三项由最大值（窗口 65535、队列不限、关强杀）改回有上限（1024 / 5 万 / 开启强杀），因压测到崩溃时积压耗尽整机内存、EMQX 被 OOM 杀两次、约 932 万条已确认消息丢失；队列先试 10 万，连接被堆超限反复强杀，15,000 条/秒起即丢，改 5 万后零强杀，15,000 条/秒以内无损，超出部分按满丢弃并可计数；transport 增加积压绝对值与 EMQX 主机内存告警（`2026-11-12-split-emqx-capped-session-design.md`、`2026-11-12-stress-to-failure.md`）。
 - 2026-11-13：会话上限推广到全部部署包（队列 5 万、信箱 10000、开启强杀、堆 256MB），信箱改由 dev 文件统一定义；依据是独立部署按旧默认（信箱 1000）每秒 8,000 条即被强杀，改后零强杀（`2026-11-13-standalone-session-limits.md`）。分布式部署放到 V0.8 单独压测；断电后 InfluxDB 循环重启、总线截断丢数据、积压计数虚高记入 backlog。
 - 2026-11-19：**transport 身份池多活**实施，取代单活多备：所有实例同时工作，经 Redis 租约分摊 K = 64 个身份，按字典序位置精确配额（各实例相差不超过 1）；共享订阅分发改为 `round_robin`；transport zone 单连接会话队列 1.5 万（合计约 96 万条）；实例内合批写总线；K 只增不减；不支持新旧版本混跑（`2026-11-17-conduit-transport-multi-active-design.md`、`docs/test-reports/2026-11-19-transport-multi-active.md`）。
+- 2026-11-19（终审修复）：合批线程捕获 `Throwable` 并计数，Java 镜像 `ExitOnOutOfMemoryError`；身份启动失败改为按身份退避、由检查重新提交；非法 K 保持当前值；检测到旧选主键时不抢身份；回退到 K = 1 或旧版必须先清掉多出的会话（spec 第 8 节、两个部署包 README）。
 
 **租户、组织与身份**
 - 2026-10-16 V0.2-C：三种角色、JWT 声明、`SecurityConfig` 路径矩阵、强制改密码、平台接口与代入、停用租户（`2026-10-16-conduit-v0.2c-tenants-users-design.md`）。

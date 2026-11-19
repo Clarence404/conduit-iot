@@ -71,7 +71,7 @@
 |---|---|---|
 | `initial-pool-size` | 64 | Redis 里没有 `pool-size` 时使用的初始 K |
 | `lease-ttl` | 15s | 身份租约有效期，与现有选主锁一致 |
-| `renew-interval` | 5s | 续期间隔 |
+| `renew-interval` | 5s | 单独续期的间隔；每次检查（`tick-interval`）也会续期全部持有的身份，实际续期间隔不超过 2s |
 | `tick-interval` | 2s | 抢占与再平衡的检查间隔 |
 | `member-ttl` | 15s | 心跳超过这个时长，视为实例下线 |
 | `rebalance-stable` | 10s | 成员列表要稳定这么久，才让出多余身份，避免实例刚启动或短暂抖动时来回迁移 |
@@ -102,6 +102,7 @@
 - **实例宕机**：它的租约在 15 秒内到期，其他实例在下一次检查时抢到。等待窗口和现在的主备切换相同，期间消息排在 EMQX 的会话队列里。
 - **Redis 不可用**：所有实例续期都失败，全部停止适配器，消息排在 EMQX。总线本来就在 Redis 上，Redis 不可用时本来也写不进去，这一点和现状相同。
 - **实例与 EMQX 断开、但能连 Redis**：适配器报告需要重连，先续期确认仍持有该身份，再重连。沿用现有 `superviseTick` 的做法，只是改为按身份处理。
+- **某个身份始终启动失败**：每个启动任务只尝试一次，失败按身份记下次尝试时刻（1s 起翻倍、最多 10s），由之后的检查重新提交；同一身份最多一个排队任务。不在适配器线程上循环重试，否则一个起不来的身份会占住唯一的线程，阻塞本实例其他身份的启动（终审修复）。
 
 ## 4. 调整身份池大小
 
@@ -110,6 +111,8 @@
 - 新增的身份由各实例按配额抢占；每个新身份第一次连接时，EMQX 按 transport zone 的参数创建会话，自动加入共享组。
 - 共享组成员数变化后，EMQX 按新的成员数分发，不用搬数据。
 - **告警**：存活实例数超过 `K × pool-alert-ratio` 时记 WARN，并暴露指标，提示调大 K。自动翻倍以后再做。
+
+**非法值**：`pool-size` 不是正整数（非数字、0、负数）时记 ERROR（同一个值一次），保持当前 K（尚无 K 时用 `initial-pool-size`），续期与抢占照常；不当作 Redis 不可达。
 
 **缩小（第二步，本次不做）**
 - 要先把多出的身份「排空」：停止拉取，等会话队列清空，再用会话不保留的方式断开，把它从共享组里移除；否则这些会话会继续收到消息、卡在 EMQX 里。
@@ -124,7 +127,7 @@
 
 | 位置 | 改动 |
 |---|---|
-| `allocation/`（取代 `leader/` 包） | 新增 `IdentityAllocator`（替代 `LeaderElection`）、`IdentityLeaseStore`（Redis 实现，含 Lua）、`AllocationProperties`。删除 `LeaderElection`、`RedisLeaderLock`、`LeaderLock`、`LeaderProperties`；不再使用选主锁键 `conduit:transport:leader` |
+| `allocation/`（取代 `leader/` 包） | 新增 `IdentityAllocator`（替代 `LeaderElection`）、`IdentityLeaseStore`（Redis 实现，含 Lua）、`AllocationProperties`。删除 `LeaderElection`、`RedisLeaderLock`、`LeaderLock`、`LeaderProperties`；不再写选主锁键 `conduit:transport:leader`，只检查它是否存在（混跑保护，见第 8 节） |
 | `TransportApplication` | 按当前 K 创建适配器；K 调大时再追加新的适配器；启停改由 `IdentityAllocator` 按身份控制 |
 | `MqttTransportProperties` | `connections` 改名为「初始身份池大小」，由 `allocation.initial-pool-size` 取代，保留旧键作为兼容别名。K = 1 仍是回退开关：只有一个身份、普通订阅，由字典序最小的存活实例持有（id 更小的实例后加入时，成员稳定后交接一次），等价于单活；此时忽略 Redis 中的其他值，从 K = 1 改回多身份前要先删除 `conduit:transport:pool-size` |
 | `MqttProtocolAdapter` | 启停仍由 `ProtocolAdapter.start(stillValid)` / `stop()` 驱动，`stillValid` 改为「本实例仍持有该身份」。攒批逻辑移到实例级的共享提交器（第 5 节） |
@@ -142,8 +145,10 @@
 
 - **不支持新旧混跑**：旧版靠一把选主锁持有全部身份，新版按身份租约分配，两者同时运行会互相踢掉对方的连接。
 - **升级步骤**：先停掉所有旧版 transport，再启动新版；中间的空档，消息排在 EMQX 的会话队列里。
-- **身份数从 8 变为 64**：原有 8 个会话被接管后，队列上限仍是旧值，需要按 `deploy/split/README.md` 的做法丢弃一次旧会话；新增的 56 个身份直接按新参数创建。分发策略的改动需要重建 EMQX 才生效。
-- 部署文档写明以上步骤。
+- **混跑保护**：新版检测到旧选主键 `conduit:transport:leader` 存在（旧实例仍在运行或其锁未过期）时不抢身份，已持有的照常续期，每分钟最多记一次 ERROR；直到旧实例全部停止且该键过期（TTL 15 秒）。
+- **身份数从 8 变为 64**：原有 8 个会话被接管后，队列上限仍是旧值，需要按 `deploy/split/README.md` 的做法丢弃一次旧会话；新增的 56 个身份直接按新参数创建。分发策略的改动需要重建 EMQX 才生效。zone 队列长度只对新建会话生效；独立部署保留的 `.env` 若仍是旧的 10 万，必须改为 1.5 万（10 万 × 64 会话约 12～35 GB）。
+- **回退到 K = 1 或旧版**：身份 1～K−1 的会话是共享组的持久成员（保留 24 小时），离线后 EMQX 不改派。K = 1 时它们各排满 1.5 万条后丢弃（K = 64 时约 1.8～5.1 GB）；回退到旧版时身份 8～63 分走 56/64 的上行、不入库。所以回退必须：停全部新版 transport → 重建 EMQX 或 kick 目标 K 以上的全部身份（排队消息随之丢弃，流量低时做）→ K = 1 或回旧版时删除 `conduit:transport:pool-size` → 再启动 K = 1 或旧版。缩小 K 不支持。
+- 部署文档写明以上步骤（`deploy/split/README.md` 第 5、7 节，`deploy/standalone/README.md`）。
 
 ## 9. 验收
 

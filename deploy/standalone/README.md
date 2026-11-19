@@ -43,7 +43,61 @@ docker compose up -d --build
 - 构建上下文是包（或仓库）的根目录，`deploy/dev` 与 `deploy/standalone` 的相对位置不能改变。
 - EMQX 的鉴权回调固定为 `http://conduit-server:8080`。
 - 浏览器打开 `http://<docker-host>:8090`（`WEB_PORT`），用 `CONDUIT_ADMIN_USERNAME` / `CONDUIT_ADMIN_PASSWORD` 登录；平台管理员用 `CONDUIT_PLATFORM_ADMIN_USERNAME` / `CONDUIT_PLATFORM_ADMIN_PASSWORD`。
-- 升级：先删除旧的 `deploy/standalone/artifacts/`，再把新包解压到同一目录（`.env` 不在包内，会保留），然后 `docker compose up -d --build`。
+- 升级：先删除旧的 `deploy/standalone/artifacts/`，再把新包解压到同一目录（`.env` 不在包内，会保留），然后 `docker compose up -d --build`。从 2026-11-19 之前的版本（transport 单活多备）升级时，改按下文「升级到 transport 身份池多活」执行。
 - 更换 InfluxDB token：token 在首次启动时写入库中，之后要改需 `docker compose down`、`docker volume rm conduit_influx3-data`（会丢失时序数据）再启动。
 - 预编译前端里「连接信息」显示的 MQTT 端口在打包时确定（`VITE_MQTT_PORT`，默认 1883）；宿主机 `MQTT_PORT` 不是 1883 时，打包前设置 `VITE_MQTT_PORT`。
 - 日志在命名卷 `conduit_conduit-logs`（第二个 transport 在其 `transport-2` 子目录）。
+
+## 升级到 transport 身份池多活（从 2026-11-19 之前的版本）
+
+新版两个 transport 同时工作，经 Redis 租约分摊 64 个 MQTT 身份（旧版只有主实例连 8 条）。**新旧版本不能混跑**；
+新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（每分钟记一次 ERROR），直到旧实例全部停止且该键过期（TTL 15 秒）。
+设计见 [`2026-11-17-conduit-transport-multi-active-design.md`](../../docs/superpowers/specs/2026-11-17-conduit-transport-multi-active-design.md)。
+EMQX 要重建，设备会断开重连，选设备流量低的时候做。
+
+1. 改保留下来的 `.env`（`.env` 不随包更新，旧值会一直生效）：
+   - `EMQX_TRANSPORT_MAX_MQUEUE_LEN=15000`。**不得沿用旧的 100000**：它是每个会话的上限，旧版 8 个会话合计 80 万条，新版 64 个会话就是 640 万条，按每条 1.9～5.4 KB 约 12～35 GB，积压时会耗尽主机内存。
+   - `EMQX_SHARED_SUBSCRIPTION_STRATEGY=round_robin`。
+   - 删除 `TRANSPORT_MQTT_CONNECTIONS`，设 `TRANSPORT_POOL_SIZE=64`。
+2. 先停掉旧 transport（`docker compose stop conduit-transport conduit-transport-2`），再按上文「说明」中的升级方式换上新包（删除旧的 `artifacts/` 后解压到同一目录）或新检出。
+
+3. 重建 EMQX，让会话按新的队列上限重新创建（会话参数在创建时固定，接管旧会话不会换成新值），然后启动全部服务：
+
+   ```bash
+   docker compose up -d --force-recreate emqx
+   docker compose up -d --build
+   ```
+
+4. 回读：
+
+   ```bash
+   docker exec conduit-emqx emqx ctl conf show mqtt  | grep shared_subscription_strategy   # round_robin
+   docker exec conduit-emqx emqx ctl conf show zones | grep -A3 max_mqueue_len             # transport zone 为 15000
+   docker exec conduit-redis redis-cli GET conduit:transport:pool-size                        # 64
+   docker exec conduit-emqx emqx ctl broker stats | grep subscriptions.shared.count            # 64
+   for c in conduit-transport-1 conduit-transport-2; do
+     docker exec $c bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081; printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3; cat <&3' | tail -1
+   done   # 两个实例 held 各 32、members 为 2、poolSize 为 64
+   ```
+
+调大 K 与估算 EMQX 内存的做法见 [拆分部署说明](../split/README.md) 第 6 节（`redis-cli SET conduit:transport:pool-size <新 K>`，只能调大）。
+缩小 K 不支持。改 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 只对新建的会话生效，需重建 EMQX 才对已有会话生效。
+
+## 回退到 K = 1 或旧版
+
+不能只改配置重启：身份 `conduit-transport-1` … `conduit-transport-63` 的会话是共享订阅组的持久成员，保留 24 小时，
+EMQX 会继续把消息分给这些离线成员。回退到 K = 1 时它们各排满 1.5 万条后丢弃，占 EMQX 约 1.8～5.1 GB 内存；
+回退到旧版（8 个身份）时身份 8～63 分走 56/64 的上行，这部分不会入库。步骤（被清掉的会话里排队的消息随之丢弃，选流量低的时候做）：
+
+1. `docker compose stop conduit-transport conduit-transport-2`。
+2. 清掉多出的会话：`docker compose up -d --force-recreate emqx`（全部会话丢弃）；或只 kick 目标 K 以上的身份：
+
+   ```bash
+   K=64; FROM=1   # FROM：回退到 K = 1 时为 1，回退到旧版时为 8
+   for i in $(seq $FROM $((K - 1))); do docker exec conduit-emqx emqx ctl clients kick conduit-transport-$i; done
+   ```
+
+   K = 1 时身份 0 的会话里还留着共享订阅，每条消息会投递两次（写入幂等，但写总线量翻倍）；要避免就一并 kick `conduit-transport` 或重建 EMQX。
+3. `docker exec conduit-redis redis-cli DEL conduit:transport:pool-size`（K = 1 会把它写成 1，K 只增不减）。
+4. K = 1：`.env` 设 `TRANSPORT_POOL_SIZE=1` 后 `docker compose up -d`。旧版：换回旧包与旧 `.env` 再启动；旧版只有 8 个会话，可把 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000 并重建 EMQX。
+5. 回读：`docker exec conduit-emqx emqx ctl clients list | grep -c conduit-transport` 为目标身份数（K = 1 为 1、旧版为 8）。

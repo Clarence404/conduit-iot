@@ -116,7 +116,9 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
    for i in '' -1 -2 -3 -4 -5 -6 -7; do docker exec conduit-emqx emqx ctl clients kick conduit-transport$i; done
    ```
 
-4. 应用主机：换上新版产物（`deploy/package.sh` 打的包或新检出），`.env` 设 `TRANSPORT_POOL_SIZE=64`，删除旧的 `TRANSPORT_MQTT_CONNECTIONS`；Redis 中若残留旧键 `conduit:transport:leader` 可删除（新版不再使用）。启动两个 transport：
+4. 应用主机：换上新版产物（`deploy/package.sh` 打的包或新检出），`.env` 设 `TRANSPORT_POOL_SIZE=64`，删除旧的 `TRANSPORT_MQTT_CONNECTIONS`。
+   新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（每分钟记一次 ERROR），直到旧实例全部停止且该键过期（TTL 15 秒）；
+   这是防止新旧混跑的保护，看到该 ERROR 先确认旧实例确已全部停止。启动两个 transport：
 
    ```bash
    docker compose up -d --build conduit-transport conduit-transport-2
@@ -146,8 +148,49 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
 
 3. 同步把应用主机 `.env` 的 `TRANSPORT_POOL_SIZE` 改成新值（只在 Redis 中没有该键时用作初始值）。回读各实例 `poolSize` 与 `held`。
 
-缩小 K 暂不支持（transport 读到更小的值只记 WARN）：多出的会话要先排空才能移除。
-`TRANSPORT_POOL_SIZE=1` 是回退开关（单连接、普通订阅），从 1 改回多身份前要先 `redis-cli DEL conduit:transport:pool-size`。
+缩小 K 不支持（transport 读到更小的值只记 WARN 并忽略）：多出的会话要先清掉才能移除，做法同下文第 7 节。
+Redis 中的值不是正整数（写错）时 transport 记 ERROR 并保持当前 K，修正后下一轮生效。
+
+改 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 只对**新建**的会话生效：已存在的会话沿用创建时的队列上限，需丢弃会话（kick 或重建 EMQX）后才换成新值。
+
+### 7. 回退到 K = 1 或旧版（单活多备）
+
+**不能只改配置重启。** 身份 `conduit-transport-1` … `conduit-transport-63` 的会话是共享组 `$share/conduit-transport/...` 的持久成员，保留 24 小时。
+停掉持有它们的 transport 后，EMQX 仍按轮询把消息分给这些离线成员、排进各自队列，不改派给在线成员。
+
+以 K = 64 为例：
+
+- 回退到 K = 1：身份 0 用普通订阅照收全量，数据不丢；但 63 个离线会话各排满 1.5 万条后开始丢弃并计入 `dropped`，按每条 1.9～5.4 KB 占 EMQX 约 1.8～5.1 GB 内存，持续 24 小时。
+- 回退到旧版（8 个身份）：身份 8～63 的离线会话分走 56/64 的上行，这部分消息不会入库，直到会话过期或被清掉。
+
+步骤（选设备流量低的时候做，被清掉的会话里排队的消息随之丢弃）：
+
+1. 应用主机：停掉全部新版 transport。
+
+   ```bash
+   cd deploy/split/app
+   docker compose stop conduit-transport conduit-transport-2
+   ```
+
+2. EMQX 主机：清掉目标 K 以上的全部身份，二选一。
+   - 重建 EMQX（全部会话丢弃，设备断开重连）：`cd deploy/split/emqx && docker compose up -d --force-recreate emqx`。
+   - 只丢弃多出的会话（K = 1 时从 1 起，旧版时从 8 起，直到 当前 K − 1）：
+
+     ```bash
+     K=64     # 当前 K（应用主机 redis-cli GET conduit:transport:pool-size）
+     FROM=1   # 回退到旧版时改为 8
+     for i in $(seq $FROM $((K - 1))); do docker exec conduit-emqx emqx ctl clients kick conduit-transport-$i; done
+     ```
+
+   K = 1 时身份 0 的会话里还留着共享订阅，每条消息会经两条订阅各投递一次（写入按 ts 幂等，不丢不错，但写总线量翻倍）；
+   要避免就一并 kick `conduit-transport`（它排队的消息随之丢弃），或直接重建 EMQX。
+3. 删除 Redis 中的 K：`docker exec conduit-redis redis-cli DEL conduit:transport:pool-size`。K = 1 的实例会把它写成 1，而 K 只增不减，不删则以后改不回多身份；旧版不使用该键，删掉免得再次升级时沿用旧值。
+4. 应用主机：启动目标版本。
+   - K = 1：`.env` 设 `TRANSPORT_POOL_SIZE=1`，`docker compose up -d conduit-transport conduit-transport-2`。
+   - 旧版：换回旧版产物与旧 `.env`（`TRANSPORT_MQTT_CONNECTIONS=8`）再启动。旧版只有 8 个会话，可把 EMQX 主机的 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000 并重建 EMQX（8 × 10 万），否则总缓冲只有 8 × 1.5 万。
+5. 回读：EMQX 上只剩目标数量的 transport 会话（`docker exec conduit-emqx emqx ctl clients list | grep -c conduit-transport`，K = 1 为 1、旧版为 8），`dropped` 不再增长。
+
+再次升级到身份池多活时按第 5 节执行；新版会等旧版的 `conduit:transport:leader` 过期后才抢身份。
 
 ## 可选：Linux 宿主机网络对照
 
@@ -213,9 +256,10 @@ EMQX 主机的连接队列与报文上限取 EMQX 5.10.5 接受的最大值（20
 改为 5 万后，过载只表现为队列满后丢弃新消息，全程零强杀、零掉线，15,000 条/秒以内无损，丢弃数有 `mqueue_dropped` 计数可查。
 2026-11-13 起，会话上限（队列 5 万、信箱 10000、开启强杀、堆 256MB）统一用于全部部署包，由 `deploy/dev/docker-compose.yml` 定义，本包只在 `.env` 中取同样的值（`docs/test-reports/2026-11-13-standalone-session-limits.md`）。
 
-**告警**：transport 会话监控对每个会话的积压（默认 ≥ 5 万条，`CONDUIT_TRANSPORT_MONITOR_MQUEUE_WARN_LEN`）与
-EMQX 主机内存（默认 ≥ 80%，`CONDUIT_TRANSPORT_MONITOR_NODE_MEMORY_WARN_RATIO`）记 WARN，并发布仪表
-`conduit_transport_session_mqueue_len`、`conduit_transport_emqx_memory_used_ratio`。两者只告警、不改变健康检查。
+**告警**：transport 会话监控对每个会话的队列水位（达到队列上限的 80%，transport 会话即 1.2 万条）、积压绝对值
+（默认 ≥ 5 万条，`CONDUIT_TRANSPORT_MONITOR_MQUEUE_WARN_LEN`）与 EMQX 主机内存（默认 ≥ 80%，`CONDUIT_TRANSPORT_MONITOR_NODE_MEMORY_WARN_RATIO`）记 WARN，
+并发布仪表 `conduit_transport_session_mqueue_len`、`conduit_transport_emqx_memory_used_ratio`。三者只告警、不改变健康检查。
+transport 会话的队列上限是 1.5 万，到不了 5 万，起作用的是队列水位；积压绝对值只对队列不限长（EMQX 报告容量为 0）的会话有意义，故默认值不改。
 
 ## 观测
 

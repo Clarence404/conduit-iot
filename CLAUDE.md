@@ -629,3 +629,4 @@ V0.3 分为 6 个子项目：A 租户隔离、B 组织与 RBAC、C 租户生命�
 - 2026-11-16：transport 改连 EMQX 内部监听器 `tcp:internal`（1884，zone `transport`：信箱 20 万、会话队列 10 万，堆上限不变），默认 8 条连接，内部监听器只许 transport；根治断网补传洪峰下订阅连接被强杀丢数（`2026-11-16-conduit-transport-internal-listener-design.md`）。
 - 2026-11-17：transport「单活多备 + 选主」认定为历史包袱：10-16 为磁盘持久会话（不支持共享订阅）被迫采用，前提已于 10-28 / 10-29 消失。所有者决定先验证「EMQX（商业版）Kafka 数据集成直写、去掉 transport」，不通过再做身份池多活（`roadmap-saas.md` 第 2 节）。
 - 2026-11-17：验证 EMQX 直写后，所有者决定**保留 transport，改为横向扩展**。直写 Kafka 可以替代 transport；直写 Redis Streams 有超时丢弃、无持久缓冲、洪峰耗尽内存的问题，比 transport 弱（`2026-11-17-transport-necessity.md`）。
+- 2026-11-19：所有者决定收费 SaaS 暂缓、先完善功能；讨论确定的方向（可靠上报硬性要求、总线改 MQ、多协议、批量上报、单元化、分库、上云、待验证候选、EMQX 升级）记入 `roadmap-saas.md` 4.1 节；transport 多活之后主线先做 V0.3-C 与 V0.3-F。

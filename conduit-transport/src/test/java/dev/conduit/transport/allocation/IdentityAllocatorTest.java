@@ -581,6 +581,25 @@ class IdentityAllocatorTest {
     }
 
     @Test
+    @Timeout(10)
+    void startTasksDroppedByStopDoNotBlockTheNextStart() {
+        List<Runnable> queued = new ArrayList<>();
+        IdentityAllocator manual = new IdentityAllocator(store, i -> adapters.computeIfAbsent(i,
+                k -> new FakeAdapter(k, events)), PROPS, clock, new SimpleMeterRegistry(), queued::add);
+        store.members = 1;
+        store.pool = 3;
+
+        manual.tick();
+        assertThat(queued).hasSize(3);
+        // stop() 停掉执行器时，排队中的启动任务被丢弃，从未执行
+        manual.stop();
+        queued.clear();
+
+        manual.tick();
+        assertThat(queued).as("every identity gets a start task again after stop").hasSize(3);
+    }
+
+    @Test
     void stopReleasesEverything() {
         store.members = 1;
         store.pool = 4;

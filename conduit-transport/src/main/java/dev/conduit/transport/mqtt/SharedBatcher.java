@@ -118,15 +118,15 @@ public final class SharedBatcher implements AutoCloseable {
         queue.add(new Entry(message, live, onCommitted));
     }
 
-    /**
-     * 停止批提交线程：正在攒的批与正在重试的批都放弃、不回调（未 ACK 的消息由 EMQX 重投）。
-     * 中断线程以唤醒退避等待，最多等 {@link #CLOSE_JOIN_TIMEOUT}，不会被失败的总线卡住。可重复调用。
-     */
     /** 迄今的意外错误次数（放弃整批或回调抛出 Error）。 */
     public long failures() {
         return failures.get();
     }
 
+    /**
+     * 停止批提交线程：正在攒的批与正在重试的批都放弃、不回调（未 ACK 的消息由 EMQX 重投）。
+     * 中断线程以唤醒退避等待，最多等 {@link #CLOSE_JOIN_TIMEOUT}，不会被失败的总线卡住。可重复调用。
+     */
     @Override
     public void close() {
         closed = true;

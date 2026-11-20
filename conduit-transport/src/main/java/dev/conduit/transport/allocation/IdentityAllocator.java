@@ -222,6 +222,8 @@ public class IdentityAllocator implements SmartLifecycle {
             awaitQuietly(ownedExecutor);
             ownedExecutor = null;
         }
+        // shutdownNow 丢弃的排队任务不会执行到 finally，需在此清掉其占位，否则再次 start 后这些身份永远不会被提交启动
+        pending.clear();
         for (int i : toRelease) {
             try {
                 boolean released = store.release(i);

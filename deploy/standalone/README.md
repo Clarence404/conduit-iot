@@ -51,7 +51,8 @@ docker compose up -d --build
 ## 升级到 transport 身份池多活（从 2026-11-19 之前的版本）
 
 新版两个 transport 同时工作，经 Redis 租约分摊 64 个 MQTT 身份（旧版只有主实例连 8 条）。**新旧版本不能混跑**；
-新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（每分钟记一次 ERROR），直到旧实例全部停止且该键过期（TTL 15 秒）。
+新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（每分钟记一次 ERROR），直到旧实例全部停止且该键过期（TTL 15 秒）；
+旧实例全部停止后若 `redis-cli TTL conduit:transport:leader` 返回 -1（没有过期时间），直接 `DEL` 该键。
 设计见 [`2026-11-17-conduit-transport-multi-active-design.md`](../../docs/superpowers/specs/2026-11-17-conduit-transport-multi-active-design.md)。
 EMQX 要重建，设备会断开重连，选设备流量低的时候做。
 
@@ -90,7 +91,7 @@ EMQX 会继续把消息分给这些离线成员。回退到 K = 1 时它们各�
 回退到旧版（8 个身份）时身份 8～63 分走 56/64 的上行，这部分不会入库。步骤（被清掉的会话里排队的消息随之丢弃，选流量低的时候做）：
 
 1. `docker compose stop conduit-transport conduit-transport-2`。
-2. 清掉多出的会话：`docker compose up -d --force-recreate emqx`（全部会话丢弃）；或只 kick 目标 K 以上的身份：
+2. 清掉多出的会话：重建 EMQX（全部会话丢弃）——回退到旧版时**先**把 `.env` 的 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000（旧版 8 × 10 万），再 `docker compose up -d --force-recreate emqx`，只重建这一次；或只 kick 目标 K 以上的身份（不重建时已有会话的队列上限不变）：
 
    ```bash
    K=64; FROM=1   # FROM：回退到 K = 1 时为 1，回退到旧版时为 8
@@ -99,5 +100,5 @@ EMQX 会继续把消息分给这些离线成员。回退到 K = 1 时它们各�
 
    K = 1 时身份 0 的会话里还留着共享订阅，每条消息会投递两次（写入幂等，但写总线量翻倍）；要避免就一并 kick `conduit-transport` 或重建 EMQX。
 3. `docker exec conduit-redis redis-cli DEL conduit:transport:pool-size`（K = 1 会把它写成 1，K 只增不减）。
-4. K = 1：`.env` 设 `TRANSPORT_POOL_SIZE=1` 后 `docker compose up -d`。旧版：换回旧包与旧 `.env` 再启动；旧版只有 8 个会话，可把 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000 并重建 EMQX。
+4. K = 1：`.env` 设 `TRANSPORT_POOL_SIZE=1` 后 `docker compose up -d`。旧版：换回旧包与旧 `.env` 再启动；队列上限已在第 2 步处理，这里不要再重建 EMQX（会再丢一次会话与积压）。
 5. 回读：`docker exec conduit-emqx emqx ctl clients list | grep -c conduit-transport` 为目标身份数（K = 1 为 1、旧版为 8）。

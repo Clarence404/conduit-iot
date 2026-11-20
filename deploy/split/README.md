@@ -118,7 +118,7 @@ for i in '' -1 -2 -3; do docker exec conduit-emqx emqx ctl clients kick conduit-
 
 4. 应用主机：换上新版产物（`deploy/package.sh` 打的包或新检出），`.env` 设 `TRANSPORT_POOL_SIZE=64`，删除旧的 `TRANSPORT_MQTT_CONNECTIONS`。
    新版检测到旧选主键 `conduit:transport:leader` 时不会抢身份（每分钟记一次 ERROR），直到旧实例全部停止且该键过期（TTL 15 秒）；
-   这是防止新旧混跑的保护，看到该 ERROR 先确认旧实例确已全部停止。启动两个 transport：
+   这是防止新旧混跑的保护，看到该 ERROR 先确认旧实例确已全部停止。旧实例全部停止后若 `redis-cli TTL conduit:transport:leader` 返回 -1（键没有过期时间，例如手工写入），直接 `DEL` 该键。启动两个 transport：
 
    ```bash
    docker compose up -d --build conduit-transport conduit-transport-2
@@ -173,7 +173,7 @@ Redis 中的值不是正整数（写错）时 transport 记 ERROR 并保持当�
    ```
 
 2. EMQX 主机：清掉目标 K 以上的全部身份，二选一。
-   - 重建 EMQX（全部会话丢弃，设备断开重连）：`cd deploy/split/emqx && docker compose up -d --force-recreate emqx`。
+   - 重建 EMQX（全部会话丢弃，设备断开重连）：回退到旧版时，**先**把 EMQX 主机 `.env` 的 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000（旧版只有 8 个会话，8 × 10 万；不改则总缓冲只有 8 × 1.5 万），再执行 `cd deploy/split/emqx && docker compose up -d --force-recreate emqx`。只重建这一次：启动旧版之后再改队列并重建，会再丢一次会话与积压。
    - 只丢弃多出的会话（K = 1 时从 1 起，旧版时从 8 起，直到 当前 K − 1）：
 
      ```bash
@@ -182,12 +182,14 @@ Redis 中的值不是正整数（写错）时 transport 记 ERROR 并保持当�
      for i in $(seq $FROM $((K - 1))); do docker exec conduit-emqx emqx ctl clients kick conduit-transport-$i; done
      ```
 
+     只 kick 不重建时队列上限不能改：身份 0～7 的会话沿用 1.5 万；若要旧版用 10 万，就选上面的重建。
+
    K = 1 时身份 0 的会话里还留着共享订阅，每条消息会经两条订阅各投递一次（写入按 ts 幂等，不丢不错，但写总线量翻倍）；
    要避免就一并 kick `conduit-transport`（它排队的消息随之丢弃），或直接重建 EMQX。
 3. 删除 Redis 中的 K：`docker exec conduit-redis redis-cli DEL conduit:transport:pool-size`。K = 1 的实例会把它写成 1，而 K 只增不减，不删则以后改不回多身份；旧版不使用该键，删掉免得再次升级时沿用旧值。
 4. 应用主机：启动目标版本。
    - K = 1：`.env` 设 `TRANSPORT_POOL_SIZE=1`，`docker compose up -d conduit-transport conduit-transport-2`。
-   - 旧版：换回旧版产物与旧 `.env`（`TRANSPORT_MQTT_CONNECTIONS=8`）再启动。旧版只有 8 个会话，可把 EMQX 主机的 `EMQX_TRANSPORT_MAX_MQUEUE_LEN` 改回 100000 并重建 EMQX（8 × 10 万），否则总缓冲只有 8 × 1.5 万。
+   - 旧版：换回旧版产物与旧 `.env`（`TRANSPORT_MQTT_CONNECTIONS=8`）再启动。队列上限已在第 2 步处理，这里不要再重建 EMQX。
 5. 回读：EMQX 上只剩目标数量的 transport 会话（`docker exec conduit-emqx emqx ctl clients list | grep -c conduit-transport`，K = 1 为 1、旧版为 8），`dropped` 不再增长。
 
 再次升级到身份池多活时按第 5 节执行；新版会等旧版的 `conduit:transport:leader` 过期后才抢身份。
